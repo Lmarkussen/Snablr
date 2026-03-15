@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            archive_ext: tar.gz
+            binary_ext: ""
+          - goos: linux
+            goarch: arm64
+            archive_ext: tar.gz
+            binary_ext: ""
+          - goos: darwin
+            goarch: amd64
+            archive_ext: tar.gz
+            binary_ext: ""
+          - goos: darwin
+            goarch: arm64
+            archive_ext: tar.gz
+            binary_ext: ""
+          - goos: windows
+            goarch: amd64
+            archive_ext: zip
+            binary_ext: .exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Prepare metadata
+        shell: bash
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          echo "COMMIT=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+
+      - name: Build and package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          package_name="snablr_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          stage_dir="dist/stage/${package_name}"
+          binary_name="snablr${{ matrix.binary_ext }}"
+
+          mkdir -p "$stage_dir"
+
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build \
+              -ldflags "-s -w \
+                -X 'snablr/internal/version.Version=${VERSION}' \
+                -X 'snablr/internal/version.Commit=${COMMIT}' \
+                -X 'snablr/internal/version.BuildDate=${BUILD_DATE}'" \
+              -o "${stage_dir}/${binary_name}" \
+              ./cmd/snablr
+
+          cp README.md LICENSE "$stage_dir/"
+
+          if [ "${{ matrix.archive_ext }}" = "zip" ]; then
+            (
+              cd dist/stage
+              zip -qr "../${package_name}.zip" "${package_name}"
+            )
+            echo "ASSET_PATH=dist/${package_name}.zip" >> "$GITHUB_ENV"
+          else
+            tar -C dist/stage -czf "dist/${package_name}.tar.gz" "${package_name}"
+            echo "ASSET_PATH=dist/${package_name}.tar.gz" >> "$GITHUB_ENV"
+          fi
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ env.ASSET_PATH }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist/releases
+          merge-multiple: true
+
+      - name: Create or update GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/releases/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

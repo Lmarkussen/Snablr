@@ -65,6 +65,26 @@ testdata/                safe synthetic fixtures for tests
 - Network access to reachable SMB targets on TCP `445`
 - Valid credentials for the target environment
 
+### Download Release Binaries
+
+Prebuilt binaries are published on the GitHub releases page:
+
+- `snablr_v1.0.0_linux_amd64.tar.gz`
+- `snablr_v1.0.0_linux_arm64.tar.gz`
+- `snablr_v1.0.0_darwin_amd64.tar.gz`
+- `snablr_v1.0.0_darwin_arm64.tar.gz`
+- `snablr_v1.0.0_windows_amd64.zip`
+
+Each archive contains the `snablr` binary plus `README.md` and `LICENSE`.
+
+To install from a release archive:
+
+```bash
+tar -xzf snablr_v1.0.0_linux_amd64.tar.gz
+cd snablr_v1.0.0_linux_amd64
+./snablr version
+```
+
 ### Build From Source
 
 ```bash
@@ -86,6 +106,25 @@ go build -o bin/snablr ./cmd/snablr
 ```bash
 go install ./cmd/snablr
 snablr version
+```
+
+### Automated Releases
+
+Snablr uses a tag-driven GitHub Actions release workflow.
+
+Pushing a tag that matches `v*` will:
+
+- run `go vet ./...`
+- run `go test ./...`
+- build release binaries for Linux, macOS, and Windows
+- inject version, commit, and build date metadata
+- package archives and attach them to the GitHub release
+
+Example:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 ## Quick Start
@@ -312,9 +351,12 @@ CLI flags override configuration values.
 
 The [examples](examples) directory contains:
 
-- [config.example.yaml](examples/config.example.yaml)
+- [config.basic.yaml](examples/config.basic.yaml)
+- [config.domain.yaml](examples/config.domain.yaml)
+- [config.targeted.yaml](examples/config.targeted.yaml)
 - [commands.md](examples/commands.md)
 - [custom-rules](examples/custom-rules)
+- [rules/custom/example.yml](examples/rules/custom/example.yml)
 - [output-layout](examples/output-layout)
 
 ## Additional Documentation
@@ -331,8 +373,18 @@ Useful targets:
 make build
 make test
 make lint
-make release VERSION=1.0.0
+make release-snapshot VERSION=v1.0.0
 ```
+
+`make release` is kept as an alias to `make release-snapshot`.
+
+Local release snapshots generate the same packaged target matrix used by the GitHub release workflow:
+
+- `linux/amd64`
+- `linux/arm64`
+- `darwin/amd64`
+- `darwin/arm64`
+- `windows/amd64`
 
 Contribution guidance is in [CONTRIBUTING.md](CONTRIBUTING.md).
 

@@ -1,0 +1,127 @@
+# Default defensive content rules.
+# Safe defaults: keep these enabled unless they are demonstrably noisy in your environment.
+# Noisy but useful: broad indicator rules are disabled by default and should be enabled only after tuning.
+# Organization-specific tuning candidates: prefer adding new custom rules instead of broadening these defaults.
+version: 1
+name: defensive-content
+description: Defensive content rules for secret indicators, deployment settings, and sensitive configuration review.
+rules:
+  # Safe default: strong signal for embedded passwords in human-readable config and script files.
+  - id: content.password_assignment_indicators
+    name: Password Assignment Indicators
+    description: Detect likely hardcoded password assignments in human-readable configuration and script files.
+    type: content
+    pattern: '(?im)\b(password|passwd|pwd)\b\s*[:=]\s*["'']?[^\s"'';]{4,}'
+    case_sensitive: false
+    severity: high
+    tags: [credentials, passwords, remediation]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp, winsxs]
+    file_extensions: [.conf, .config, .env, .ini, .json, .properties, .ps1, .py, .sh, .txt, .xml, .yaml, .yml]
+    max_file_size: 524288
+    action: report
+
+  # Safe default: intended for explicit secret assignment names rather than generic identifiers.
+  - id: content.secret_assignment_indicators
+    name: Secret Assignment Indicators
+    description: Detect likely secret or client secret assignments that deserve remediation review.
+    type: content
+    pattern: '(?im)\b(secret|client_secret|shared_secret|signing_key|private_key)\b\s*[:=]\s*["'']?[^\s"'';]{6,}'
+    case_sensitive: false
+    severity: high
+    tags: [credentials, secrets, review]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp]
+    file_extensions: [.conf, .config, .env, .ini, .json, .properties, .ps1, .py, .sh, .txt, .xml, .yaml, .yml]
+    max_file_size: 524288
+    action: report
+
+  # Noisy but useful: token variable names are common in sample files and templates.
+  # Enable only after narrowing file_extensions and excluding local build or documentation paths.
+  - id: content.api_token_assignment_indicators
+    name: API Token Assignment Indicators
+    description: Detect token-like assignments in configs and scripts. This rule is intentionally broad and should be tuned if noisy.
+    type: content
+    pattern: '(?im)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|bearer[_-]?token|auth[_-]?token)\b\s*[:=]\s*["'']?[A-Za-z0-9_./:=+-]{8,}'
+    case_sensitive: false
+    severity: high
+    tags: [tokens, api, remediation]
+    category: credentials
+    enabled: false
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp]
+    file_extensions: [.conf, .config, .env, .ini, .json, .properties, .ps1, .py, .sh, .txt, .xml, .yaml, .yml]
+    max_file_size: 524288
+    action: report
+
+  # Safe default: focuses on connection strings that appear to include both endpoint and credential fields.
+  - id: content.database_connection_string_indicators
+    name: Database Connection String Indicators
+    description: Detect connection string patterns that appear to include embedded authentication material.
+    type: content
+    pattern: '(?im)\b(server|data source|host|database|initial catalog)\b.{0,120}\b(user id|uid|username|password|pwd)\b'
+    case_sensitive: false
+    severity: high
+    tags: [database, connection-string, remediation]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp]
+    file_extensions: [.config, .conf, .env, .ini, .json, .properties, .txt, .xml, .yaml, .yml]
+    max_file_size: 524288
+    action: prioritize
+
+  # Safe default: very strong indicator for exposed private key material.
+  - id: content.private_key_header_indicators
+    name: Private Key Header Indicators
+    description: Detect PEM and OpenSSH private key headers. Findings should be handled as exposure review items only.
+    type: content
+    pattern: '-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'
+    case_sensitive: false
+    severity: critical
+    tags: [crypto, keys, review]
+    category: crypto
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: [.conf, .key, .pem, .txt]
+    max_file_size: 1048576
+    action: prioritize
+
+  # Safe default: certificate material is lower severity than private keys but still worth review.
+  - id: content.certificate_header_indicators
+    name: Certificate Material Header Indicators
+    description: Detect certificate and certificate request PEM headers that may indicate exposed cryptographic material.
+    type: content
+    pattern: '-----BEGIN (CERTIFICATE|NEW CERTIFICATE REQUEST|PKCS7)-----'
+    case_sensitive: false
+    severity: medium
+    tags: [crypto, certificates, review]
+    category: crypto
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: [.cer, .crt, .csr, .pem, .txt]
+    max_file_size: 1048576
+    action: report
+
+  # Safe default: strong signal for unattended Windows deployment secrets.
+  - id: content.unattended_deployment_password_fields
+    name: Unattended Deployment Password Fields
+    description: Detect unattended deployment fields that often require remediation review for embedded credentials.
+    type: content
+    pattern: '(?im)\b(AdministratorPassword|AutoLogonPassword|DomainAdminPassword|UserPassword)\b'
+    case_sensitive: false
+    severity: critical
+    tags: [deployment, windows, credentials]
+    category: deployment
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: [.cfg, .ini, .xml]
+    max_file_size: 524288
+    action: prioritize

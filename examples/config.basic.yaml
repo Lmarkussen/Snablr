@@ -1,0 +1,52 @@
+app:
+  name: snablr
+  log_level: info
+  banner_path: internal/ui/assets/snablr.txt
+
+scan:
+  # Minimal direct-target example.
+  targets:
+    - 172.16.0.90
+  targets_file: ""
+  username: "DOMAIN\\scanuser"
+  password: "REPLACE_ME"
+
+  # Leave these empty for a simple direct host scan.
+  share: []
+  exclude_share: []
+  path: []
+  exclude_path: []
+  max_depth: 0
+
+  # `0` means adaptive worker scaling.
+  worker_count: 0
+  max_file_size: 10485760
+
+  # Disable directory discovery because targets are explicit.
+  no_ldap: true
+  domain: ""
+  dc: ""
+  base_dn: ""
+  discover_dfs: false
+  prioritize_ad_shares: true
+  only_ad_shares: false
+
+  max_scan_time: "30m"
+  checkpoint_file: ""
+  resume: false
+  skip_reachability_check: false
+  reachability_timeout_seconds: 3
+
+rules:
+  # Use the shipped defaults plus any local custom rules.
+  rules_directory: ""
+  fail_on_invalid: false
+
+output:
+  # Minimal direct-target workflow with machine-readable and review-friendly output.
+  output_format: all
+  json_out: results/basic-results.json
+  html_out: results/basic-report.html
+  csv_out: ""
+  md_out: ""
+  pretty: true

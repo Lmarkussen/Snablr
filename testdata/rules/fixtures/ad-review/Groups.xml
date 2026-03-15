@@ -1,0 +1,3 @@
+<Groups clsid="{SAFE-TEST-ONLY}">
+  <User name="review-only" cpassword="SAFE_TEST_VALUE" />
+</Groups>

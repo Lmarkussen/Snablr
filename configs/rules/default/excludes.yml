@@ -1,0 +1,91 @@
+# Default defensive exclusion rules.
+# Safe defaults: skip locations and file types that usually add volume without improving remediation review.
+# Tune these carefully. Removing exclusions can raise coverage quickly, but it can also flood findings.
+version: 1
+name: defensive-excludes
+description: Exclusion rules for noisy, low-value, binary, media, and cache-heavy paths.
+rules:
+  # Safe default: dependency trees and build output are usually very noisy.
+  - id: skip.noisy_build_and_package_paths
+    name: Noisy Build And Package Paths
+    description: Skip dependency, build, and package directories that commonly add noise without improving review quality.
+    type: filename
+    pattern: '.+'
+    case_sensitive: false
+    severity: low
+    tags: [skip, build, packages]
+    category: exclusions
+    enabled: true
+    include_paths: [node_modules, vendor, .git, .svn, target, build, dist, bin, obj, packages, __pycache__, .terraform, .gradle, .m2, .npm, .yarn]
+    exclude_paths: []
+    file_extensions: []
+    max_file_size: 0
+    action: skip
+
+  # Safe default: temp directories and browser caches are usually poor review targets.
+  - id: skip.temp_and_browser_cache_paths
+    name: Temp And Browser Cache Paths
+    description: Skip temp folders, browser caches, and other common low-value caches.
+    type: filename
+    pattern: '.+'
+    case_sensitive: false
+    severity: low
+    tags: [skip, temp, cache]
+    category: exclusions
+    enabled: true
+    include_paths: [temp, tmp, cache, appdata/local/temp, firefox/profiles, chrome/user data/default/cache, edge/user data/default/cache, library/caches, deriveddata, programdata/package cache]
+    exclude_paths: []
+    file_extensions: []
+    max_file_size: 0
+    action: skip
+
+  # Safe default: media files rarely contribute to text-focused remediation triage.
+  - id: skip.media_extensions
+    name: Media Extensions
+    description: Skip common media files that rarely help defensive hygiene review.
+    type: extension
+    pattern: '^(\.avi|\.bmp|\.flac|\.gif|\.jpeg|\.jpg|\.mkv|\.mov|\.mp3|\.mp4|\.png|\.wav)$'
+    case_sensitive: false
+    severity: low
+    tags: [skip, media]
+    category: exclusions
+    enabled: true
+    include_paths: []
+    exclude_paths: []
+    file_extensions: []
+    max_file_size: 0
+    action: skip
+
+  # Safe default: compiled binaries are low-value for rule-based text scanning.
+  - id: skip.binary_extensions
+    name: Binary Extensions
+    description: Skip common binaries and compiled artifacts that are usually low value for text-based remediation review.
+    type: extension
+    pattern: '^(\.class|\.dll|\.dylib|\.exe|\.jar|\.o|\.obj|\.so)$'
+    case_sensitive: false
+    severity: low
+    tags: [skip, binaries]
+    category: exclusions
+    enabled: true
+    include_paths: []
+    exclude_paths: []
+    file_extensions: []
+    max_file_size: 0
+    action: skip
+
+  # Safe default: large archives and VM images are often expensive and noisy for first-pass triage.
+  - id: skip.large_archive_and_vm_extensions
+    name: Large Archive And VM Extensions
+    description: Skip large archive and virtual disk formats by default; remove or narrow this rule if those file types matter in your environment.
+    type: extension
+    pattern: '^(\.7z|\.gz|\.iso|\.ova|\.ovf|\.rar|\.tar|\.tgz|\.vhd|\.vhdx|\.vmdk|\.zip)$'
+    case_sensitive: false
+    severity: low
+    tags: [skip, archives, vm-disks]
+    category: exclusions
+    enabled: true
+    include_paths: []
+    exclude_paths: []
+    file_extensions: []
+    max_file_size: 0
+    action: skip

@@ -1,0 +1,93 @@
+# Default defensive PII and business-sensitive rules.
+# Safe defaults: filename and header rules that provide explainable review signal.
+# Noisy but useful: number-pattern rules are disabled by default because they can overmatch ordinary business data.
+# Organization-specific tuning candidates: add local export names, department labels, and report conventions in custom rules.
+version: 1
+name: defensive-pii
+description: Filename and content indicators for potential PII and business-sensitive data exposure.
+rules:
+  # Safe default: requires both business-sensitive terms and export-style naming.
+  - id: filename.business_sensitive_exports
+    name: Business Sensitive Export Filenames
+    description: Detect filenames suggesting employee data, payroll, tax, invoice, contract, or customer export material.
+    type: filename
+    pattern: '(?i)((employee|personnel|payroll|salary|benefit|tax|invoice|contract|customer|client).*(export|report|dump|extract))|((export|report|dump|extract).*(employee|personnel|payroll|salary|benefit|tax|invoice|contract|customer|client))'
+    case_sensitive: false
+    severity: high
+    tags: [business-data, pii, filenames]
+    category: pii
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: [.csv, .docx, .pdf, .txt, .tsv, .xls, .xlsx]
+    max_file_size: 0
+    action: report
+
+  # Noisy but useful: number-pattern detection can overmatch placeholders, IDs, and testing data.
+  # Enable only after narrowing include_paths and file_extensions.
+  - id: content.possible_ssn_like_data
+    name: Possible SSN-Like Data
+    description: Detect SSN-like patterns for review. These are possible matches only and should not be treated as confirmed PII without validation.
+    type: content
+    pattern: '(?m)\b\d{3}-\d{2}-\d{4}\b'
+    case_sensitive: false
+    severity: medium
+    tags: [pii, ssn, possible-match]
+    category: pii
+    enabled: false
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: [.csv, .json, .log, .txt, .tsv, .xml, .yaml, .yml]
+    max_file_size: 524288
+    action: report
+
+  # Noisy but useful: common false positives in finance and test data.
+  - id: content.possible_tax_id_like_data
+    name: Possible Tax ID-Like Data
+    description: Detect tax-id-like patterns for review. This rule is intentionally broad and should be tuned if it creates noise.
+    type: content
+    pattern: '(?m)\b\d{2}-\d{7}\b'
+    case_sensitive: false
+    severity: medium
+    tags: [pii, tax-id, possible-match]
+    category: pii
+    enabled: false
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: [.csv, .json, .log, .txt, .tsv, .xml, .yaml, .yml]
+    max_file_size: 524288
+    action: report
+
+  # Noisy but useful: account terminology and long numbers can appear in benign exports.
+  - id: content.possible_financial_account_references
+    name: Possible Financial Account References
+    description: Detect account-related terms close to long numbers. Findings require manual validation before any reporting or escalation.
+    type: content
+    pattern: '(?im)\b(account|acct|routing|iban|sort code)\b.{0,40}\b\d{6,}\b'
+    case_sensitive: false
+    severity: medium
+    tags: [pii, finance, possible-match]
+    category: pii
+    enabled: false
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: [.csv, .json, .log, .txt, .tsv, .xml, .yaml, .yml]
+    max_file_size: 524288
+    action: report
+
+  # Safe default: export-style headers are more explainable than raw number patterns.
+  - id: content.business_sensitive_column_headers
+    name: Business Sensitive Column Headers
+    description: Detect export-style column headers associated with employee, payroll, tax, or customer data.
+    type: content
+    pattern: '(?im)\b(first name|last name|date of birth|employee id|salary|tax id|bank account|routing number|customer id)\b'
+    case_sensitive: false
+    severity: medium
+    tags: [business-data, exports, review]
+    category: pii
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: [.csv, .json, .txt, .tsv]
+    max_file_size: 524288
+    action: report

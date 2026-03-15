@@ -1,0 +1,23 @@
+version: 1
+name: example-custom-rules
+description: Safe sample rules for local customization and testing.
+rules:
+  # This example is intentionally narrow and defensive.
+  - id: filename.example_sensitive_project_files
+    name: Example Sensitive Project Filenames
+    description: Flags filenames that suggest sensitive project reporting material.
+    type: filename
+    pattern: '(?i)(project-atlas|board-review|remediation-plan)'
+    case_sensitive: false
+    severity: medium
+    confidence: medium
+    explanation: These filenames may indicate internal reporting or remediation material that deserves restricted access.
+    remediation: Review whether these files should remain on a shared location and tighten permissions if broad access is not required.
+    tags: [example, custom, business-sensitive]
+    category: business-sensitive
+    enabled: true
+    include_paths: []
+    exclude_paths: [archive, temp, cache]
+    file_extensions: [.docx, .pdf, .xlsx, .csv, .txt]
+    max_file_size: 0
+    action: report

@@ -1,0 +1,91 @@
+# Default defensive extension rules.
+# Safe defaults: use these to prioritize review-worthy file types before expanding content rules.
+# Noisy but useful: very common office/export extensions are disabled by default because they can flood results.
+version: 1
+name: defensive-extensions
+description: Extension-based rules for sensitive config, script, key, office, and export triage.
+rules:
+  # Safe default: common human-readable configuration and environment files.
+  - id: extension.sensitive_config_extensions
+    name: Sensitive Config Extensions
+    description: Prioritize configuration and environment file types that commonly contain sensitive settings.
+    type: extension
+    pattern: '^(\.cfg|\.conf|\.config|\.env|\.ini|\.json|\.properties|\.toml|\.xml|\.yaml|\.yml)$'
+    case_sensitive: false
+    severity: medium
+    tags: [configuration, extensions, triage]
+    category: configuration
+    enabled: true
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: prioritize
+
+  # Safe default: scripts often carry operational settings and embedded credentials.
+  - id: extension.script_extensions
+    name: Script Extensions
+    description: Flag script file extensions that often embed operational credentials or deployment settings.
+    type: extension
+    pattern: '^(\.bat|\.cmd|\.ps1|\.psm1|\.py|\.rb|\.sh|\.zsh)$'
+    case_sensitive: false
+    severity: medium
+    tags: [scripts, extensions, triage]
+    category: scripts
+    enabled: true
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: report
+
+  # Safe default: cryptographic material extensions are high-value review targets.
+  - id: extension.key_and_certificate_extensions
+    name: Key And Certificate Extensions
+    description: Prioritize key, certificate, and keystore file extensions for remediation review.
+    type: extension
+    pattern: '^(\.asc|\.cer|\.crt|\.csr|\.jks|\.key|\.pem|\.p12|\.pfx)$'
+    case_sensitive: false
+    severity: high
+    tags: [crypto, certificates, extensions]
+    category: crypto
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: prioritize
+
+  # Noisy but useful: office and export file types are common and should usually be narrowed with include_paths or custom filename rules.
+  - id: extension.office_and_export_extensions
+    name: Office And Export Extensions
+    description: Flag office, tabular, and export-oriented file types that are often useful for business-sensitive review.
+    type: extension
+    pattern: '^(\.csv|\.docx|\.pdf|\.txt|\.tsv|\.xls|\.xlsx)$'
+    case_sensitive: false
+    severity: medium
+    tags: [business-data, office, exports]
+    category: business-data
+    enabled: false
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: report
+
+  # Safe default: lightweight database and backup formats are high-value review targets.
+  - id: extension.database_and_backup_extensions
+    name: Database And Backup Extensions
+    description: Prioritize database export, backup, and lightweight database files for remediation review.
+    type: extension
+    pattern: '^(\.accdb|\.bak|\.db|\.dmp|\.dump|\.mdb|\.sql|\.sqlite|\.sqlite3)$'
+    case_sensitive: false
+    severity: high
+    tags: [database, backups, extensions]
+    category: archives
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: prioritize

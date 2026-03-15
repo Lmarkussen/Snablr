@@ -1,0 +1,20 @@
+version: 1
+name: unit-unknown
+description: Synthetic rules with an unsupported field for validation tests.
+rules:
+  - id: filename.synthetic_unknown
+    name: Synthetic Unknown Field
+    description: Rule intentionally includes an unsupported field.
+    type: filename
+    pattern: '(?i)^secrets\.txt$'
+    case_sensitive: false
+    severity: medium
+    tags: [unit, filename]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: []
+    file_extensions: []
+    max_file_size: 0
+    action: report
+    unsupported_hint: high

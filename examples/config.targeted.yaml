@@ -1,0 +1,54 @@
+app:
+  name: snablr
+  log_level: debug
+  banner_path: internal/ui/assets/snablr.txt
+
+scan:
+  # Focused triage example for validating a narrow area quickly.
+  targets:
+    - fs01.example.local
+  targets_file: ""
+  username: "EXAMPLE\\triage"
+  password: "REPLACE_ME"
+
+  # Restrict scanning to a likely high-value share and path prefix.
+  share:
+    - Finance
+  exclude_share:
+    - Backups
+  path:
+    - Q4-Exports/
+    - Payroll/
+  exclude_path:
+    - Q4-Exports/Archive/
+    - Payroll/Old/
+  max_depth: 4
+
+  worker_count: 0
+  max_file_size: 5242880
+
+  no_ldap: true
+  domain: ""
+  dc: ""
+  base_dn: ""
+  discover_dfs: false
+  prioritize_ad_shares: false
+  only_ad_shares: false
+
+  max_scan_time: "20m"
+  checkpoint_file: "state/targeted-scan.json"
+  resume: true
+  skip_reachability_check: false
+  reachability_timeout_seconds: 2
+
+rules:
+  rules_directory: ""
+  fail_on_invalid: false
+
+output:
+  output_format: all
+  json_out: output/targeted/results.json
+  html_out: output/targeted/report.html
+  csv_out: output/targeted/findings.csv
+  md_out: output/targeted/summary.md
+  pretty: true

@@ -1,0 +1,57 @@
+app:
+  name: snablr
+  log_level: info
+  banner_path: internal/ui/assets/snablr.txt
+
+scan:
+  # Leave targets empty so Snablr can discover domain hosts automatically.
+  targets: []
+  targets_file: ""
+  username: "EXAMPLE\\snablr"
+  password: "REPLACE_ME"
+
+  # Optional scope limits. Leave empty for a broad domain-aware pass.
+  share: []
+  exclude_share:
+    - IPC$
+  path: []
+  exclude_path: []
+  max_depth: 0
+
+  # Adaptive worker scaling is recommended for larger environments.
+  worker_count: 0
+  max_file_size: 10485760
+
+  # LDAP discovery defaults.
+  no_ldap: false
+  domain: "example.local"
+  dc: ""
+  base_dn: ""
+  discover_dfs: true
+
+  # Keep AD shares high priority, but do not restrict to them.
+  prioritize_ad_shares: true
+  only_ad_shares: false
+
+  # Long-running scans should be resumable.
+  max_scan_time: "2h"
+  checkpoint_file: "state/domain-scan.json"
+  resume: true
+
+  # Reachability checks reduce wasted SMB connection attempts.
+  skip_reachability_check: false
+  reachability_timeout_seconds: 3
+
+rules:
+  # Empty means: configs/rules/default + configs/rules/custom
+  rules_directory: ""
+  fail_on_invalid: false
+
+output:
+  # `all` gives console + JSON + HTML. CSV and Markdown are useful sidecars.
+  output_format: all
+  json_out: output/domain/results.json
+  html_out: output/domain/report.html
+  csv_out: output/domain/findings.csv
+  md_out: output/domain/summary.md
+  pretty: true

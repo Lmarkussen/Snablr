@@ -1,0 +1,25 @@
+# Build and release artifacts
+/bin/
+/dist/
+
+# Common generated scan outputs
+/results.json
+/report.html
+/findings.csv
+/summary.md
+/state/
+/*.checkpoint.json
+/*.results.json
+/*.report.html
+
+# Go tooling
+*.test
+*.out
+coverage.txt
+.cache/
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

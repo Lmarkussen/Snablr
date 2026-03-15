@@ -1,0 +1,109 @@
+# Default defensive infrastructure rules.
+# Safe defaults: focused cloud, AD policy, and secret-material indicators that are explainable during triage.
+# Noisy but useful: CI/CD and administration naming rules are disabled by default because they vary heavily across organizations.
+# Organization-specific tuning candidates: prefer custom rules for internal project names, runner labels, and deployment workflows.
+version: 1
+name: defensive-infrastructure
+description: Infrastructure, cloud, AD policy, and script review indicators for defensive remediation workflows.
+rules:
+  # Safe default: focused on common cloud and infrastructure configuration names.
+  - id: filename.cloud_configuration_names
+    name: Cloud Configuration Names
+    description: Detect filenames associated with cloud credentials, kubeconfig files, and infrastructure-as-code review.
+    type: filename
+    pattern: '(?i)(aws|azure|gcp|cloud|terraform|tfvars|kubeconfig|kubernetes|helm|docker|ansible|vault)'
+    case_sensitive: false
+    severity: high
+    tags: [cloud, infrastructure, filenames]
+    category: infrastructure
+    enabled: true
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp]
+    file_extensions: [.conf, .config, .env, .ini, .json, .tf, .tfvars, .txt, .yaml, .yml]
+    max_file_size: 0
+    action: report
+
+  # Noisy but useful: CI/CD naming conventions vary a lot between organizations.
+  - id: filename.cicd_secret_material_names
+    name: CI CD Secret Material Names
+    description: Detect filenames associated with CI/CD pipelines and secret-bearing automation material.
+    type: filename
+    pattern: '(?i)(jenkins|gitlab[-_]?ci|github[-_]?actions|pipeline|deploy|bootstrap|provision|release|secrets?)'
+    case_sensitive: false
+    severity: high
+    tags: [ci-cd, automation, filenames]
+    category: infrastructure
+    enabled: false
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp]
+    file_extensions: [.bat, .cmd, .json, .ps1, .py, .sh, .yaml, .yml]
+    max_file_size: 0
+    action: report
+
+  # Safe default: assignment-style cloud credentials and tenancy identifiers.
+  - id: content.cloud_configuration_indicators
+    name: Cloud Configuration Indicators
+    description: Detect cloud configuration keys and identifiers that suggest review-worthy credential or environment material.
+    type: content
+    pattern: '(?im)\b(aws_access_key_id|aws_secret_access_key|azure_tenant_id|tenant_id|client_id|client_secret|subscription_id|service_account(_(json|key|file))?)\b\s*[:=]'
+    case_sensitive: false
+    severity: high
+    tags: [cloud, credentials, review]
+    category: infrastructure
+    enabled: true
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp]
+    file_extensions: [.conf, .config, .env, .ini, .json, .tfvars, .txt, .yaml, .yml]
+    max_file_size: 524288
+    action: prioritize
+
+  # Noisy but useful: variable names often appear in templates and documentation.
+  - id: content.cicd_secret_variable_indicators
+    name: CI CD Secret Variable Indicators
+    description: Detect CI/CD variable names commonly used for tokens, API keys, and deployment secrets.
+    type: content
+    pattern: '(?im)\b(CI_|GITHUB_TOKEN|GITLAB_TOKEN|JENKINS_|SONAR_TOKEN|NUGET_API_KEY|DEPLOY_KEY)\b'
+    case_sensitive: false
+    severity: medium
+    tags: [ci-cd, tokens, review]
+    category: infrastructure
+    enabled: false
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp]
+    file_extensions: [.conf, .env, .ini, .json, .ps1, .py, .sh, .txt, .yaml, .yml]
+    max_file_size: 524288
+    action: report
+
+  # Safe default: explicit Group Policy Preferences review signal.
+  - id: content.gpp_cpassword_review_indicator
+    name: GPP cpassword Review Indicator
+    description: Detect cpassword references in Group Policy Preference files for hygiene review only.
+    type: content
+    pattern: '(?i)\bcpassword\b'
+    case_sensitive: false
+    severity: high
+    tags: [active-directory, gpp, review]
+    category: active-directory
+    enabled: true
+    include_paths: [policies]
+    exclude_paths: []
+    file_extensions: [.xml]
+    max_file_size: 524288
+    action: prioritize
+
+  # Organization-specific tuning candidate: operations script naming varies heavily between teams.
+  - id: filename.administration_script_candidates
+    name: Administration Script Candidates
+    description: Detect admin, deployment, or operations script names likely to contain embedded environment-specific secrets.
+    type: filename
+    pattern: '(?i)(admin|ops|deploy|bootstrap|install|rotate|provision|sync)'
+    case_sensitive: false
+    severity: medium
+    tags: [scripts, administration, review]
+    category: infrastructure
+    enabled: false
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp]
+    file_extensions: [.bat, .cmd, .ps1, .py, .sh]
+    max_file_size: 0
+    action: report

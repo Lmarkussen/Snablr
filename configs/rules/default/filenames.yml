@@ -1,0 +1,128 @@
+# Default defensive filename rules.
+# Safe defaults: focused filename indicators that usually justify review on their own.
+# Noisy but useful: broader business/archive terms are disabled by default and should be narrowed for local naming conventions.
+# Organization-specific tuning candidates: add local project names and department-specific keywords in configs/rules/custom/.
+version: 1
+name: defensive-filenames
+description: Defensive filename rules for credential, backup, business-sensitive, and deployment review.
+rules:
+  # Safe default: intended for filenames that explicitly suggest secrets or access material.
+  - id: filename.credentials_and_secrets_keywords
+    name: Credentials And Secrets Keywords
+    description: Detect filenames that strongly suggest stored credentials, secrets, VPN material, or administrative access data.
+    type: filename
+    pattern: '(?i)(credential|creds|secret|secrets|password|passwd|token|apikey|api-key|private[-_]?key|vpn)'
+    case_sensitive: false
+    severity: high
+    tags: [credentials, filenames, review]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: report
+
+  # Safe default: common high-value application config names.
+  - id: filename.sensitive_config_names
+    name: Sensitive Config Names
+    description: Detect common config filenames that frequently contain environment settings or embedded secrets.
+    type: filename
+    pattern: '(?i)^(web\.config|appsettings(\.[^.]+)?\.json|settings\.(json|py|yaml|yml)|config\.(php|inc|bak)|\.env(\..+)?)$'
+    case_sensitive: false
+    severity: high
+    tags: [configuration, filenames, remediation]
+    category: configuration
+    enabled: true
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: prioritize
+
+  # Noisy but useful: archive and export naming is common in ordinary file shares.
+  # Tune with include_paths and file_extensions before enabling broadly.
+  - id: filename.backup_export_archive_keywords
+    name: Backup Export Archive Keywords
+    description: Detect filenames suggesting backups, exports, dumps, or archival copies that may require secure handling review.
+    type: filename
+    pattern: '(?i)(backup|export|archive|dump|snapshot|migration|legacy|copy)'
+    case_sensitive: false
+    severity: medium
+    tags: [backups, exports, filenames]
+    category: archives
+    enabled: false
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp]
+    file_extensions: [.7z, .bak, .csv, .db, .dump, .gz, .json, .rar, .sql, .tar, .tgz, .txt, .xml, .zip]
+    max_file_size: 0
+    action: report
+
+  # Safe default: password-manager artifacts are usually high-value review items.
+  - id: filename.password_manager_artifacts
+    name: Password Manager Artifacts
+    description: Detect filenames associated with password managers or local credential vaults.
+    type: filename
+    pattern: '(?i)(keepass|vault|1password|bitwarden|lastpass|passwordsafe|kdbx?)'
+    case_sensitive: false
+    severity: high
+    tags: [password-manager, credentials, filenames]
+    category: password-manager
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: prioritize
+
+  # Organization-specific tuning candidate: broad department keywords vary significantly across environments.
+  # Prefer a custom rule file with local department or export names instead of enabling this globally.
+  - id: filename.business_sensitive_keywords
+    name: Business Sensitive Keywords
+    description: Detect filenames suggesting payroll, finance, HR, contracts, customer exports, or other business-sensitive material.
+    type: filename
+    pattern: '(?i)(payroll|finance|invoice|contract|employee|personnel|hr|tax|customer|client|accounts?[-_ ]?(payable|receivable)?)'
+    case_sensitive: false
+    severity: high
+    tags: [business-data, pii, filenames]
+    category: business-data
+    enabled: false
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: [.csv, .docx, .pdf, .txt, .tsv, .xls, .xlsx]
+    max_file_size: 0
+    action: report
+
+  # Safe default: unattended deployment and bootstrap naming is usually actionable.
+  - id: filename.deployment_answer_files
+    name: Deployment Answer Files
+    description: Detect unattended installer, answer file, and bootstrap naming indicators for review.
+    type: filename
+    pattern: '(?i)^(unattend|autounattend|sysprep|answerfile|bootstrap|deployment).*$'
+    case_sensitive: false
+    severity: high
+    tags: [deployment, windows, filenames]
+    category: deployment
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: prioritize
+
+  # Safe default: Group Policy and policy-adjacent review files.
+  - id: filename.ad_policy_review_files
+    name: AD Policy Review Files
+    description: Detect administrative policy and Group Policy Preference filenames that deserve hygiene review.
+    type: filename
+    pattern: '(?i)^(groups\.xml|scheduledtasks\.xml|services\.xml|drives\.xml|registry\.xml|gpttmpl\.inf|scripts\.ini)$'
+    case_sensitive: false
+    severity: high
+    tags: [active-directory, policy, review]
+    category: active-directory
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: prioritize

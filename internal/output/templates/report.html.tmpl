@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Snablr Scan Report</title>
+  <style>
+    :root {
+      --bg: #edf3f7;
+      --panel: #ffffff;
+      --panel-alt: #f7fafc;
+      --text: #12263a;
+      --muted: #60758c;
+      --line: #d8e4ee;
+      --shadow: 0 10px 30px rgba(16, 35, 62, 0.08);
+      --low: #2563eb;
+      --medium: #d97706;
+      --high: #dc2626;
+      --critical: #8f1239;
+      --low-bg: #e8f0ff;
+      --medium-bg: #fff2df;
+      --high-bg: #fde9ea;
+      --critical-bg: #fae8ef;
+      --ok-bg: #e7f7ef;
+      --ok: #15803d;
+      --ad-bg: #ecfdf5;
+      --ad: #047857;
+      --dfs-bg: #eef2ff;
+      --dfs: #4338ca;
+      --ldap-bg: #eff6ff;
+      --ldap: #1d4ed8;
+      --cli-bg: #eefdf4;
+      --cli: #15803d;
+      --file-bg: #fff7ed;
+      --file: #c2410c;
+      --generic-bg: #eef2f7;
+      --generic: #51637d;
+      --prio-low-bg: #eef2f7;
+      --prio-low: #51637d;
+      --prio-medium-bg: #fff6db;
+      --prio-medium: #b45309;
+      --prio-high-bg: #ffe7dd;
+      --prio-high: #c2410c;
+      --prio-critical-bg: #ffe3ea;
+      --prio-critical: #be123c;
+      --diff-new-bg: #dcfce7;
+      --diff-new: #166534;
+      --diff-changed-bg: #fef3c7;
+      --diff-changed: #a16207;
+      --diff-removed-bg: #fee2e2;
+      --diff-removed: #b91c1c;
+      --diff-unchanged-bg: #e2e8f0;
+      --diff-unchanged: #475569;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(104, 145, 180, 0.12), transparent 25%),
+        linear-gradient(180deg, #f4f8fb 0%, var(--bg) 24%, #f7fafc 100%);
+      font: 15px/1.5 "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    }
+    main {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 28px 20px 56px;
+    }
+    h1, h2, h3, p { margin: 0; }
+    .hero {
+      background: rgba(255,255,255,0.86);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      padding: 24px;
+      margin-bottom: 22px;
+      backdrop-filter: blur(8px);
+    }
+    .hero-top {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+    }
+    .hero h1 {
+      font-size: 2.1rem;
+      letter-spacing: -0.03em;
+      margin-bottom: 6px;
+    }
+    .report-kicker {
+      display: inline-block;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      color: var(--muted);
+      max-width: 780px;
+    }
+    .hero-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+    .meta-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #f8fbff;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 12px;
+      color: var(--muted);
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+    .meta-pill strong {
+      color: var(--text);
+      font-weight: 700;
+    }
+    .hero-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .hero-actions a {
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 600;
+      background: #f7fafc;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 12px;
+    }
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(260px, 1.2fr) auto;
+      gap: 12px;
+      align-items: center;
+    }
+    .filter-wrap {
+      position: relative;
+    }
+    .filter-input {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fbfdff;
+      color: var(--text);
+      font: inherit;
+    }
+    .filter-help {
+      color: var(--muted);
+      font-size: 0.88rem;
+      text-align: right;
+    }
+    .summary-grid,
+    .severity-grid,
+    .category-grid,
+    .host-grid {
+      display: grid;
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+    .summary-grid { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+    .severity-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+    .category-grid { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+    .host-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .card {
+      background: rgba(255,255,255,0.92);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      padding: 16px 18px;
+    }
+    .card-label {
+      display: block;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+    .card-value {
+      font-size: 1.55rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+    .card-meta {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .section-head {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      margin: 28px 0 12px;
+    }
+    .section-head h2 {
+      font-size: 1.25rem;
+      letter-spacing: -0.02em;
+    }
+    .section-note {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 0.76rem;
+      font-weight: 700;
+      line-height: 1;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      white-space: nowrap;
+      border: 1px solid transparent;
+    }
+    .badge.sev-low { background: var(--low-bg); color: var(--low); }
+    .badge.sev-medium { background: var(--medium-bg); color: var(--medium); }
+    .badge.sev-high { background: var(--high-bg); color: var(--high); }
+    .badge.sev-critical { background: var(--critical-bg); color: var(--critical); }
+    .badge.sev-unknown { background: var(--prio-low-bg); color: var(--prio-low); }
+    .badge.source-ldap { background: var(--ldap-bg); color: var(--ldap); }
+    .badge.source-dfs { background: var(--dfs-bg); color: var(--dfs); }
+    .badge.source-cli { background: var(--cli-bg); color: var(--cli); }
+    .badge.source-file { background: var(--file-bg); color: var(--file); }
+    .badge.source-generic { background: var(--generic-bg); color: var(--generic); }
+    .badge.ad-share { background: var(--ad-bg); color: var(--ad); }
+    .badge.prio-low { background: var(--prio-low-bg); color: var(--prio-low); }
+    .badge.prio-medium { background: var(--prio-medium-bg); color: var(--prio-medium); }
+    .badge.prio-high { background: var(--prio-high-bg); color: var(--prio-high); }
+    .badge.prio-critical { background: var(--prio-critical-bg); color: var(--prio-critical); }
+    .badge.conf-low { background: #e0f2fe; color: #0369a1; }
+    .badge.conf-medium { background: #fef3c7; color: #b45309; }
+    .badge.conf-high { background: #dcfce7; color: #15803d; }
+    .badge.conf-unknown { background: var(--prio-low-bg); color: var(--prio-low); }
+    .badge.good { background: var(--ok-bg); color: var(--ok); }
+    .badge.diff-new { background: var(--diff-new-bg); color: var(--diff-new); }
+    .badge.diff-changed { background: var(--diff-changed-bg); color: var(--diff-changed); }
+    .badge.diff-removed { background: var(--diff-removed-bg); color: var(--diff-removed); }
+    .badge.diff-unchanged { background: var(--diff-unchanged-bg); color: var(--diff-unchanged); }
+    .badge.diff-unknown { background: var(--generic-bg); color: var(--generic); }
+    .category-card .card-meta {
+      line-height: 1.55;
+    }
+    .host-card .card-value {
+      font-size: 1.2rem;
+      line-height: 1.2;
+      word-break: break-word;
+    }
+    .nav-chips {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .nav-chips a {
+      text-decoration: none;
+      color: var(--text);
+      background: rgba(255,255,255,0.92);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      box-shadow: var(--shadow);
+    }
+    details.group {
+      background: rgba(255,255,255,0.94);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+    details.group[open] {
+      background: #fff;
+    }
+    summary.group-summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 18px 20px;
+      background: linear-gradient(180deg, #f8fbff, #ffffff);
+      border-bottom: 1px solid var(--line);
+    }
+    summary.group-summary::-webkit-details-marker { display: none; }
+    .group-top {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .group-title {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .group-title h3 {
+      font-size: 1.15rem;
+      letter-spacing: -0.02em;
+    }
+    .group-stats {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .group-guidance {
+      color: #183153;
+      max-width: 1000px;
+    }
+    .table-wrap {
+      overflow: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+    thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #f8fbff;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      text-align: left;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    tbody tr:nth-child(odd) { background: rgba(255,255,255,0.98); }
+    tbody tr:nth-child(even) { background: var(--panel-alt); }
+    tbody tr.sev-high { background: linear-gradient(90deg, rgba(253,235,236,0.95), rgba(255,255,255,0.96)); }
+    tbody tr.sev-critical { background: linear-gradient(90deg, rgba(250,232,239,0.96), rgba(255,255,255,0.97)); }
+    tbody tr.status-new { box-shadow: inset 4px 0 0 var(--diff-new); }
+    tbody tr.status-changed { box-shadow: inset 4px 0 0 var(--diff-changed); }
+    tbody tr.is-hidden,
+    .group.is-hidden {
+      display: none;
+    }
+    td {
+      padding: 14px 16px;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      font-size: 0.93rem;
+    }
+    tbody tr:last-child td { border-bottom: 0; }
+    .rule-name {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+    .badge-row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 7px;
+    }
+    .tooltip {
+      position: relative;
+      display: inline-block;
+      max-width: 100%;
+    }
+    .tooltip > span {
+      display: inline-block;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      vertical-align: top;
+    }
+    .tooltip::after {
+      content: attr(data-tip);
+      position: absolute;
+      left: 0;
+      top: calc(100% + 8px);
+      min-width: 220px;
+      max-width: 520px;
+      padding: 10px 12px;
+      background: rgba(17, 24, 39, 0.96);
+      color: #f8fafc;
+      border-radius: 10px;
+      font-size: 0.84rem;
+      line-height: 1.45;
+      white-space: normal;
+      box-shadow: 0 14px 28px rgba(17, 24, 39, 0.22);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(4px);
+      transition: opacity 0.16s ease, transform 0.16s ease;
+      z-index: 20;
+    }
+    .tooltip:hover::after,
+    .tooltip:focus-within::after {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .path-text { max-width: 380px; }
+    .snippet-text,
+    .reason-text {
+      white-space: normal;
+      overflow-wrap: anywhere;
+      max-width: 420px;
+    }
+    .meta-block {
+      display: grid;
+      gap: 8px;
+    }
+    .detail-stack {
+      display: grid;
+      gap: 10px;
+    }
+    .detail-panel {
+      background: rgba(248, 251, 255, 0.9);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+    }
+    .detail-panel strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+    .meta-line strong {
+      display: inline-block;
+      margin-right: 6px;
+    }
+    .muted { color: var(--muted); }
+    .print-note {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    @media print {
+      body {
+        background: #fff;
+      }
+      .hero-actions,
+      .toolbar,
+      .nav-chips {
+        display: none !important;
+      }
+      .card,
+      details.group {
+        break-inside: avoid;
+        box-shadow: none;
+      }
+      details.group[open] > summary.group-summary {
+        border-bottom: 1px solid #ccc;
+      }
+      details.group:not([open]) > *:not(summary) {
+        display: block;
+      }
+      .tooltip::after {
+        display: none;
+      }
+      thead th {
+        position: static;
+      }
+    }
+    @media (max-width: 900px) {
+      .toolbar {
+        grid-template-columns: 1fr;
+      }
+      .filter-help {
+        text-align: left;
+      }
+      thead th,
+      td {
+        padding: 12px 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <div class="hero-top">
+        <div>
+          <span class="report-kicker">Snablr</span>
+          <h1>Snablr Scan Report</h1>
+          <p class="subtitle">Standalone defensive triage report for post-scan review. Use the filter to narrow findings quickly, then open the most relevant categories first.</p>
+          <div class="hero-meta">
+            <span class="meta-pill"><strong>Version</strong> {{ .Version }}</span>
+            <span class="meta-pill"><strong>Started</strong> {{ formatScanTime .Summary.StartedAt }}</span>
+            <span class="meta-pill"><strong>Completed</strong> {{ formatScanTime .Summary.EndedAt }}</span>
+            <span class="meta-pill"><strong>Duration</strong> {{ formatDuration .Summary.StartedAt .Summary.EndedAt }}</span>
+          </div>
+        </div>
+        <div class="hero-actions">
+          <a href="#severity-summary">Severity Summary</a>
+          <a href="#category-summary">Category Summary</a>
+          <a href="#host-summary">Host Summary</a>
+          <a href="#findings">Findings</a>
+        </div>
+      </div>
+      <div class="toolbar">
+        <div class="filter-wrap">
+          <input id="quickFilter" class="filter-input" type="search" placeholder="Quick filter by host, share, rule, tag, category, path, source, SYSVOL, DFS..." aria-label="Quick filter findings">
+        </div>
+        <div class="filter-help">Filter runs locally in the report. Search is case-insensitive and checks the full row text.</div>
+      </div>
+      <div class="print-note">Printable/exportable: collapse sections to focus before printing, or open all to export a fuller review pack.</div>
+    </section>
+
+    <section class="summary-grid">
+      <article class="card">
+        <span class="card-label">Hosts Scanned</span>
+        <span class="card-value">{{ .Summary.HostsScanned }}</span>
+        <div class="card-meta">Targets loaded {{ .Metrics.Counters.TargetsLoaded }} · reachable {{ .Metrics.Counters.TargetsReachable }}</div>
+      </article>
+      <article class="card">
+        <span class="card-label">Shares Scanned</span>
+        <span class="card-value">{{ .Summary.SharesScanned }}</span>
+        <div class="card-meta">Enumerated {{ .Metrics.Counters.SharesEnumerated }}</div>
+      </article>
+      <article class="card">
+        <span class="card-label">Files Scanned</span>
+        <span class="card-value">{{ .Summary.FilesScanned }}</span>
+        <div class="card-meta">Files read {{ .Metrics.Counters.FilesRead }}</div>
+      </article>
+      <article class="card">
+        <span class="card-label">Matches Found</span>
+        <span class="card-value">{{ .Summary.MatchesFound }}</span>
+      </article>
+      <article class="card">
+        <span class="card-label">Skipped Files</span>
+        <span class="card-value">{{ .Summary.SkippedFiles }}</span>
+      </article>
+      <article class="card">
+        <span class="card-label">Read Errors</span>
+        <span class="card-value">{{ .Summary.ReadErrors }}</span>
+      </article>
+      <article class="card">
+        <span class="card-label">Scan Duration</span>
+        <span class="card-value">{{ formatDuration .Summary.StartedAt .Summary.EndedAt }}</span>
+        <div class="card-meta">Start {{ formatScanTime .Summary.StartedAt }} · End {{ formatScanTime .Summary.EndedAt }}</div>
+      </article>
+    </section>
+
+    {{- if .DiffSummary }}
+    <section id="diff-summary">
+      <div class="section-head">
+        <h2>Baseline Diff</h2>
+        <span class="section-note">Change tracking against the supplied baseline JSON report.</span>
+      </div>
+      <div class="severity-grid">
+        <article class="card">
+          <span class="card-label">New Findings</span>
+          <span class="card-value">{{ .DiffSummary.New }}</span>
+          <div class="card-meta"><span class="badge diff-new">new</span></div>
+        </article>
+        <article class="card">
+          <span class="card-label">Changed Findings</span>
+          <span class="card-value">{{ .DiffSummary.Changed }}</span>
+          <div class="card-meta"><span class="badge diff-changed">changed</span></div>
+        </article>
+        <article class="card">
+          <span class="card-label">Removed Findings</span>
+          <span class="card-value">{{ .DiffSummary.Removed }}</span>
+          <div class="card-meta"><span class="badge diff-removed">removed</span></div>
+        </article>
+        <article class="card">
+          <span class="card-label">Unchanged Findings</span>
+          <span class="card-value">{{ .DiffSummary.Unchanged }}</span>
+          <div class="card-meta"><span class="badge diff-unchanged">unchanged</span></div>
+        </article>
+      </div>
+    </section>
+    {{- end }}
+
+    {{- if .ChangedFindings }}
+    <section id="changed-findings">
+      <div class="section-head">
+        <h2>Changed Since Baseline</h2>
+        <span class="section-note">Same finding identity, but important metadata changed between runs.</span>
+      </div>
+      <details class="group">
+        <summary class="group-summary">
+          <div class="group-top">
+            <div class="group-title">
+              <h3>Changed Findings</h3>
+              <span class="badge diff-changed">{{ len .ChangedFindings }} changed</span>
+            </div>
+          </div>
+        </summary>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Rule</th>
+                <th>Host / Share</th>
+                <th>File Path</th>
+                <th>Changed Fields</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{- range .ChangedFindings }}
+              <tr>
+                <td>
+                  <strong>{{ .Current.RuleID }}</strong>
+                  <span class="rule-name">{{ .Current.RuleName }}</span>
+                </td>
+                <td>
+                  <div><strong>{{ valueOrDash .Current.Host }}</strong></div>
+                  <div class="muted">{{ valueOrDash .Current.Share }}</div>
+                </td>
+                <td>
+                  <span class="tooltip path-text" data-tip="{{ uncPath .Current }}">
+                    <span>{{ truncatePath (uncPath .Current) }}</span>
+                  </span>
+                </td>
+                <td>
+                  <div class="badge-row" style="margin-top:0;">
+                    {{- range .ChangedFields }}<span class="badge diff-changed">{{ . }}</span>{{ end -}}
+                  </div>
+                </td>
+              </tr>
+              {{- end }}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+    {{- end }}
+
+    {{- if .RemovedFindings }}
+    <section id="removed-findings">
+      <div class="section-head">
+        <h2>Removed Since Baseline</h2>
+        <span class="section-note">Present in the baseline, not present in this run.</span>
+      </div>
+      <details class="group">
+        <summary class="group-summary">
+          <div class="group-top">
+            <div class="group-title">
+              <h3>Removed Findings</h3>
+              <span class="badge diff-removed">{{ len .RemovedFindings }} removed</span>
+            </div>
+          </div>
+        </summary>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Rule</th>
+                <th>Host / Share</th>
+                <th>File Path</th>
+                <th>Match</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{- range .RemovedFindings }}
+              <tr>
+                <td>
+                  <strong>{{ .RuleID }}</strong>
+                  <span class="rule-name">{{ .RuleName }}</span>
+                </td>
+                <td>
+                  <div><strong>{{ valueOrDash .Host }}</strong></div>
+                  <div class="muted">{{ valueOrDash .Share }}</div>
+                </td>
+                <td>
+                  <span class="tooltip path-text" data-tip="{{ uncPath . }}">
+                    <span>{{ truncatePath (uncPath .) }}</span>
+                  </span>
+                </td>
+                <td>
+                  {{- if .Match }}
+                  <span class="tooltip snippet-text" data-tip="{{ .Match }}">
+                    <span>{{ .Match }}</span>
+                  </span>
+                  {{- else }}
+                  <span class="muted">-</span>
+                  {{- end }}
+                </td>
+              </tr>
+              {{- end }}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+    {{- end }}
+
+    <section id="phase-timings">
+      <div class="section-head">
+        <h2>Phase Timings</h2>
+        <span class="section-note">Lightweight timing by major scan phase.</span>
+      </div>
+      <div class="severity-grid">
+        {{- range .Metrics.Phases }}
+        <article class="card">
+          <span class="card-label">{{ .Name }}</span>
+          <span class="card-value">{{ .DurationMS }} ms</span>
+        </article>
+        {{- end }}
+      </div>
+    </section>
+
+    <section id="severity-summary">
+      <div class="section-head">
+        <h2>Severity Summary</h2>
+        <span class="section-note">Use this first to decide which sections to open.</span>
+      </div>
+      <div class="severity-grid">
+        {{- range .SeveritySummaries }}
+        <article class="card">
+          <span class="card-label">{{ .Severity }}</span>
+          <span class="card-value">{{ .Count }}</span>
+          <div class="card-meta"><span class="badge {{ severityClass .Severity }}">{{ .Severity }}</span></div>
+        </article>
+        {{- end }}
+      </div>
+    </section>
+
+    <section id="category-summary">
+      <div class="section-head">
+        <h2>Category Summary</h2>
+        <span class="section-note">Each category links to a collapsible findings section below.</span>
+      </div>
+      <div class="nav-chips">
+        {{- range .CategorySummaries }}
+        <a href="#cat-{{ slug .Category }}">{{ .Category }} ({{ .Findings }})</a>
+        {{- end }}
+      </div>
+      <div class="category-grid" style="margin-top: 14px;">
+        {{- range .CategorySummaries }}
+        <article class="card category-card">
+          <span class="card-label">{{ .Category }}</span>
+          <span class="card-value">{{ .Findings }}</span>
+          <div class="card-meta">
+            <div>Highest severity: <span class="badge {{ severityClass .HighestSeverity }}">{{ .HighestSeverity }}</span></div>
+            <div>Critical {{ .Critical }} · High {{ .High }} · Medium {{ .Medium }} · Low {{ .Low }}</div>
+            <div>{{ .RemediationGuidance }}</div>
+          </div>
+        </article>
+        {{- end }}
+      </div>
+    </section>
+
+    <section id="host-summary">
+      <div class="section-head">
+        <h2>Host Summary</h2>
+        <span class="section-note">Highest-signal hosts based on current findings volume and severity.</span>
+      </div>
+      <div class="host-grid">
+        {{- range .HostSummaries }}
+        <article class="card host-card">
+          <span class="card-label">Host</span>
+          <span class="card-value">{{ .Host }}</span>
+          <div class="card-meta">
+            <div>{{ .Findings }} findings · {{ .Shares }} shares · {{ .Categories }} categories</div>
+            <div style="margin-top:8px;"><span class="badge {{ severityClass .HighestSeverity }}">{{ .HighestSeverity }}</span></div>
+            <div class="badge-row">
+              {{- if .FromLDAP }}<span class="badge source-ldap">LDAP</span>{{ end -}}
+              {{- if .FromDFS }}<span class="badge source-dfs">DFS</span>{{ end -}}
+              {{- if .FromSYSVOL }}<span class="badge ad-share">SYSVOL</span>{{ end -}}
+              {{- if .FromNETLOGON }}<span class="badge ad-share">NETLOGON</span>{{ end -}}
+            </div>
+          </div>
+        </article>
+        {{- end }}
+      </div>
+    </section>
+
+    <section id="findings">
+      <div class="section-head">
+        <h2>Findings</h2>
+        <span class="section-note">Grouped by category first, then ordered by severity, host, and share for faster triage.</span>
+      </div>
+
+      {{- range .CategoryGroups }}
+      <details class="group" id="cat-{{ slug .Summary.Category }}" open>
+        <summary class="group-summary">
+          <div class="group-top">
+            <div class="group-title">
+              <h3>{{ .Summary.Category }}</h3>
+              <span class="badge {{ severityClass .Summary.HighestSeverity }}">{{ .Summary.HighestSeverity }}</span>
+            </div>
+            <div class="group-stats">
+              <span>Findings: {{ .Summary.Findings }}</span>
+              <span>Critical: {{ .Summary.Critical }}</span>
+              <span>High: {{ .Summary.High }}</span>
+              <span>Medium: {{ .Summary.Medium }}</span>
+              <span>Low: {{ .Summary.Low }}</span>
+            </div>
+          </div>
+          <p class="group-guidance">{{ .Summary.RemediationGuidance }}</p>
+        </summary>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Severity</th>
+                <th>Rule</th>
+                <th>Host / Share</th>
+                <th>File Path</th>
+                <th>Context</th>
+                <th>Why It Matched</th>
+                <th>Match Snippet</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{- range .Findings }}
+              <tr class="{{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" data-search="{{ .Finding.Category }} {{ .Finding.Severity }} {{ .Finding.Confidence }} {{ .Finding.RuleID }} {{ .Finding.RuleName }} {{ .Finding.Host }} {{ .Finding.Share }} {{ .Finding.ShareType }} {{ .Finding.ShareDescription }} {{ .Finding.FilePath }} {{ .Finding.Source }} {{ .Finding.DFSNamespacePath }} {{ .Finding.DFSLinkPath }} {{ joinTags .Finding.Tags " " }} {{ .Finding.MatchReason }} {{ .Finding.RuleExplanation }} {{ .Finding.RuleRemediation }} {{ .Finding.Snippet }} {{ .DiffStatus }} {{ joinTags .ChangedFields " " }}">
+                <td>
+                  <span class="badge {{ severityClass .Finding.Severity }}">{{ .Finding.Severity }}</span>
+                </td>
+                <td>
+                  <strong>{{ .Finding.RuleID }}</strong>
+                  <span class="rule-name">{{ .Finding.RuleName }}</span>
+                  <div class="badge-row">
+                    <span class="badge {{ priorityClass .Finding.Priority }}" title="{{ .Finding.PriorityReason }}">{{ priorityLabel .Finding.Priority }}</span>
+                    {{- if .Finding.Confidence }}<span class="badge {{ confidenceClass .Finding.Confidence }}">confidence {{ .Finding.Confidence }}</span>{{ end -}}
+                    {{- if .DiffStatus }}<span class="badge {{ diffClass .DiffStatus }}">{{ diffLabel .DiffStatus }}</span>{{ end -}}
+                    {{- if .Finding.Source }}<span class="badge {{ sourceClass .Finding.Source }}">source {{ .Finding.Source }}</span>{{ end -}}
+                    {{- if .Finding.FromSYSVOL }}<span class="badge ad-share">SYSVOL</span>{{ end -}}
+                    {{- if .Finding.FromNETLOGON }}<span class="badge ad-share">NETLOGON</span>{{ end -}}
+                  </div>
+                </td>
+                <td>
+                  <div><strong>{{ valueOrDash .Finding.Host }}</strong></div>
+                  <div class="muted">{{ valueOrDash .Finding.Share }}</div>
+                  {{- if .Finding.ShareType }}
+                  <div class="muted">Type: {{ .Finding.ShareType }}</div>
+                  {{- end }}
+                  {{- if .Finding.ShareDescription }}
+                  <div class="tooltip reason-text muted" data-tip="{{ .Finding.ShareDescription }}">
+                    <span>Description: {{ .Finding.ShareDescription }}</span>
+                  </div>
+                  {{- end }}
+                  {{- if .Finding.DFSNamespacePath }}
+                  <div class="badge-row">
+                    <span class="badge source-dfs" title="{{ .Finding.DFSNamespacePath }}">Namespace</span>
+                  </div>
+                  {{- end }}
+                </td>
+                <td>
+                  <span class="tooltip path-text" data-tip="{{ uncPath .Finding }}">
+                    <span>{{ truncatePath (uncPath .Finding) }}</span>
+                  </span>
+                </td>
+                <td>
+                  <div class="badge-row" style="margin-top:0;">
+                    {{- if .Finding.DFSNamespacePath }}<span class="badge source-dfs" title="{{ .Finding.DFSNamespacePath }}">DFS Namespace</span>{{ end -}}
+                    {{- if .Finding.DFSLinkPath }}<span class="badge source-dfs" title="{{ .Finding.DFSLinkPath }}">DFS Link</span>{{ end -}}
+                    {{- if .ChangedFields }}{{- range .ChangedFields }}<span class="badge diff-changed">{{ . }}</span>{{ end }}{{ end -}}
+                    {{- if .Finding.Tags }}{{- range .Finding.Tags }}<span class="badge good">{{ . }}</span>{{ end }}{{ else }}<span class="muted">-</span>{{ end -}}
+                  </div>
+                </td>
+                <td>
+                  <div class="detail-stack">
+                    <div class="detail-panel">
+                      <strong>Match Reason</strong>
+                      <span class="tooltip reason-text" data-tip="{{ .Finding.MatchReason }}">
+                        <span>{{ .Finding.MatchReason }}</span>
+                      </span>
+                    </div>
+                    {{- if .Finding.RuleExplanation }}
+                    <div class="detail-panel">
+                      <strong>Rule Explanation</strong>
+                      <span class="tooltip reason-text" data-tip="{{ .Finding.RuleExplanation }}">
+                        <span>{{ .Finding.RuleExplanation }}</span>
+                      </span>
+                    </div>
+                    {{- end }}
+                    {{- if .Finding.RuleRemediation }}
+                    <div class="detail-panel">
+                      <strong>Remediation</strong>
+                      <span class="tooltip reason-text" data-tip="{{ .Finding.RuleRemediation }}">
+                        <span>{{ .Finding.RuleRemediation }}</span>
+                      </span>
+                    </div>
+                    {{- end }}
+                  </div>
+                </td>
+                <td>
+                  {{- if .Finding.Snippet }}
+                  <span class="tooltip snippet-text" data-tip="{{ .Finding.Snippet }}">
+                    <span>{{ .Finding.Snippet }}</span>
+                  </span>
+                  {{- else if .Finding.Match }}
+                  <span class="tooltip snippet-text" data-tip="{{ .Finding.Match }}">
+                    <span>{{ .Finding.Match }}</span>
+                  </span>
+                  {{- else }}
+                  <span class="muted">-</span>
+                  {{- end }}
+                </td>
+              </tr>
+              {{- end }}
+            </tbody>
+          </table>
+        </div>
+      </details>
+      {{- end }}
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      var input = document.getElementById("quickFilter");
+      if (!input) return;
+
+      function applyFilter() {
+        var query = input.value.trim().toLowerCase();
+        var groups = document.querySelectorAll("details.group");
+
+        groups.forEach(function (group) {
+          var rows = group.querySelectorAll("tbody tr");
+          var visible = 0;
+
+          rows.forEach(function (row) {
+            var haystack = (row.getAttribute("data-search") || "").toLowerCase();
+            var match = query === "" || haystack.indexOf(query) !== -1;
+            row.classList.toggle("is-hidden", !match);
+            if (match) visible++;
+          });
+
+          group.classList.toggle("is-hidden", visible === 0);
+          if (query !== "" && visible > 0) {
+            group.open = true;
+          }
+        });
+      }
+
+      input.addEventListener("input", applyFilter);
+    }());
+  </script>
+</body>
+</html>

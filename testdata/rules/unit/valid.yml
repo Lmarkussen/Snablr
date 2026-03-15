@@ -1,0 +1,54 @@
+version: 1
+name: unit-valid
+description: Synthetic rules for unit tests.
+rules:
+  - id: content.synthetic_password
+    name: Synthetic Password
+    description: Detect a synthetic password assignment.
+    type: content
+    pattern: '(?m)password\s*=\s*\S+'
+    case_sensitive: false
+    severity: high
+    confidence: medium
+    explanation: This synthetic pattern simulates a hardcoded password assignment in a config-like file.
+    remediation: Move credentials into a managed secret store or environment-specific secret injection path.
+    tags: [unit, content]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: [vendor]
+    file_extensions: [.conf, .env]
+    max_file_size: 1024
+    action: report
+
+  - id: filename.synthetic_env
+    name: Synthetic Env File
+    description: Detect synthetic env file names.
+    type: filename
+    pattern: '(?i)^app\.env$'
+    case_sensitive: false
+    severity: medium
+    tags: [unit, filename]
+    category: configuration
+    enabled: true
+    include_paths: []
+    exclude_paths: []
+    file_extensions: []
+    max_file_size: 0
+    action: report
+
+  - id: skip.synthetic_vendor
+    name: Synthetic Vendor Skip
+    description: Skip vendor paths in tests.
+    type: filename
+    pattern: '.+'
+    case_sensitive: false
+    severity: low
+    tags: [unit, skip]
+    category: exclusions
+    enabled: true
+    include_paths: [vendor]
+    exclude_paths: []
+    file_extensions: []
+    max_file_size: 0
+    action: skip

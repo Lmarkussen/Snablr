@@ -64,6 +64,23 @@ type DiffOptions struct {
 	NewPath string
 }
 
+type BenchmarkOptions struct {
+	ConfigPath     string
+	Dataset        string
+	RulesDirectory string
+	OutPath        string
+	LogLevel       string
+}
+
+type EvalOptions struct {
+	ConfigPath     string
+	Dataset        string
+	LabelsPath     string
+	RulesDirectory string
+	OutPath        string
+	LogLevel       string
+}
+
 type DiscoverOptions struct {
 	ConfigPath                 string
 	Targets                    []string

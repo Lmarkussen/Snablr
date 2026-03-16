@@ -11,7 +11,7 @@ rules:
     name: Credentials And Secrets Keywords
     description: Detect filenames that strongly suggest stored credentials, secrets, VPN material, or administrative access data.
     type: filename
-    pattern: '(?i)(credential|creds|secret|secrets|password|passwd|token|apikey|api-key|private[-_]?key|vpn)'
+    pattern: '(?i)(credential|creds|secret|secrets|password|passwd|pwd(?:[-_ ]?list)?|(?:^|[^a-z0-9])pw(?:[^a-z0-9]|$)|login[-_ ]?(?:details|info)|account[-_ ]?(?:details|credentials)|token|apikey|api-key|private[-_]?key|vpn)'
     case_sensitive: false
     severity: high
     tags: [credentials, filenames, review]

@@ -43,13 +43,20 @@ func DiscoverLDAP(ctx context.Context, opts LDAPOptions, logger Logger) ([]Disco
 	}
 	defer conn.Close()
 
-	if err := bindLDAP(conn, opts, domainContext.DomainName); err != nil {
+	rootDSE, err := preBindRootDSE(conn, &domainContext, logger)
+	if err != nil {
 		return nil, err
 	}
 
-	rootDSE, err := queryRootDSE(conn)
-	if err != nil {
+	if err := bindLDAP(conn, opts, domainContext.DomainName, logger); err != nil {
 		return nil, err
+	}
+
+	if rootDSE.DefaultNamingContext == "" && rootDSE.RootNamingContext == "" {
+		rootDSE, err = queryRootDSE(conn)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if domainContext.BaseDN == "" {
@@ -68,6 +75,48 @@ func DiscoverLDAP(ctx context.Context, opts LDAPOptions, logger Logger) ([]Disco
 	return queryComputerObjects(conn, domainContext.BaseDN, opts.PageSize, logger)
 }
 
+func preBindRootDSE(conn *ldap.Conn, domainContext *DomainContext, logger Logger) (rootDSEInfo, error) {
+	if domainContext == nil {
+		return rootDSEInfo{}, nil
+	}
+
+	rootDSE, err := queryRootDSE(conn)
+	if err != nil {
+		if logger != nil {
+			logger.Debugf("ldap discovery: pre-bind rootDSE query failed: %v", err)
+		}
+		return rootDSEInfo{}, nil
+	}
+
+	namingContext := rootDSE.DefaultNamingContext
+	if namingContext == "" {
+		namingContext = rootDSE.RootNamingContext
+	}
+	derivedDomain := domainFromNamingContext(namingContext)
+	if derivedDomain == "" {
+		return rootDSE, nil
+	}
+
+	currentDomain := normalizeDetectedDomain(domainContext.DomainName)
+	switch {
+	case currentDomain == "":
+		domainContext.DomainName = derivedDomain
+		if domainContext.DetectionMethod == "" {
+			domainContext.DetectionMethod = "rootdse-defaultNamingContext"
+		}
+		if logger != nil {
+			logger.Infof("ldap discovery: derived domain %s from pre-bind RootDSE", derivedDomain)
+		}
+	case currentDomain != derivedDomain && !strings.HasPrefix(domainContext.DetectionMethod, "cli-domain"):
+		if logger != nil {
+			logger.Infof("ldap discovery: overriding detected domain %s with RootDSE domain %s", currentDomain, derivedDomain)
+		}
+		domainContext.DomainName = derivedDomain
+		domainContext.DetectionMethod = "rootdse-defaultNamingContext"
+	}
+	return rootDSE, nil
+}
+
 func dialLDAP(dc string, timeout time.Duration) (*ldap.Conn, error) {
 	address := dc
 	if _, _, err := net.SplitHostPort(dc); err != nil {
@@ -82,32 +131,123 @@ func dialLDAP(dc string, timeout time.Duration) (*ldap.Conn, error) {
 	return conn, nil
 }
 
-func bindLDAP(conn *ldap.Conn, opts LDAPOptions, domain string) error {
+func bindLDAP(conn *ldap.Conn, opts LDAPOptions, domain string, logger Logger) error {
 	username := strings.TrimSpace(opts.Username)
 	password := opts.Password
 	if username == "" {
 		return nil
 	}
 
-	bindUser := normalizeBindUser(username, domain)
-	if err := conn.Bind(bindUser, password); err != nil {
-		return fmt.Errorf("ldap discovery: bind failed for %s: %w", bindUser, err)
+	attempts := bindCandidates(username, domain)
+	var lastErr error
+	for _, attempt := range attempts {
+		if err := conn.Bind(attempt.Value, password); err != nil {
+			lastErr = err
+			continue
+		}
+		if logger != nil {
+			logger.Infof("ldap discovery: bind successful using %s format: %s", attempt.Label, attempt.Value)
+		}
+		return nil
 	}
-	return nil
+	if len(attempts) == 1 {
+		return fmt.Errorf("ldap discovery: bind failed for %s: %w", attempts[0].Value, lastErr)
+	}
+	return fmt.Errorf("ldap discovery: bind failed after trying %d username formats for %s: %w", len(attempts), username, lastErr)
 }
 
-func normalizeBindUser(username, domain string) string {
+type bindCandidate struct {
+	Label string
+	Value string
+}
+
+func bindCandidates(username, domain string) []bindCandidate {
 	username = strings.TrimSpace(username)
 	if username == "" {
+		return nil
+	}
+
+	if label := detectExplicitBindFormat(username); label != "" {
+		return []bindCandidate{{Label: label, Value: username}}
+	}
+
+	candidates := []bindCandidate{{
+		Label: "username",
+		Value: username,
+	}}
+
+	if normalizedDomain := normalizeDetectedDomain(domain); normalizedDomain != "" {
+		candidates = append(candidates, bindCandidate{
+			Label: "UPN",
+			Value: username + "@" + normalizedDomain,
+		})
+		if downLevel := downLevelBindDomain(normalizedDomain); downLevel != "" {
+			candidates = append(candidates, bindCandidate{
+				Label: "DOMAIN\\USER",
+				Value: downLevel + `\` + username,
+			})
+		}
+	}
+
+	return deduplicateBindCandidates(candidates)
+}
+
+func detectExplicitBindFormat(username string) string {
+	switch {
+	case strings.Contains(username, "@"):
+		return "explicit UPN"
+	case strings.Contains(username, `\`):
+		return "explicit DOMAIN\\USER"
+	default:
 		return ""
 	}
-	if strings.Contains(username, "@") || strings.Contains(username, `\`) {
-		return username
+}
+
+func deduplicateBindCandidates(candidates []bindCandidate) []bindCandidate {
+	seen := make(map[string]struct{}, len(candidates))
+	deduped := make([]bindCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		value := strings.TrimSpace(candidate.Value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		deduped = append(deduped, bindCandidate{
+			Label: candidate.Label,
+			Value: value,
+		})
 	}
-	if strings.TrimSpace(domain) == "" {
-		return username
+	return deduped
+}
+
+func domainFromNamingContext(namingContext string) string {
+	if strings.TrimSpace(namingContext) == "" {
+		return ""
 	}
-	return username + "@" + domain
+
+	parts := strings.Split(namingContext, ",")
+	domainParts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if len(part) < 3 {
+			continue
+		}
+		if !strings.EqualFold(part[:3], "dc=") {
+			continue
+		}
+		value := normalizeDetectedDomain(part[3:])
+		if value == "" {
+			continue
+		}
+		domainParts = append(domainParts, value)
+	}
+	if len(domainParts) == 0 {
+		return ""
+	}
+	return strings.Join(domainParts, ".")
 }
 
 func queryRootDSE(conn *ldap.Conn) (rootDSEInfo, error) {

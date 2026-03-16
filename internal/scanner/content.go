@@ -109,10 +109,10 @@ func buildContentMatchDetails(rule rules.Rule, content string, snippetBytes int)
 		match:               match,
 		matchedText:         match,
 		matchedTextRedacted: redactedMatch,
-		snippet:             flattenSnippet(redactedContext, snippetBytes),
+		snippet:             flattenSnippet(context, snippetBytes),
 		context:             limitRunes(context, 320),
 		contextRedacted:     limitRunes(redactedContext, 320),
-		potentialAccount:    limitRunes(redactSensitiveText(potentialAccount), 160),
+		potentialAccount:    limitRunes(potentialAccount, 160),
 		lineNumber:          lineNumber,
 	}, true
 }

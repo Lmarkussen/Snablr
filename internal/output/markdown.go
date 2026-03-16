@@ -140,9 +140,9 @@ func (m *MarkdownWriter) Close() error {
 			return err
 		}
 		for _, finding := range m.findings {
-			snippet := finding.Snippet
+			snippet := firstNonEmpty(finding.Context, finding.Snippet)
 			if snippet == "" {
-				snippet = finding.Match
+				snippet = firstNonEmpty(finding.MatchedText, finding.Match, finding.MatchedTextRedacted)
 			}
 			ruleLabel := finding.RuleName
 			if strings.TrimSpace(ruleLabel) == "" {

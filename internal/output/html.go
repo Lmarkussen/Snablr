@@ -299,11 +299,11 @@ func signalMatchLabel(signal string) string {
 }
 
 func displayMatch(f scanner.Finding) string {
-	if strings.TrimSpace(f.MatchedTextRedacted) != "" {
-		return strings.TrimSpace(f.MatchedTextRedacted)
-	}
 	if strings.TrimSpace(f.MatchedText) != "" {
 		return strings.TrimSpace(f.MatchedText)
+	}
+	if strings.TrimSpace(f.MatchedTextRedacted) != "" {
+		return strings.TrimSpace(f.MatchedTextRedacted)
 	}
 	return strings.TrimSpace(f.Match)
 }
@@ -316,11 +316,11 @@ func displayRawMatch(f scanner.Finding) string {
 }
 
 func displayContext(f scanner.Finding) string {
-	if strings.TrimSpace(f.ContextRedacted) != "" {
-		return strings.TrimSpace(f.ContextRedacted)
-	}
 	if strings.TrimSpace(f.Context) != "" {
 		return strings.TrimSpace(f.Context)
+	}
+	if strings.TrimSpace(f.ContextRedacted) != "" {
+		return strings.TrimSpace(f.ContextRedacted)
 	}
 	return strings.TrimSpace(f.Snippet)
 }

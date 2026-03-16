@@ -130,13 +130,13 @@ func (c *Client) closeLocked() error {
 	var errs []error
 
 	if c.session != nil {
-		if err := c.session.Logoff(); err != nil {
+		if err := c.session.Logoff(); err != nil && !isIgnorableCloseError(err) {
 			errs = append(errs, err)
 		}
 		c.session = nil
 	}
 	if c.conn != nil {
-		if err := c.conn.Close(); err != nil {
+		if err := c.conn.Close(); err != nil && !isIgnorableCloseError(err) {
 			errs = append(errs, err)
 		}
 		c.conn = nil
@@ -152,6 +152,19 @@ func (c *Client) closeLocked() error {
 		return errors.Join(errs...)
 	}
 	return nil
+}
+
+func isIgnorableCloseError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "use of closed network connection") ||
+		strings.Contains(message, "connection already closed")
 }
 
 func (c *Client) connectedSession() (*smb2.Session, string, error) {

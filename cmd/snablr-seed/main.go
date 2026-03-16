@@ -41,6 +41,7 @@ func run(args []string) error {
 
 	var shares multiValueFlag
 	fs.Var(&shares, "share", "Restrict seeding to a share name; may be repeated")
+	includeAdminShares := fs.Bool("include-admin-shares", false, "Include administrative shares like ADMIN$, C$, IPC$, and PRINT$ during share discovery")
 	countPerCategory := fs.Int("count-per-category", 6, "Number of files to generate per category")
 	maxFiles := fs.Int("max-files", 480, "Maximum total files to generate")
 	depth := fs.Int("depth", 1, "Additional nested directory depth to add under each base path")
@@ -83,6 +84,7 @@ func run(args []string) error {
 		Username:            username,
 		Password:            password,
 		Shares:              append([]string{}, shares...),
+		IncludeAdminShares:  *includeAdminShares,
 		SeedPrefix:          *seedPrefix,
 		DryRun:              *dryRun,
 		CleanPrefix:         *cleanPrefix,

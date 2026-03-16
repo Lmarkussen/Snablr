@@ -2,6 +2,7 @@ package seed
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -16,6 +17,57 @@ type smbWriter interface {
 	FileContentEquals(share, path string, expected []byte) (bool, error)
 	WriteFile(share, path string, data []byte) error
 	RemoveAll(share, path string) error
+}
+
+var newSMBWriter = func() smbWriter {
+	return smb.NewClient()
+}
+
+type seedClientPool struct {
+	opts    WriteOptions
+	clients map[string]smbWriter
+}
+
+func newSeedClientPool(opts WriteOptions) *seedClientPool {
+	return &seedClientPool{
+		opts:    opts,
+		clients: make(map[string]smbWriter),
+	}
+}
+
+func (p *seedClientPool) clientFor(host string) (smbWriter, error) {
+	key := normalizeHostKey(host)
+	if client, ok := p.clients[key]; ok {
+		return client, nil
+	}
+
+	client := newSMBWriter()
+	if err := client.Connect(host, p.opts.Username, p.opts.Password); err != nil {
+		return nil, fmt.Errorf("%s: connect failed: %w", host, err)
+	}
+	p.clients[key] = client
+	return client, nil
+}
+
+func (p *seedClientPool) Close() error {
+	keys := make([]string, 0, len(p.clients))
+	for key := range p.clients {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	var errs []error
+	for _, key := range keys {
+		client := p.clients[key]
+		delete(p.clients, key)
+		if client == nil {
+			continue
+		}
+		if err := client.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", key, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
@@ -49,8 +101,15 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 	}
 
 	manifest := NewManifest(opts.SeedPrefix)
+	pool := newSeedClientPool(opts)
+	defer func() {
+		if err := pool.Close(); err != nil {
+			logWarn(opts, "close warning: %v", err)
+		}
+	}()
+
 	if opts.CleanPrefix {
-		if err := cleanSeedPrefix(ctx, destinations, opts); err != nil {
+		if err := cleanSeedPrefix(ctx, destinations, pool, opts); err != nil {
 			return manifest, err
 		}
 	}
@@ -84,33 +143,27 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 			continue
 		}
 
-		client := smb.NewClient()
-		if err := client.Connect(target.Host, opts.Username, opts.Password); err != nil {
-			return manifest, fmt.Errorf("%s: connect failed: %w", target.Host, err)
+		client, err := pool.clientFor(target.Host)
+		if err != nil {
+			return manifest, err
 		}
 
 		same, err := client.FileContentEquals(target.Share, fullPath, file.Content)
 		if err != nil {
-			_ = client.Close()
 			return manifest, fmt.Errorf("%s/%s/%s: compare failed: %w", target.Host, target.Share, fullPath, err)
 		}
 		if same {
 			entry.Status = "unchanged"
 			logInfo(opts, "unchanged: %s/%s/%s", target.Host, target.Share, fullPath)
 			manifest.Add(entry)
-			_ = client.Close()
 			continue
 		}
 		if err := client.WriteFile(target.Share, fullPath, file.Content); err != nil {
-			_ = client.Close()
 			return manifest, fmt.Errorf("%s/%s/%s: write failed: %w", target.Host, target.Share, fullPath, err)
 		}
 		entry.Status = "written"
 		logInfo(opts, "written: %s/%s/%s [%s]", target.Host, target.Share, fullPath, file.Category)
 		manifest.Add(entry)
-		if err := client.Close(); err != nil {
-			logWarn(opts, "close warning for %s: %v", target.Host, err)
-		}
 	}
 
 	if err := manifest.Write(opts.ManifestOut); err != nil {
@@ -120,13 +173,7 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 }
 
 func discoverDestinations(ctx context.Context, opts WriteOptions) ([]ShareTarget, error) {
-	shareAllow := make(map[string]struct{}, len(opts.Shares))
-	for _, share := range opts.Shares {
-		share = strings.ToLower(strings.TrimSpace(share))
-		if share != "" {
-			shareAllow[share] = struct{}{}
-		}
-	}
+	shareAllow := buildShareAllowSet(opts.Shares)
 
 	destinations := make([]ShareTarget, 0)
 	seen := make(map[string]struct{})
@@ -138,7 +185,7 @@ func discoverDestinations(ctx context.Context, opts WriteOptions) ([]ShareTarget
 		default:
 		}
 
-		client := smb.NewClient()
+		client := newSMBWriter()
 		if err := client.Connect(host, opts.Username, opts.Password); err != nil {
 			logWarn(opts, "connect failed for %s: %v", host, err)
 			continue
@@ -159,14 +206,12 @@ func discoverDestinations(ctx context.Context, opts WriteOptions) ([]ShareTarget
 			if opts.SharesPerTarget > 0 && perHost[hostKey] >= opts.SharesPerTarget {
 				break
 			}
+			if !shouldIncludeSeedShare(share, shareAllow, opts.IncludeAdminShares) {
+				continue
+			}
 			key := strings.ToLower(strings.TrimSpace(host + "::" + share.Name))
 			if key == "" {
 				continue
-			}
-			if len(shareAllow) > 0 {
-				if _, ok := shareAllow[strings.ToLower(strings.TrimSpace(share.Name))]; !ok {
-					continue
-				}
 			}
 			if _, ok := seen[key]; ok {
 				continue
@@ -194,7 +239,7 @@ func discoverDestinations(ctx context.Context, opts WriteOptions) ([]ShareTarget
 	return destinations, nil
 }
 
-func cleanSeedPrefix(ctx context.Context, destinations []ShareTarget, opts WriteOptions) error {
+func cleanSeedPrefix(ctx context.Context, destinations []ShareTarget, pool *seedClientPool, opts WriteOptions) error {
 	prefix, err := safeCleanPrefix(opts.SeedPrefix)
 	if err != nil {
 		return err
@@ -212,20 +257,50 @@ func cleanSeedPrefix(ctx context.Context, destinations []ShareTarget, opts Write
 			continue
 		}
 
-		client := smb.NewClient()
-		if err := client.Connect(target.Host, opts.Username, opts.Password); err != nil {
-			return fmt.Errorf("%s: connect failed during cleanup: %w", target.Host, err)
+		client, err := pool.clientFor(target.Host)
+		if err != nil {
+			return fmt.Errorf("connect failed during cleanup for %s: %w", target.Host, err)
 		}
 		if err := client.RemoveAll(target.Share, prefix); err != nil {
-			_ = client.Close()
 			return fmt.Errorf("%s/%s/%s: cleanup failed: %w", target.Host, target.Share, prefix, err)
 		}
 		logInfo(opts, "cleaned: %s/%s/%s", target.Host, target.Share, prefix)
-		if err := client.Close(); err != nil {
-			logWarn(opts, "close warning for %s: %v", target.Host, err)
-		}
 	}
 	return nil
+}
+
+func buildShareAllowSet(shares []string) map[string]struct{} {
+	shareAllow := make(map[string]struct{}, len(shares))
+	for _, share := range shares {
+		share = normalizeShareName(share)
+		if share != "" {
+			shareAllow[share] = struct{}{}
+		}
+	}
+	return shareAllow
+}
+
+func shouldIncludeSeedShare(share smb.ShareInfo, shareAllow map[string]struct{}, includeAdminShares bool) bool {
+	name := normalizeShareName(share.Name)
+	if name == "" {
+		return false
+	}
+	if len(shareAllow) > 0 {
+		_, ok := shareAllow[name]
+		return ok
+	}
+	if !includeAdminShares && smb.IsAdministrativeShare(share.Name) {
+		return false
+	}
+	return true
+}
+
+func normalizeShareName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+func normalizeHostKey(host string) string {
+	return strings.ToLower(strings.TrimSpace(host))
 }
 
 func logInfo(opts WriteOptions, format string, args ...any) {

@@ -27,6 +27,7 @@ var (
 	assignmentSecretRegex = regexp.MustCompile(`(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|secret[_-]?key|client[_-]?secret|connection\s*string|conn(?:ection)?[_-]?string)\b(\s*[:=]\s*)(["']?)([^"'\r\n;]+)(?:["']?)`)
 	xmlSecretRegex        = regexp.MustCompile(`(?i)<(password|passwd|pwd|secret|token|apikey|clientsecret)>([^<]+)</[^>]+>`)
 	identityLineRegex     = regexp.MustCompile(`(?i)\b(user(name)?|login|account|email|upn)\b`)
+	genericPairRegex      = regexp.MustCompile(`(?im)^\s*([A-Za-z][A-Za-z0-9._@-]{1,32})(\s*[:=]\s*)([^\s"';]{4,64})\s*$`)
 )
 
 func NewContentScanner(snippetBytes int) ContentScanner {
@@ -57,7 +58,9 @@ func (s ContentScanner) Scan(ruleSet []rules.Rule, meta FileMetadata, content []
 		return findings
 	}
 
-	contentString := string(content)
+	contentString := strings.TrimPrefix(string(content), "\uFEFF")
+	contentString = strings.ReplaceAll(contentString, "\r\n", "\n")
+	contentString = strings.ReplaceAll(contentString, "\r", "\n")
 	for _, rule := range ruleSet {
 		if rule.Action == rules.ActionSkip {
 			continue
@@ -161,7 +164,13 @@ func nearbyIdentityLine(lines []string, lineIndex int) string {
 			return ""
 		}
 		line := strings.TrimSpace(lines[idx])
-		if line == "" || !identityLineRegex.MatchString(line) {
+		if line == "" {
+			return ""
+		}
+		if matches := genericPairRegex.FindStringSubmatch(line); len(matches) == 4 {
+			return matches[1]
+		}
+		if !identityLineRegex.MatchString(line) {
 			return ""
 		}
 		return line
@@ -188,6 +197,7 @@ func redactSensitiveText(text string) string {
 
 	redacted := assignmentSecretRegex.ReplaceAllString(text, `${1}${2}${3}********`)
 	redacted = xmlSecretRegex.ReplaceAllString(redacted, `<${1}>********</${1}>`)
+	redacted = genericPairRegex.ReplaceAllString(redacted, `${1}${2}********`)
 	return redacted
 }
 

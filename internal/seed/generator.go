@@ -53,6 +53,7 @@ func Generate(opts GenerateOptions) ([]SeedFile, error) {
 	specs := defaultTemplates()
 	sort.Slice(specs, func(i, j int) bool { return specs[i].Category < specs[j].Category })
 	out := make([]SeedFile, 0, opts.MaxFiles)
+	seenPaths := make(map[string]struct{}, opts.MaxFiles)
 
 	for _, spec := range specs {
 		if len(spec.Variants) == 0 {
@@ -84,11 +85,14 @@ func Generate(opts GenerateOptions) ([]SeedFile, error) {
 				ContentStyle:   variant.ContentStyle,
 			}, variant)
 
+			relativePath := joinSeedPath(opts.SeedPrefix, fullDir)
+			filename := uniqueSeedFilename(relativePath, variant.Filename, seenPaths)
+
 			out = append(out, SeedFile{
 				Category:            spec.Category,
 				Format:              variant.Format,
-				RelativePath:        joinSeedPath(opts.SeedPrefix, fullDir),
-				Filename:            variant.Filename,
+				RelativePath:        relativePath,
+				Filename:            filename,
 				Content:             content,
 				IntendedAs:          variant.IntendedAs,
 				ExpectedSignalTypes: append([]string{}, variant.ExpectedSignalTypes...),
@@ -226,4 +230,30 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func uniqueSeedFilename(relativePath, filename string, seenPaths map[string]struct{}) string {
+	fullPath := joinSeedPath(relativePath, filename)
+	if _, ok := seenPaths[fullPath]; !ok {
+		seenPaths[fullPath] = struct{}{}
+		return filename
+	}
+
+	baseName, extension := splitFilename(filename)
+	for suffix := 2; ; suffix++ {
+		candidate := fmt.Sprintf("%s-%02d%s", baseName, suffix, extension)
+		fullPath = joinSeedPath(relativePath, candidate)
+		if _, ok := seenPaths[fullPath]; ok {
+			continue
+		}
+		seenPaths[fullPath] = struct{}{}
+		return candidate
+	}
+}
+
+func splitFilename(filename string) (base string, extension string) {
+	if dot := strings.LastIndex(filename, "."); dot > 0 {
+		return filename[:dot], filename[dot:]
+	}
+	return filename, ""
 }

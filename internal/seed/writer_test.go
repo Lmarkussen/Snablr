@@ -1,6 +1,8 @@
 package seed
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"snablr/internal/smb"
@@ -37,5 +39,36 @@ func TestShouldIncludeSeedShareAllowsAdminOverride(t *testing.T) {
 
 	if !shouldIncludeSeedShare(smb.ShareInfo{Name: "PRINT$"}, nil, true) {
 		t.Fatal("expected include-admin-shares override to allow PRINT$")
+	}
+}
+
+func TestLogSeedSummaryReportsCounts(t *testing.T) {
+	t.Parallel()
+
+	lines := make([]string, 0)
+	opts := WriteOptions{
+		Logf: func(format string, args ...any) {
+			lines = append(lines, fmt.Sprintf(format, args...))
+		},
+	}
+	stats := newSeedRunStats(375)
+	stats.recordWritten("finance", "fs01", "Finance")
+	stats.recordWritten("finance", "fs01", "Finance")
+	stats.recordWritten("sql", "fs01", "SQL")
+	stats.recordSkipped()
+
+	logSeedSummary(opts, stats, Manifest{Entries: make([]SeedManifestEntry, 4)})
+
+	joined := strings.Join(lines, "\n")
+	for _, fragment := range []string{
+		"seed summary: candidates=375 written=3 skipped=1 dry-run=0 manifest-entries=4",
+		"written by category: finance=2",
+		"written by category: sql=1",
+		"written by share: fs01/Finance=2",
+		"written by share: fs01/SQL=1",
+	} {
+		if !strings.Contains(joined, fragment) {
+			t.Fatalf("expected log output to contain %q, got:\n%s", fragment, joined)
+		}
 	}
 }

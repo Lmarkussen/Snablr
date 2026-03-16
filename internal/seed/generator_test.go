@@ -95,3 +95,35 @@ func TestGenerateSupportsIntentAndSignalTuning(t *testing.T) {
 		t.Fatalf("expected tuned generation to include medium severity variants")
 	}
 }
+
+func TestGenerateProducesUniquePathsAtLargerScale(t *testing.T) {
+	t.Parallel()
+
+	categoryCount := len(defaultTemplates())
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 25,
+		MaxFiles:         500,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260316,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	expected := categoryCount * 25
+	if expected > 500 {
+		expected = 500
+	}
+	if len(files) != expected {
+		t.Fatalf("expected %d files, got %d", expected, len(files))
+	}
+
+	seen := make(map[string]struct{}, len(files))
+	for _, file := range files {
+		fullPath := FullPath(file)
+		if _, ok := seen[fullPath]; ok {
+			t.Fatalf("expected unique generated paths, found duplicate %s", fullPath)
+		}
+		seen[fullPath] = struct{}{}
+	}
+}

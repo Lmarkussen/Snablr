@@ -19,6 +19,7 @@ Snablr is intended for authorized defensive security work only. Run it only agai
 - Checkpoint and resume support for longer scans
 - Console, JSON, HTML, CSV, and Markdown output formats
 - Baseline and diff mode for repeated scans and change tracking
+- Synthetic lab seeding and manifest-based verification with `snablr-seed`
 
 ## Architecture Summary
 
@@ -105,6 +106,13 @@ Direct Go build:
 ```bash
 go build -o bin/snablr ./cmd/snablr
 ./bin/snablr --help
+```
+
+Build the lab seeder:
+
+```bash
+go build -o bin/snablr-seed ./cmd/snablr-seed
+./bin/snablr-seed --help
 ```
 
 If you are on Windows and do not use `make`, use:
@@ -233,6 +241,38 @@ Optional sidecar exports:
 - `--md-out`
 
 If you do not provide output paths, the defaults from your config file are used. If you override them on the CLI, Snablr writes to the paths you provide.
+
+## Lab Seeder
+
+Snablr also includes `snablr-seed`, a lab-only helper for generating synthetic fake SMB share content so you can test scans, prioritization, reporting, and manifest-to-results verification end to end.
+
+Quick start:
+
+```bash
+go build -o bin/snablr-seed ./cmd/snablr-seed
+
+./bin/snablr-seed \
+  --targets 172.16.0.90 \
+  --user USER \
+  --pass PASS \
+  --count-per-category 25 \
+  --max-files 500 \
+  --manifest-out seed-manifest.json
+```
+
+Verification workflow:
+
+```bash
+./bin/snablr scan --targets 172.16.0.90 --user USER --pass PASS --json-out results.json
+./bin/snablr-seed verify --manifest seed-manifest.json --results results.json
+```
+
+Important notes:
+
+- `snablr-seed` generates only synthetic fake data for authorized lab use.
+- Administrative shares are excluded by default unless explicitly requested.
+- `make build` builds `snablr`; build `snablr-seed` separately with `go build`.
+- Full seeder usage, safety constraints, scaling flags, and verification details are in `docs/seeder.md`.
 
 ## First-Time User Tip
 

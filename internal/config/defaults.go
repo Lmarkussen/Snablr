@@ -1,7 +1,7 @@
 package config
 
 func Default() Config {
-	return Config{
+	cfg := Config{
 		App: AppConfig{
 			Name:       "snablr",
 			LogLevel:   "info",
@@ -42,4 +42,6 @@ func Default() Config {
 			Pretty:  true,
 		},
 	}
+	applyPathContext(&cfg, "")
+	return cfg
 }

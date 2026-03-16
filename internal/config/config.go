@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,6 +15,9 @@ type Config struct {
 	Scan   ScanConfig   `yaml:"scan"`
 	Rules  RulesConfig  `yaml:"rules"`
 	Output OutputConfig `yaml:"output"`
+
+	configDir   string `yaml:"-"`
+	runtimeRoot string `yaml:"-"`
 }
 
 type AppConfig struct {
@@ -65,12 +69,14 @@ type OutputConfig struct {
 
 func Load(path string) (Config, error) {
 	cfg := Default()
-	if strings.TrimSpace(path) == "" {
+	resolvedPath := resolveConfigPath(path)
+	if strings.TrimSpace(resolvedPath) == "" {
 		applyDefaults(&cfg)
+		applyPathContext(&cfg, "")
 		return cfg, nil
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(resolvedPath)
 	if err != nil {
 		return Config{}, fmt.Errorf("read %s: %w", path, err)
 	}
@@ -80,6 +86,7 @@ func Load(path string) (Config, error) {
 	}
 
 	applyDefaults(&cfg)
+	applyPathContext(&cfg, resolvedPath)
 	return cfg, nil
 }
 
@@ -112,9 +119,12 @@ func applyDefaults(cfg *Config) {
 
 func (c Config) RulePaths() []string {
 	if strings.TrimSpace(c.Rules.Directory) != "" {
-		return []string{c.Rules.Directory}
+		return []string{resolvePath(c.Rules.Directory, c.configDir, c.runtimeRoot)}
 	}
-	return []string{"configs/rules/default", "configs/rules/custom"}
+	return []string{
+		resolvePath(filepath.Join("configs", "rules", "default"), c.runtimeRoot),
+		resolvePath(filepath.Join("configs", "rules", "custom"), c.runtimeRoot),
+	}
 }
 
 func (s ScanConfig) ReachabilityTimeout() time.Duration {

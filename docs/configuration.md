@@ -1,33 +1,49 @@
 # Configuration
 
-Snablr can be configured with a YAML file, CLI flags, or both.
+Snablr can be configured with:
 
-The default runtime config file is `configs/config.yaml`. Several example profiles also live under `examples/`.
+- built-in defaults
+- a YAML config file
+- CLI flags
 
-## How Configuration Works
+The default runtime config file is:
 
-Snablr loads configuration in this order:
+- `configs/config.yaml`
+
+Example profiles live under:
+
+- `examples/config.basic.yaml`
+- `examples/config.domain.yaml`
+- `examples/config.targeted.yaml`
+
+## Configuration Precedence
+
+Snablr applies configuration in this order:
 
 1. built-in defaults
 2. YAML config file
-3. CLI flag overrides
+3. CLI flags
 
-That means CLI flags always win over config values for the current run.
+CLI flags always win for the current run.
 
 Example:
 
 ```bash
-./bin/snablr scan \
+snablr scan \
   --config examples/config.domain.yaml \
   --share SYSVOL \
   --max-scan-time 30m
 ```
 
-In this example, the config file is loaded first, then `--share` and `--max-scan-time` override the loaded values.
+In that example:
+
+- the YAML file provides the base config
+- `--share` overrides the configured share list
+- `--max-scan-time` overrides the configured time limit
 
 ## Top-Level Sections
 
-Snablr config is grouped into:
+The config file is grouped into:
 
 - `app`
 - `scan`
@@ -48,113 +64,117 @@ app:
 Fields:
 
 - `name`
-  Display name used by the application. In practice this should remain `snablr`.
-
+  Display name used by the application. This should normally remain `snablr`.
 - `log_level`
-  Logging verbosity.
-  Common values: `debug`, `info`, `warn`, `error`
-
+  Logging verbosity. Typical values are `debug`, `info`, `warn`, `error`.
 - `banner_path`
-  Runtime path to the banner ASCII art file.
+  Runtime path to the ASCII banner asset.
 
 ## `scan`
 
-The `scan` section controls discovery, scope, concurrency, and runtime behavior.
+The `scan` section controls target selection, discovery, scope filtering, performance, and runtime behavior.
 
-### Target Selection
+### Targets
 
 - `targets`
-  Explicit host list. If this is set, Snablr uses these targets directly.
-
+  Explicit list of hosts to scan.
 - `targets_file`
   Path to a file containing one target per line.
 
-If both `targets` and `targets_file` are empty, Snablr can fall back to LDAP discovery unless disabled.
+Behavior:
+
+- if `targets` or `targets_file` is set, Snablr uses those targets
+- if both are empty, Snablr attempts LDAP discovery unless disabled
 
 ### Credentials
 
 - `username`
-  SMB and LDAP username.
-
+  SMB and LDAP username
 - `password`
-  SMB and LDAP password.
+  SMB and LDAP password
 
-Use placeholders in committed configs. Inject real credentials at runtime through CLI overrides or local secrets handling.
+Committed configs should use placeholders, not real secrets.
 
-### Scan Scope Filters
+Typical override pattern:
 
-- `share`
-  Only scan these share names.
+```bash
+snablr scan --config examples/config.domain.yaml --user 'DOMAIN\user' --pass 'REPLACE_ME'
+```
 
-- `exclude_share`
-  Skip these share names.
-
-- `path`
-  Only scan files under these path prefixes.
-
-- `exclude_path`
-  Skip files under these path prefixes.
-
-- `max_depth`
-  Maximum directory recursion depth during share walking.
-
-These filters are applied early so they reduce workload before the scanner spends time on unnecessary files.
-
-### Performance Controls
-
-- `worker_count`
-  File scanning worker count.
-
-  `0` means adaptive worker scaling. This is the recommended default for most environments.
-
-- `max_file_size`
-  Maximum file size Snablr will consider for scanning.
-
-Large values increase scan coverage but also increase I/O and memory pressure.
-
-### Discovery Controls
+### LDAP Discovery
 
 - `no_ldap`
-  Disable LDAP discovery when no explicit targets are supplied.
-
+  Disable LDAP discovery
 - `domain`
-  Explicit domain name override for discovery.
-
+  Manual domain override
 - `dc`
-  Explicit domain controller override.
-
+  Manual domain controller override
 - `base_dn`
-  Explicit LDAP search base override.
-
+  Manual LDAP search base override
 - `discover_dfs`
-  Enable DFS discovery so linked enterprise shares can be added to the pipeline.
+  Enable DFS discovery so linked shares can be added to the pipeline
 
-### Planning Controls
+How LDAP discovery works:
 
-- `prioritize_ad_shares`
-  Prefer SYSVOL and NETLOGON during planning.
+1. Snablr checks for explicit targets
+2. if none are present, it tries to detect domain context
+3. it finds a domain controller or uses `dc`
+4. it queries LDAP for computer objects
+5. it merges those discovered hosts into the target pipeline
 
-- `only_ad_shares`
-  Restrict scanning to SYSVOL and NETLOGON.
+### Share And Path Filters
 
-### Runtime Limits And Resume
+- `share`
+  Only scan these share names
+- `exclude_share`
+  Skip these share names
+- `path`
+  Only scan files under these share-relative path prefixes
+- `exclude_path`
+  Skip files under these path prefixes
+- `max_depth`
+  Maximum recursion depth during share walking
 
-- `max_scan_time`
-  Total scan time limit, for example `30m` or `2h`.
-
-- `checkpoint_file`
-  JSON checkpoint path for resumable scans.
-
-- `resume`
-  Resume from an existing checkpoint file.
+These filters are applied early during share selection and file walking so they reduce work before file scanning starts.
 
 ### Reachability
 
 - `skip_reachability_check`
-  Disable TCP `445` reachability testing.
-
+  Skip TCP `445` reachability testing
 - `reachability_timeout_seconds`
-  Timeout for SMB reachability tests.
+  Timeout for SMB reachability checks
+
+Recommended default:
+- keep reachability enabled for larger scans to reduce wasted SMB connection attempts
+
+### Planning
+
+- `prioritize_ad_shares`
+  Give extra planning priority to `SYSVOL` and `NETLOGON`
+- `only_ad_shares`
+  Restrict scanning to `SYSVOL` and `NETLOGON`
+
+### Performance
+
+- `worker_count`
+  Number of file scanning workers
+
+Special behavior:
+- `0` means adaptive worker scaling
+
+- `max_file_size`
+  Maximum file size Snablr will consider for scanning
+
+Larger values increase coverage but also increase I/O and memory pressure.
+
+### Runtime Control
+
+- `max_scan_time`
+  Maximum total scan time, for example `30m` or `2h`
+- `checkpoint_file`
+  Path to the checkpoint JSON file
+- `resume`
+  Resume from a previous checkpoint
 
 ## `rules`
 
@@ -169,20 +189,19 @@ rules:
 Fields:
 
 - `rules_directory`
-  Optional override for rule loading.
-
-  If empty, Snablr loads the default locations:
-
-  - `configs/rules/default`
-  - `configs/rules/custom`
-
+  Optional override for rule loading
 - `fail_on_invalid`
-  If set, rule validation errors fail startup rather than only warning.
+  Fail startup instead of warning when rule validation fails
 
-Recommended use:
+If `rules_directory` is empty, Snablr loads:
 
-- leave defaults and custom rules separate
-- enable strict validation in CI or controlled environments
+- `configs/rules/default`
+- `configs/rules/custom`
+
+Recommended practice:
+
+- keep shipped defaults in `configs/rules/default`
+- keep organization-specific rules in `configs/rules/custom`
 
 ## `output`
 
@@ -201,83 +220,101 @@ output:
 Fields:
 
 - `output_format`
-  Primary output mode.
-
-  Supported values:
-
-  - `console`
-  - `json`
-  - `html`
-  - `all`
-
+  Primary output mode
 - `json_out`
-  Path to the JSON report when JSON output is enabled.
-
+  JSON report path
 - `html_out`
-  Path to the HTML report when HTML output is enabled.
-
+  HTML report path
 - `csv_out`
-  Optional sidecar CSV findings export.
-
+  Optional CSV sidecar path
 - `md_out`
-  Optional sidecar Markdown summary export.
-
+  Optional Markdown sidecar path
 - `pretty`
-  Controls pretty-printed JSON formatting.
+  Pretty-print JSON output
 
-## Output Format Behavior
+Supported `output_format` values:
 
-### `console`
+- `console`
+- `json`
+- `html`
+- `all`
 
-- findings print to the terminal
-- best for interactive use
-- progress reporting can appear when running in a terminal
+### Output Format Behavior
 
-### `json`
+#### `console`
 
-- writes one machine-readable JSON report
-- best for automation or downstream parsing
+- prints findings directly to the terminal
+- best for live operator feedback
 
-### `html`
+#### `json`
 
-- writes one standalone browser-friendly report
-- best for post-scan review
+- writes one machine-readable report
+- best for automation, scripting, and baseline comparison
 
-### `all`
+#### `html`
+
+- writes one standalone browser report
+- best for post-scan triage and remediation review
+
+#### `all`
 
 - combines console, JSON, and HTML
-- recommended for most real scans
+- recommended for most scans
 
 Optional sidecar exports:
 
 - `csv_out`
 - `md_out`
 
-These can be used with any primary output mode.
+These can be used together with any primary mode.
+
+## Realistic Example Profiles
+
+### Basic Direct-Target Scan
+
+File:
+- `examples/config.basic.yaml`
+
+Use it when:
+- you want to scan one known host
+- you want JSON and HTML output immediately
+- you do not need LDAP discovery
+
+### Domain-Aware Scan
+
+File:
+- `examples/config.domain.yaml`
+
+Use it when:
+- you want LDAP discovery by default
+- you want checkpoints for longer runs
+- you want console, JSON, HTML, CSV, and Markdown output together
+
+### Targeted Triage
+
+File:
+- `examples/config.targeted.yaml`
+
+Use it when:
+- you want to validate a high-value share quickly
+- you want to limit work with share/path filters
+- you want a narrower triage run instead of a broad environment sweep
 
 ## CLI Override Examples
 
-Use a config file, but override one field:
+Override credentials:
 
 ```bash
-./bin/snablr scan \
+snablr scan \
   --config examples/config.domain.yaml \
-  --max-scan-time 45m
-```
-
-Override credentials only:
-
-```bash
-./bin/snablr scan \
-  --config examples/config.targeted.yaml \
   --user 'DOMAIN\user' \
   --pass 'REPLACE_ME'
 ```
 
-Override output paths:
+Override output locations:
 
 ```bash
-./bin/snablr scan \
+snablr scan \
   --config examples/config.basic.yaml \
   --json-out output/basic.json \
   --html-out output/basic.html \
@@ -285,13 +322,21 @@ Override output paths:
   --md-out output/basic.md
 ```
 
-## Recommended Config Profiles
+Override scope:
 
-- `examples/config.basic.yaml`
-  Minimal direct-target scan with JSON and HTML output
+```bash
+snablr scan \
+  --config examples/config.targeted.yaml \
+  --share Finance \
+  --path Payroll/ \
+  --exclude-path Payroll/Old/
+```
 
-- `examples/config.domain.yaml`
-  Domain-aware scan with LDAP discovery, checkpoints, and full report output
+Override discovery behavior:
 
-- `examples/config.targeted.yaml`
-  Narrow scope triage using share and path filters
+```bash
+snablr scan \
+  --config examples/config.domain.yaml \
+  --dc dc01.example.local \
+  --base-dn 'OU=Servers,DC=example,DC=local'
+```

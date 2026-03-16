@@ -4,6 +4,7 @@ DIST_DIR := dist
 STAGE_DIR := $(DIST_DIR)/stage
 CMD := ./cmd/snablr
 GO ?= go
+ROOT_DIR := $(CURDIR)
 
 VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -16,20 +17,24 @@ LDFLAGS := -s -w \
 	-X 'snablr/internal/version.BuildDate=$(BUILD_DATE)'
 
 CGO_ENABLED ?= 0
-GOFLAGS := CGO_ENABLED=$(CGO_ENABLED)
+GOCACHE ?= $(ROOT_DIR)/.cache/go-build
+GOENV := CGO_ENABLED=$(CGO_ENABLED) GOCACHE=$(GOCACHE)
+ifneq ($(strip $(GOMODCACHE)),)
+GOENV += GOMODCACHE=$(GOMODCACHE)
+endif
 RELEASE_TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
 .PHONY: build test lint release release-snapshot clean
 
 build:
 	mkdir -p $(BIN_DIR)
-	$(GOFLAGS) $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP) $(CMD)
+	$(GOENV) $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP) $(CMD)
 
 test:
-	$(GOFLAGS) $(GO) test ./...
+	$(GOENV) $(GO) test ./...
 
 lint:
-	$(GOFLAGS) $(GO) vet ./...
+	$(GOENV) $(GO) vet ./...
 
 release:
 	$(MAKE) release-snapshot VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_DATE=$(BUILD_DATE)
@@ -52,7 +57,7 @@ release-snapshot:
 		echo "Building $$package_name"; \
 		rm -rf "$$stage_path"; \
 		mkdir -p "$$stage_path"; \
-		GOOS="$$os" GOARCH="$$arch" $(GOFLAGS) $(GO) build -ldflags "$(LDFLAGS)" -o "$$stage_path/$(APP)$$ext" $(CMD); \
+		GOOS="$$os" GOARCH="$$arch" $(GOENV) $(GO) build -ldflags "$(LDFLAGS)" -o "$$stage_path/$(APP)$$ext" $(CMD); \
 		cp README.md LICENSE "$$stage_path/"; \
 		if [ "$$archive_ext" = "zip" ]; then \
 			( cd "$(STAGE_DIR)" && zip -qr "../$$package_name.zip" "$$package_name" ); \

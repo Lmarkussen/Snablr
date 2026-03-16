@@ -49,7 +49,7 @@ The CI workflow also runs:
 
 Default rule packs live under `configs/rules/default/`.
 
-Organization-specific rules should usually go under `configs/rules/custom/` or under `examples/custom-rules/` as starter material.
+Organization-specific rules should usually go under `configs/rules/custom/` or under `examples/rules/custom/` as starter material.
 
 When adding or changing rules:
 

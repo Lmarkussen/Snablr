@@ -1,6 +1,6 @@
 # Rules
 
-Snablr uses YAML rule files so operators can maintain detections without changing Go code. The rule system is designed to be readable, testable, and easy to tune for real environments.
+Snablr uses YAML rule files so operators can add, remove, disable, test, and tune detections without recompiling the application.
 
 Rule files live under:
 
@@ -8,6 +8,33 @@ Rule files live under:
 - `configs/rules/custom/`
 
 Snablr loads every `.yml` and `.yaml` file in the configured rule directories.
+
+## Rule System Overview
+
+The rule engine is intentionally split from SMB enumeration and scan orchestration.
+
+That separation means:
+
+- the SMB layer only provides file metadata and content
+- the scanner only evaluates metadata and content against loaded rules
+- the rule pack can evolve independently from Go code
+
+Snablr supports three rule types:
+
+- `content`
+- `filename`
+- `extension`
+
+It also supports:
+
+- severity
+- confidence
+- tags
+- categories
+- include/exclude path logic
+- file extension filters
+- maximum file size filters
+- enable/disable without recompiling
 
 ## Rule File Structure
 
@@ -45,110 +72,78 @@ rules:
 Important fields:
 
 - `id`
-  Globally unique rule identifier.
-
+  Globally unique rule ID
 - `name`
-  Human-readable display name.
-
+  Human-readable display name
 - `description`
-  Short description of what the rule is meant to detect.
-
+  Short purpose statement
 - `type`
-  Match surface.
-  Supported values:
-  - `content`
-  - `filename`
-  - `extension`
-
+  Matching surface: `content`, `filename`, or `extension`
 - `pattern`
-  Regular expression to apply to the selected surface.
-
+  Regular expression applied to the selected surface
 - `case_sensitive`
-  Controls regex case sensitivity.
-
+  Controls regex case sensitivity
 - `severity`
-  Analyst-facing importance.
-  Supported values:
-  - `low`
-  - `medium`
-  - `high`
-  - `critical`
-
+  Analyst-facing importance: `low`, `medium`, `high`, `critical`
 - `confidence`
-  Optional confidence hint for the operator.
-  Supported values:
-  - `low`
-  - `medium`
-  - `high`
-
+  Optional signal hint: `low`, `medium`, `high`
 - `explanation`
-  Optional plain-English explanation shown in findings and reports.
-
+  Optional plain-English reason shown in findings and reports
 - `remediation`
-  Optional plain-English remediation guidance shown in findings and reports.
-
+  Optional plain-English remediation guidance shown in findings and reports
 - `tags`
-  Free-form labels used for grouping and filtering.
-
+  Free-form labels used for grouping and filtering
 - `category`
-  Broad grouping used in reports and triage.
-
+  Stable grouping used by reports and summaries
 - `enabled`
-  Controls whether the rule is active.
-
+  Controls whether the rule is active
 - `include_paths`
-  Only apply the rule when the path matches one of these prefixes or fragments.
-
+  Restrict the rule to matching paths
 - `exclude_paths`
-  Skip the rule when the path matches one of these prefixes or fragments.
-
+  Skip the rule for matching paths
 - `file_extensions`
-  Restrict the rule to specific file extensions.
-
+  Restrict the rule to certain extensions
 - `max_file_size`
-  Do not apply the rule to files larger than this many bytes.
-
+  Skip files larger than this many bytes for the rule
 - `action`
-  Controls how the match is treated.
-  Supported values:
-  - `report`
-  - `skip`
-  - `prioritize`
+  `report`, `skip`, or `prioritize`
 
-## Rule Types
+## How Matching Works
 
 ### `content`
 
 The regex is applied to file contents.
 
-Use this for:
+Use it for:
 
-- hardcoded password or token indicators
+- password assignments
+- token or secret assignments
+- connection strings
 - key or certificate block headers
-- connection string patterns
-- conservative PII or identifier review
+- conservative review indicators in config-like files
 
 ### `filename`
 
 The regex is applied to the basename of the file.
 
-Use this for:
+Use it for:
 
-- suspicious backup or export names
-- password manager artifacts
-- cloud credential filenames
+- credentials or secret keywords
+- backup or export naming
 - deployment answer files
+- password-manager artifacts
+- business-sensitive filenames
 
 ### `extension`
 
-The regex is applied to the normalized extension, such as `.xml` or `.pem`.
+The regex is applied to the normalized file extension, for example `.xml` or `.pem`.
 
-Use this for:
+Use it for:
 
-- key and certificate material
-- config files
+- config file types
 - script-heavy file types
-- export or database-related formats
+- key or certificate material
+- export or database file types
 
 ## Action Semantics
 
@@ -158,28 +153,15 @@ Emit a finding when the rule matches.
 
 ### `prioritize`
 
-Emit a finding and treat it as especially relevant for review.
+Emit a finding and mark the finding as especially relevant for review.
 
 ### `skip`
 
-Use the rule as an exclusion rule. Matching files or paths are skipped.
+Treat the rule as an exclusion rule so matching files or paths are skipped.
 
-## Rule Categories
+## Default Defensive Rule Pack
 
-Categories are free-form strings, but they should stay stable so outputs remain predictable.
-
-Common default categories include:
-
-- `credentials`
-- `cloud`
-- `crypto`
-- `deployment`
-- `configuration`
-- `directory-services`
-- `business-sensitive`
-- `exclusion`
-
-The default defensive rule pack is split across:
+The shipped default pack is organized into:
 
 - `content.yml`
 - `filenames.yml`
@@ -188,7 +170,19 @@ The default defensive rule pack is split across:
 - `pii.yml`
 - `infrastructure.yml`
 
-These default packs are intentionally tuned for defensive discovery and remediation review rather than extraction or exploitation.
+Broad categories covered by the defaults:
+
+- hardcoded secret indicators
+- generic credential exposure indicators
+- private key and certificate material indicators
+- cloud and infrastructure configuration indicators
+- database connection string indicators
+- unattended deployment and answer file indicators
+- backup and export naming indicators
+- password-manager artifact indicators
+- PII and business-sensitive review indicators
+- AD policy and administration review indicators
+- noisy exclusion rules for low-value media, binaries, caches, and temp paths
 
 ## Confidence, Explanation, And Remediation
 
@@ -198,8 +192,6 @@ Snablr supports three optional explainability fields:
 - `explanation`
 - `remediation`
 
-These fields are useful because they improve findings without changing detection behavior.
-
 Example:
 
 ```yaml
@@ -208,55 +200,50 @@ explanation: This pattern may indicate a hardcoded credential in a configuration
 remediation: Move credentials to a secure secret manager or environment variable.
 ```
 
-How they are used:
+How they appear:
 
-- console output
-  - keeps them concise, primarily as confidence and short rule notes
+- console
+  concise confidence and rule note output
+- JSON
+  structured finding fields for automation
+- HTML
+  visible explanation and remediation guidance in each finding group
 
-- JSON output
-  - includes them fully as structured finding fields
-
-- HTML report
-  - displays them directly in each finding for triage and remediation review
-
-Rules that do not include these fields still work normally.
+Rules without these fields still work normally.
 
 ## Validation
 
-Snablr validates rules before scanning or test execution.
+Snablr validates rules before scanning or rule testing.
 
 Validation checks include:
 
 - missing required fields
-- invalid rule type
-- invalid severity
-- invalid confidence
-- invalid action
+- invalid type, severity, confidence, or action values
 - bad regex patterns
 - duplicate IDs
 - unsupported YAML fields
 
-Validate rules with:
+Validate the active rule set:
 
 ```bash
-./bin/snablr rules validate --config configs/config.yaml
+snablr rules validate --config configs/config.yaml
 ```
 
 ## Testing Rules
 
-### Test One Rule File
+### Test One Rule File Against One Fixture
 
 ```bash
-./bin/snablr rules test \
+snablr rules test \
   --rule configs/rules/default/content.yml \
-  --input testdata/rules/fixtures/passwords/sample.conf \
+  --input testdata/rules/fixtures/content/password-assignment.conf \
   --verbose
 ```
 
-### Test A Rule Directory
+### Test A Rule Directory Against Many Fixtures
 
 ```bash
-./bin/snablr rules test-dir \
+snablr rules test-dir \
   --rules configs/rules/default \
   --fixtures testdata/rules/fixtures \
   --verbose
@@ -268,41 +255,36 @@ Exit codes:
 - `1` validation or execution error
 - `2` one or more matches
 
-This makes rule testing suitable for CI pipelines.
+That makes the rule testing path usable in CI pipelines and local tuning workflows.
 
 ## Tuning Rules
 
-Rule tuning should usually happen in this order:
+Recommended tuning order:
 
 1. narrow `exclude_paths`
 2. narrow `file_extensions`
 3. add `include_paths`
 4. disable noisy rules
-5. only then change the regex
+5. only then widen or rewrite regexes
 
-Recommended guidance:
+Guidance:
 
-- keep shipped defaults understandable
+- keep default packs readable and explainable
 - move organization-specific logic into custom rules
 - prefer several focused rules over one very broad rule
-- keep broad or noisy defaults disabled until you need them
+- leave broad or noisy detections disabled until you need them
 
-Examples of noisy-but-useful patterns:
+Common noisy candidates:
 
-- generic token assignment rules
+- generic token assignment patterns
 - broad business-sensitive filename rules
-- conservative PII-like content patterns
-
-See also:
-
-- `docs/tuning.md`
-- `docs/workflows.md`
+- conservative PII-like content matches
 
 ## Custom Rules
 
-The recommended approach is:
+Recommended workflow:
 
-1. keep `configs/rules/default/` as the shipped baseline
+1. leave `configs/rules/default/` as the shipped baseline
 2. add local rules under `configs/rules/custom/`
 3. validate and test those rules before use
 
@@ -333,4 +315,8 @@ rules:
     action: report
 ```
 
-The examples directory contains a similar sample rule you can copy and adapt.
+See also:
+
+- `docs/tuning.md`
+- `docs/workflows.md`
+- `examples/rules/custom/example.yml`

@@ -305,19 +305,26 @@ func closeSinks(sinks []scanner.FindingSink) error {
 }
 
 func createOutputFile(path string) (*os.File, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, fmt.Errorf("output path cannot be empty")
+	}
 	dir := filepath.Dir(path)
 	if dir != "." && dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, err
 		}
 	}
-	return os.Create(path)
+	return os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 }
 
 func uncPath(f scanner.Finding) string {
 	path := strings.ReplaceAll(f.FilePath, "/", `\`)
 	if f.Host == "" && f.Share == "" {
 		return path
+	}
+	if path != "" && !strings.HasPrefix(path, `\`) {
+		path = `\` + path
 	}
 	return fmt.Sprintf(`\\%s\%s%s`, valueOrDash(f.Host), valueOrDash(f.Share), path)
 }

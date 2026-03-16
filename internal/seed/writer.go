@@ -28,11 +28,57 @@ type seedClientPool struct {
 	clients map[string]smbWriter
 }
 
+type seedRunStats struct {
+	Candidates        int
+	Written           int
+	Skipped           int
+	DryRun            int
+	WrittenByCategory map[string]int
+	WrittenByShare    map[string]int
+}
+
 func newSeedClientPool(opts WriteOptions) *seedClientPool {
 	return &seedClientPool{
 		opts:    opts,
 		clients: make(map[string]smbWriter),
 	}
+}
+
+func newSeedRunStats(candidates int) *seedRunStats {
+	return &seedRunStats{
+		Candidates:        candidates,
+		WrittenByCategory: make(map[string]int),
+		WrittenByShare:    make(map[string]int),
+	}
+}
+
+func (s *seedRunStats) recordWritten(category, host, share string) {
+	if s == nil {
+		return
+	}
+	s.Written++
+	category = strings.TrimSpace(category)
+	if category != "" {
+		s.WrittenByCategory[category]++
+	}
+	shareKey := shareSummaryKey(host, share)
+	if shareKey != "" {
+		s.WrittenByShare[shareKey]++
+	}
+}
+
+func (s *seedRunStats) recordSkipped() {
+	if s == nil {
+		return
+	}
+	s.Skipped++
+}
+
+func (s *seedRunStats) recordDryRun() {
+	if s == nil {
+		return
+	}
+	s.DryRun++
 }
 
 func (p *seedClientPool) clientFor(host string) (smbWriter, error) {
@@ -101,6 +147,7 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 	}
 
 	manifest := NewManifest(opts.SeedPrefix)
+	stats := newSeedRunStats(len(files))
 	pool := newSeedClientPool(opts)
 	defer func() {
 		if err := pool.Close(); err != nil {
@@ -113,6 +160,9 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 			return manifest, err
 		}
 	}
+
+	logInfo(opts, "seed planning: candidates=%d eligible-share-targets=%d count-per-category=%d max-files=%d",
+		stats.Candidates, len(destinations), opts.CountPerCat, opts.MaxFiles)
 
 	for i, file := range files {
 		select {
@@ -138,6 +188,7 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 
 		if opts.DryRun {
 			entry.Status = "dry-run"
+			stats.recordDryRun()
 			logInfo(opts, "dry-run: would write %s/%s/%s [%s]", target.Host, target.Share, fullPath, file.Category)
 			manifest.Add(entry)
 			continue
@@ -154,6 +205,7 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 		}
 		if same {
 			entry.Status = "unchanged"
+			stats.recordSkipped()
 			logInfo(opts, "unchanged: %s/%s/%s", target.Host, target.Share, fullPath)
 			manifest.Add(entry)
 			continue
@@ -162,6 +214,7 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 			return manifest, fmt.Errorf("%s/%s/%s: write failed: %w", target.Host, target.Share, fullPath, err)
 		}
 		entry.Status = "written"
+		stats.recordWritten(file.Category, target.Host, target.Share)
 		logInfo(opts, "written: %s/%s/%s [%s]", target.Host, target.Share, fullPath, file.Category)
 		manifest.Add(entry)
 	}
@@ -169,6 +222,7 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 	if err := manifest.Write(opts.ManifestOut); err != nil {
 		return manifest, err
 	}
+	logSeedSummary(opts, stats, manifest)
 	return manifest, nil
 }
 
@@ -301,6 +355,51 @@ func normalizeShareName(name string) string {
 
 func normalizeHostKey(host string) string {
 	return strings.ToLower(strings.TrimSpace(host))
+}
+
+func shareSummaryKey(host, share string) string {
+	host = strings.TrimSpace(host)
+	share = strings.TrimSpace(share)
+	switch {
+	case host == "" && share == "":
+		return ""
+	case host == "":
+		return share
+	case share == "":
+		return host
+	default:
+		return host + "/" + share
+	}
+}
+
+func logSeedSummary(opts WriteOptions, stats *seedRunStats, manifest Manifest) {
+	if stats == nil {
+		return
+	}
+	logInfo(opts, "seed summary: candidates=%d written=%d skipped=%d dry-run=%d manifest-entries=%d",
+		stats.Candidates, stats.Written, stats.Skipped, stats.DryRun, len(manifest.Entries))
+
+	if len(stats.WrittenByCategory) > 0 {
+		keys := make([]string, 0, len(stats.WrittenByCategory))
+		for key := range stats.WrittenByCategory {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			logInfo(opts, "written by category: %s=%d", key, stats.WrittenByCategory[key])
+		}
+	}
+
+	if len(stats.WrittenByShare) > 0 {
+		keys := make([]string, 0, len(stats.WrittenByShare))
+		for key := range stats.WrittenByShare {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			logInfo(opts, "written by share: %s=%d", key, stats.WrittenByShare[key])
+		}
+	}
 }
 
 func logInfo(opts WriteOptions, format string, args ...any) {

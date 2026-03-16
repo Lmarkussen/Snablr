@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 )
@@ -15,7 +16,10 @@ func (c *Client) WriteFile(share, path string, data []byte) error {
 	}
 	defer fs.Umount()
 
-	normalizedPath := normalizeRemotePath(path)
+	normalizedPath, err := sanitizeWritableRemotePath(path)
+	if err != nil {
+		return err
+	}
 	dir := filepath.Dir(strings.ReplaceAll(normalizedPath, "/", string(os.PathSeparator)))
 	if dir != "." && dir != "" {
 		if err := fs.MkdirAll(strings.ReplaceAll(dir, string(os.PathSeparator), `\`), 0o755); err != nil {
@@ -36,9 +40,9 @@ func (c *Client) RemoveAll(share, path string) error {
 	}
 	defer fs.Umount()
 
-	normalizedPath := normalizeRemotePath(path)
-	if normalizedPath == "" {
-		return fmt.Errorf("remove path cannot be empty")
+	normalizedPath, err := sanitizeWritableRemotePath(path)
+	if err != nil {
+		return err
 	}
 
 	if err := fs.RemoveAll(strings.ReplaceAll(normalizedPath, "/", `\`)); err != nil && !os.IsNotExist(err) {
@@ -59,4 +63,24 @@ func (c *Client) FileContentEquals(share, path string, expected []byte) (bool, e
 		return false, err
 	}
 	return bytes.Equal(current, expected), nil
+}
+
+func sanitizeWritableRemotePath(path string) (string, error) {
+	normalizedPath := normalizeRemotePath(path)
+	if normalizedPath == "" {
+		return "", fmt.Errorf("remote path cannot be empty")
+	}
+
+	for _, segment := range strings.Split(normalizedPath, "/") {
+		switch segment {
+		case "", ".", "..":
+			return "", fmt.Errorf("remote path %q contains an invalid segment", path)
+		}
+	}
+
+	cleaned := pathpkg.Clean(normalizedPath)
+	if cleaned == "." || cleaned == "" {
+		return "", fmt.Errorf("remote path %q is invalid", path)
+	}
+	return cleaned, nil
 }

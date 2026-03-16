@@ -1,73 +1,56 @@
 # Snablr
 
-Snablr is a Go-based SMB share triage tool for defensive review of Windows file shares. It discovers targets, enumerates accessible shares, walks files, applies YAML-driven rules, and produces operator-friendly findings in console, JSON, HTML, CSV, and Markdown formats.
+Snablr is a Go-based SMB share triage tool for defensive review of Windows file shares. It discovers likely scan targets, enumerates accessible shares, walks files, applies YAML-driven detection rules, and produces structured findings for remediation and hygiene review.
 
-The project is inspired by the general Snaffler workflow, but it is implemented as a clean Go codebase with a rules-first architecture, offline rule testing, resumable scans, and output/reporting intended for remediation and hygiene review.
+The project is inspired by the general Snaffler workflow, but it is implemented as a clean Go codebase with a rules-first design, resumable scans, offline rule testing, and reporting aimed at defensive triage rather than exploitation.
 
 ## Feature Overview
 
 - Domain-aware target discovery with LDAP and optional DFS discovery
-- SMB share enumeration with recursive file walking
-- YAML rule packs for filename, extension, and content detection
-- Offline rule validation and fixture-based rule testing
-- Scan planning and priority scoring for high-value shares and paths
+- SMB share enumeration, metadata collection, and recursive file walking
+- YAML rule packs for filename, extension, and content matching
+- Rule validation, fixture-based testing, and custom rule overlays
+- Prioritized scan planning for high-value targets, shares, and paths
 - Concurrent file scanning with adaptive worker scaling
-- Checkpoint and resume support for long-running scans
-- Console, JSON, HTML, CSV, and Markdown exports
-- Metrics, progress reporting, and scan timing visibility
+- Checkpoint and resume support for longer scans
+- Console, JSON, HTML, CSV, and Markdown output formats
+- Baseline and diff mode for repeated scans and change tracking
 
-## Architecture Overview
+## Architecture Summary
 
-Snablr is organized around a few focused runtime modules:
+Snablr is organized around a small set of focused modules:
 
 - `discovery`
-  - resolves targets from CLI input, files, LDAP, reachability checks, and optional DFS discovery
+  Resolves targets from CLI input, target files, LDAP, reachability checks, and optional DFS discovery.
 - `smb`
-  - handles SMB connectivity, share enumeration, metadata collection, directory walking, and file reads
-- `scanner`
-  - evaluates filenames, extensions, and file content against loaded rules
+  Handles SMB connectivity, share enumeration, share metadata, directory walking, and file reads.
 - `rules`
-  - loads, validates, manages, and tests YAML rules
+  Loads, validates, manages, and tests YAML rules.
 - `planner`
-  - prioritizes hosts, shares, and files before they reach the worker pool
+  Prioritizes hosts, shares, and file paths before work reaches the scanner.
+- `scanner`
+  Applies filename, extension, and content rules to file metadata and content.
 - `output`
-  - renders findings to console, JSON, HTML, CSV, and Markdown
+  Renders findings to console, JSON, HTML, CSV, and Markdown.
 - `state`
-  - tracks checkpoint state for resumable scans
+  Stores checkpoint data for resumable scans.
 - `metrics`
-  - records counters and phase timing data used by progress reporting and reports
-
-## Repository Layout
-
-```text
-cmd/snablr/              CLI entrypoint
-internal/app/            scan orchestration
-internal/discovery/      LDAP, DFS, targets, reachability
-internal/smb/            SMB client, shares, walker, reader
-internal/scanner/        scan engine, workers, results
-internal/rules/          YAML schema, loader, validator, tester
-internal/planner/        priority planning
-internal/output/         writers and reports
-internal/state/          checkpoint and resume
-internal/metrics/        counters and timers
-internal/ui/             banner and progress display
-configs/                 default runtime config and rule packs
-docs/                    focused documentation
-examples/                copyable examples and starter material
-testdata/                safe synthetic fixtures for tests
-```
+  Tracks counters and phase timing for progress and reports.
 
 ## Installation
 
 ### Requirements
 
-- Go `1.22+`
-- Network access to reachable SMB targets on TCP `445`
-- Valid credentials for the target environment
+- Go `1.24+`
+- Network access to target SMB hosts on TCP `445`
+- Valid SMB credentials for target shares
+- LDAP connectivity and credentials if you want automatic domain discovery
 
-### Download Release Binaries
+### Download A Release Binary
 
-Prebuilt binaries are published on the GitHub releases page:
+Prebuilt archives are published on GitHub releases.
+
+Examples:
 
 - `snablr_v1.0.0_linux_amd64.tar.gz`
 - `snablr_v1.0.0_linux_arm64.tar.gz`
@@ -75,295 +58,228 @@ Prebuilt binaries are published on the GitHub releases page:
 - `snablr_v1.0.0_darwin_arm64.tar.gz`
 - `snablr_v1.0.0_windows_amd64.zip`
 
-Each archive contains the `snablr` binary plus `README.md` and `LICENSE`.
+Linux/macOS archives contain:
 
-To install from a release archive:
+- `snablr`
+- `README.md`
+- `LICENSE`
 
-```bash
-tar -xzf snablr_v1.0.0_linux_amd64.tar.gz
-cd snablr_v1.0.0_linux_amd64
-./snablr version
-```
+Windows archives contain:
+
+- `snablr.exe`
+- `README.md`
+- `LICENSE`
 
 ### Build From Source
 
+Recommended local build:
+
 ```bash
-git clone <repo-url>
-cd snablr
+git clone https://github.com/Lmarkussen/Snablr.git
+cd Snablr
 make build
 ./bin/snablr version
 ```
 
-### Build Directly With Go
+Direct Go build:
 
 ```bash
 go build -o bin/snablr ./cmd/snablr
 ./bin/snablr --help
 ```
 
-### Install Into `GOBIN`
-
-```bash
-go install ./cmd/snablr
-snablr version
-```
-
-### Automated Releases
-
-Snablr uses a tag-driven GitHub Actions release workflow.
-
-Pushing a tag that matches `v*` will:
-
-- run `go vet ./...`
-- run `go test ./...`
-- build release binaries for Linux, macOS, and Windows
-- inject version, commit, and build date metadata
-- package archives and attach them to the GitHub release
-
-Example:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+Note:
+- `make build` injects version, commit, and build date metadata.
+- Plain `go build` is fine for development, but will usually show `dev` / `unknown` metadata unless you pass ldflags yourself.
 
 ## Quick Start
 
-### Show Help
+Direct target scan with JSON and HTML output:
 
 ```bash
-./bin/snablr --help
-./bin/snablr scan --help
-./bin/snablr rules validate --config configs/config.yaml
+snablr scan --targets 10.0.0.5 --user USER --pass PASS --output-format all --json-out results.json --html-out report.html
 ```
 
-### Scan a Single Host
+That workflow:
+
+1. loads config defaults and rule packs
+2. uses the explicit target instead of LDAP discovery
+3. checks SMB reachability unless disabled
+4. enumerates accessible shares
+5. scans matching files with the active rule set
+6. writes findings to console, JSON, and HTML
+
+## Common Workflows
+
+### Scan A Single Host
 
 ```bash
-./bin/snablr scan \
+snablr scan \
   --targets 172.16.0.90 \
   --user 'DOMAIN\user' \
-  --pass 'Password123!' \
+  --pass 'REPLACE_ME' \
   --output-format console
 ```
 
-### Scan Using the Config File
+### Use A Config File
 
 ```bash
-./bin/snablr scan --config configs/config.yaml
+snablr scan --config examples/config.basic.yaml
 ```
 
 ### Let LDAP Discover Targets
 
+If `targets` and `targets_file` are empty, Snablr tries to detect domain context and discover computers through LDAP unless `--no-ldap` is set.
+
 ```bash
-./bin/snablr scan \
+snablr scan \
   --user 'DOMAIN\user' \
-  --pass 'Password123!' \
+  --pass 'REPLACE_ME' \
   --output-format console
 ```
 
-### Restrict Scope
+### Restrict Scan Scope
 
 ```bash
-./bin/snablr scan \
-  --config configs/config.yaml \
+snablr scan \
+  --config examples/config.targeted.yaml \
   --share Finance \
-  --exclude-share Backups \
-  --path Policies/ \
+  --path Payroll/ \
   --max-depth 4
 ```
 
-## Scan Examples
-
-### Combined Report Output
+### Compare Against A Baseline
 
 ```bash
-./bin/snablr scan \
-  --targets 172.16.0.90 \
-  --user 'DOMAIN\user' \
-  --pass 'Password123!' \
+snablr scan \
+  --config examples/config.domain.yaml \
+  --baseline previous-results.json \
   --output-format all \
   --json-out results.json \
-  --html-out report.html \
-  --csv-out findings.csv \
-  --md-out summary.md
+  --html-out report.html
 ```
 
-### Long-Running Resumable Scan
+Or compare two existing JSON reports directly:
 
 ```bash
-./bin/snablr scan \
-  --config configs/config.yaml \
-  --checkpoint-file state/checkpoint.json \
-  --resume \
-  --max-scan-time 2h
+snablr diff --old previous-results.json --new results.json
 ```
 
-### AD-Focused Scan
+## How LDAP Discovery Works
+
+When no manual targets are supplied, Snablr can:
+
+1. detect the domain from environment variables, hostname data, or resolver configuration
+2. find a domain controller through DNS SRV lookups
+3. query LDAP RootDSE for the default naming context
+4. enumerate computer objects from that base DN
+5. merge and deduplicate those discovered hosts into the normal target pipeline
+
+You can override discovery with:
+
+- `--no-ldap`
+- `--domain`
+- `--dc`
+- `--base-dn`
+
+See:
+- [Getting Started](docs/getting-started.md)
+- [Configuration](docs/configuration.md)
+
+## How SMB Scanning Works
+
+Once Snablr has a target list, it:
+
+1. optionally checks TCP `445` reachability
+2. plans host/share/file order so high-value targets go first
+3. authenticates to SMB using the provided credentials
+4. enumerates accessible shares and share metadata
+5. walks files and directories with scope filters applied early
+6. loads file content only when content rules actually need it
+7. records findings, metrics, and optional checkpoints
+
+This separation matters:
+
+- discovery finds likely targets
+- SMB handles transport and file access
+- scanner applies rules
+- output turns findings into reports
+
+## Rule System Overview
+
+Rules are stored as editable YAML files under:
+
+- `configs/rules/default/`
+- `configs/rules/custom/`
+
+They support:
+
+- `content`, `filename`, and `extension` rule types
+- severity, tags, category, confidence, explanation, and remediation fields
+- path include/exclude filters
+- extension filters
+- runtime enable/disable without recompiling
+
+Validate and test rules with:
 
 ```bash
-./bin/snablr scan \
-  --config configs/config.yaml \
-  --prioritize-ad-shares \
-  --only-ad-shares
+snablr rules validate --config configs/config.yaml
+snablr rules test --rule configs/rules/default/content.yml --input testdata/rules/fixtures/content/password-assignment.conf --verbose
+snablr rules test-dir --rules configs/rules/default --fixtures testdata/rules/fixtures --verbose
 ```
 
-### DFS-Aware Scan
+See:
+- [Rules](docs/rules.md)
+- [Rule Tuning](docs/tuning.md)
 
-```bash
-./bin/snablr scan \
-  --config configs/config.yaml \
-  --discover-dfs
-```
+## HTML Report Usage
 
-## Rule Testing Examples
+The HTML report is the main post-scan triage artifact. It is standalone and does not require external assets.
 
-### List and Validate Rules
+What to look at first:
 
-```bash
-./bin/snablr rules list --config configs/config.yaml
-./bin/snablr rules validate --config configs/config.yaml
-```
+1. summary cards
+   Hosts scanned, shares scanned, files scanned, matches, skipped files, read errors, and scan duration
+2. severity summary
+   Helps you decide whether to start with critical/high findings or broad category review
+3. category summary
+   Shows where the bulk of findings live
+4. grouped findings
+   Findings are grouped by category, then ordered by severity for practical review
 
-### Show a Specific Rule
+How to interpret a finding row:
 
-```bash
-./bin/snablr rules show \
-  --config configs/config.yaml \
-  --id content.password_assignment_indicators
-```
+- severity and confidence badges show urgency and likely signal quality
+- host/share/file path identify where the finding came from
+- source badges highlight LDAP, DFS, SYSVOL, NETLOGON, and planner priority context
+- match snippet shows the evidence that triggered the rule
+- rule explanation tells you why the rule exists
+- remediation guidance helps you turn the finding into defensive follow-up
 
-### Test a Single Rule File Against One Fixture
+There is no screenshot committed yet, so the report sections above are described directly in the docs.
 
-```bash
-./bin/snablr rules test \
-  --rule configs/rules/default/content.yml \
-  --input testdata/rules/fixtures/passwords/sample.conf \
-  --verbose
-```
+See:
+- [Reporting](docs/reporting.md)
 
-### Test a Rule Directory Against a Fixture Directory
+## Examples
 
-```bash
-./bin/snablr rules test-dir \
-  --rules configs/rules/default \
-  --fixtures testdata/rules/fixtures \
-  --verbose
-```
+The [`examples`](examples) directory includes:
 
-Rule testing exit codes:
-
-- `0`: success, no matches
-- `1`: validation or execution error
-- `2`: one or more rules matched
-
-## Output and Reporting
-
-Snablr supports these primary output modes:
-
-- `console`
-- `json`
-- `html`
-- `all`
-
-Optional sidecar exports:
-
-- `--csv-out findings.csv`
-- `--md-out summary.md`
-
-### Output Examples
-
-```bash
-./bin/snablr scan --output-format console
-./bin/snablr scan --output-format json --json-out results.json
-./bin/snablr scan --output-format html --html-out report.html
-./bin/snablr scan --output-format all --json-out results.json --html-out report.html --csv-out findings.csv --md-out summary.md
-```
-
-### HTML Report
-
-The HTML report is a standalone triage artifact with:
-
-- summary cards
-- severity and category summaries
-- collapsible finding groups
-- sticky headers
-- quick filtering
-- share, DFS, SYSVOL, NETLOGON, and priority metadata
-
-Screenshot placeholder:
-
-- Add a future screenshot under `docs/images/` and reference it here once a public example scan is available.
-
-## Configuration
-
-The default configuration file is [configs/config.yaml](configs/config.yaml).
-
-Example configuration:
-
-```yaml
-app:
-  name: snablr
-  log_level: info
-  banner_path: internal/ui/assets/snablr.txt
-
-scan:
-  targets: []
-  targets_file: ""
-  username: "DOMAIN\\user"
-  password: "Password123!"
-  share: []
-  exclude_share: []
-  path: []
-  exclude_path: []
-  max_depth: 0
-  worker_count: 0
-  max_file_size: 10485760
-  no_ldap: false
-  domain: ""
-  dc: ""
-  base_dn: ""
-  discover_dfs: false
-  prioritize_ad_shares: true
-  only_ad_shares: false
-  max_scan_time: ""
-  checkpoint_file: ""
-  resume: false
-  skip_reachability_check: false
-  reachability_timeout_seconds: 3
-
-rules:
-  rules_directory: ""
-  fail_on_invalid: false
-
-output:
-  output_format: all
-  json_out: results.json
-  html_out: report.html
-  csv_out: findings.csv
-  md_out: summary.md
-  pretty: true
-```
-
-CLI flags override configuration values.
-
-## Examples Directory
-
-The [examples](examples) directory contains:
-
-- [config.basic.yaml](examples/config.basic.yaml)
-- [config.domain.yaml](examples/config.domain.yaml)
-- [config.targeted.yaml](examples/config.targeted.yaml)
-- [commands.md](examples/commands.md)
-- [custom-rules](examples/custom-rules)
-- [rules/custom/example.yml](examples/rules/custom/example.yml)
-- [output-layout](examples/output-layout)
+- [`config.basic.yaml`](examples/config.basic.yaml)
+- [`config.domain.yaml`](examples/config.domain.yaml)
+- [`config.targeted.yaml`](examples/config.targeted.yaml)
+- [`rules/custom/example.yml`](examples/rules/custom/example.yml)
+- [`commands.md`](examples/commands.md)
 
 ## Additional Documentation
 
-- [Rule System](docs/rules.md)
-- [Rule Tuning](docs/tuning.md)
-- [Performance Notes](docs/performance.md)
+- [Getting Started](docs/getting-started.md)
+- [Configuration](docs/configuration.md)
+- [Rules](docs/rules.md)
+- [Reporting](docs/reporting.md)
+- [Architecture](docs/architecture.md)
+- [Workflows](docs/workflows.md)
+- [Validation Report](docs/validation-report.md)
 
 ## Development
 
@@ -376,17 +292,15 @@ make lint
 make release-snapshot VERSION=v1.0.0
 ```
 
-`make release` is kept as an alias to `make release-snapshot`.
+`make release` is an alias to `make release-snapshot`.
 
-Local release snapshots generate the same packaged target matrix used by the GitHub release workflow:
+The release snapshot and GitHub release workflow build:
 
 - `linux/amd64`
 - `linux/arm64`
 - `darwin/amd64`
 - `darwin/arm64`
 - `windows/amd64`
-
-Contribution guidance is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

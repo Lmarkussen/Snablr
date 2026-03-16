@@ -1,97 +1,107 @@
 # Getting Started
 
-Snablr is a Go-based SMB share triage tool for defensive review of Windows file shares. It discovers scan targets, enumerates accessible shares, walks files, applies YAML-driven rules, and writes findings in several formats for remediation and review.
+Snablr is a defensive SMB share triage tool. It helps you discover likely Windows file share targets, enumerate accessible shares, scan filenames and file content with YAML rules, and produce review-friendly outputs for remediation work.
 
-This guide covers the shortest path from a clone of the repository to a first successful scan.
+This guide is the shortest path from a fresh clone to a first useful run.
 
 ## What Snablr Does
 
-At a high level, Snablr:
+At a high level, a Snablr scan does this:
 
-1. loads configuration and rule packs
-2. discovers or accepts scan targets
-3. checks SMB reachability
-4. prioritizes hosts, shares, and files
-5. walks shares and scans matching files
-6. writes console, JSON, HTML, CSV, or Markdown output
+1. load configuration and rule packs
+2. collect targets from CLI input, target files, or LDAP discovery
+3. test SMB reachability on TCP `445`
+4. prioritize hosts, shares, and paths
+5. enumerate shares and walk matching files
+6. apply filename, extension, and content rules
+7. write findings to console, JSON, HTML, CSV, or Markdown
 
-The project is intended for defensive use cases such as:
+The tool is intended for:
 
-- share hygiene review
-- detection tuning
-- identifying exposed sensitive configuration or export material
-- producing remediation-oriented review artifacts
+- file share hygiene review
+- remediation-oriented triage
+- rule tuning and coverage testing
+- repeated scans with baseline comparison
 
-## Prerequisites
+## Requirements
 
-- Go `1.22+`
+- Go `1.24+`
 - network access to target SMB hosts on TCP `445`
-- valid credentials for the target environment
-
-If you want Snablr to discover targets from Active Directory automatically, you also need LDAP connectivity to a domain controller.
+- valid SMB credentials for the target environment
+- LDAP access and credentials if you want automatic domain discovery
 
 ## Build Snablr
 
-### Using Make
+Recommended local build:
 
 ```bash
 make build
 ```
 
-This builds the binary into `bin/snablr`.
+This creates:
 
-### Using Go Directly
+- `bin/snablr`
 
-```bash
-go build -o bin/snablr ./cmd/snablr
-```
-
-### Verify the Build
+Verify the build:
 
 ```bash
 ./bin/snablr version
 ./bin/snablr --help
 ```
 
+Alternative build:
+
+```bash
+go build -o bin/snablr ./cmd/snablr
+```
+
+Note:
+- `make build` injects version metadata.
+- plain `go build` is fine for development, but usually reports `dev` / `unknown` metadata unless you provide ldflags.
+
 ## First Scan: Direct Host
 
-The simplest first run is a direct scan against one host:
+Start with one explicit target:
 
 ```bash
 ./bin/snablr scan \
   --targets 172.16.0.90 \
   --user 'DOMAIN\user' \
   --pass 'REPLACE_ME' \
-  --output-format console
+  --output-format all \
+  --json-out results.json \
+  --html-out report.html
 ```
 
 Expected behavior:
 
 - the banner prints
-- rules are loaded and validated
-- the host is checked for SMB reachability
+- the rule pack loads and validates
+- the target is checked for SMB reachability
 - accessible shares are enumerated
-- files are scanned according to the active rule pack
-- findings print to the console if matches are found
+- files are filtered, prioritized, and scanned
+- findings are written to console, JSON, and HTML
 
 ## First Scan: Config-Driven
 
-For a more repeatable workflow, use one of the example configs:
+For repeatable usage, start from one of the example configs.
+
+Minimal direct-target example:
 
 ```bash
 ./bin/snablr scan --config examples/config.basic.yaml
 ```
 
-The basic example shows:
+That profile demonstrates:
 
-- a direct target list
+- explicit targets
 - placeholder credentials
 - adaptive worker scaling
 - combined JSON and HTML output
 
 ## First Scan: Domain-Aware
 
-If you want Snablr to discover targets from Active Directory, leave explicit targets empty and provide credentials:
+If you do not provide targets, Snablr tries LDAP discovery by default unless `--no-ldap` is set.
 
 ```bash
 ./bin/snablr scan \
@@ -100,7 +110,7 @@ If you want Snablr to discover targets from Active Directory, leave explicit tar
   --output-format console
 ```
 
-Or use the example domain-aware config:
+Domain-aware example config:
 
 ```bash
 ./bin/snablr scan --config examples/config.domain.yaml
@@ -108,14 +118,15 @@ Or use the example domain-aware config:
 
 Expected behavior:
 
-- Snablr attempts to determine domain context
-- LDAP discovery loads likely computer targets
-- SMB reachability checks reduce wasted connection attempts
-- high-value shares are prioritized before lower-value ones
+- Snablr tries to determine domain context
+- it selects or uses a domain controller
+- it queries LDAP for computer objects
+- it merges discovered hosts into the target pipeline
+- it tests reachability before SMB enumeration
 
 ## First Scan: Targeted Triage
 
-If you want to validate a specific share or path quickly:
+If you want a fast, narrow validation run:
 
 ```bash
 ./bin/snablr scan \
@@ -134,13 +145,51 @@ Or use the example targeted config:
 ./bin/snablr scan --config examples/config.targeted.yaml
 ```
 
-## Expected Outputs
+## How LDAP Discovery Fits In
 
-Snablr supports several output modes.
+LDAP discovery is used when:
+
+- `targets` is empty
+- `targets_file` is empty
+- `--no-ldap` is not set
+
+The flow is:
+
+1. detect domain context from environment, hostname, or resolver settings
+2. discover a domain controller through DNS SRV lookups or `--dc`
+3. query LDAP RootDSE for the default naming context
+4. enumerate computer objects
+5. merge those hosts into the normal scan pipeline
+
+Useful overrides:
+
+- `--no-ldap`
+- `--domain`
+- `--dc`
+- `--base-dn`
+
+## How SMB Scanning Fits In
+
+Once targets are ready, Snablr:
+
+1. tests TCP `445` reachability unless disabled
+2. plans hosts and shares so likely high-value work happens first
+3. connects over SMB with the provided credentials
+4. enumerates accessible shares and share metadata
+5. walks files with include/exclude filters applied early
+6. reads file content only when content rules require it
+
+This means:
+
+- share and path filters reduce work before scanning
+- large files are skipped early
+- content reads are lazy instead of unconditional
+
+## Expected Outputs
 
 ### Console
 
-Best for live operator feedback.
+Best for live terminal use.
 
 Example:
 
@@ -156,7 +205,7 @@ Match: password=Secret123
 
 ### JSON
 
-Best for automation, post-processing, and downstream tooling.
+Best for automation and diff/baseline workflows.
 
 ```bash
 ./bin/snablr scan \
@@ -167,7 +216,7 @@ Best for automation, post-processing, and downstream tooling.
 
 ### HTML
 
-Best for post-scan review in a browser.
+Best for manual triage and remediation review.
 
 ```bash
 ./bin/snablr scan \
@@ -178,7 +227,7 @@ Best for post-scan review in a browser.
 
 ### Combined Output
 
-Recommended for most real scans:
+Recommended for most real runs:
 
 ```bash
 ./bin/snablr scan \
@@ -190,20 +239,59 @@ Recommended for most real scans:
   --md-out output/summary.md
 ```
 
+## First Rule Validation
+
+Before a live scan, validate the rule pack:
+
+```bash
+./bin/snablr rules validate --config configs/config.yaml
+```
+
+Test one rule file against one known fixture:
+
+```bash
+./bin/snablr rules test \
+  --rule configs/rules/default/content.yml \
+  --input testdata/rules/fixtures/content/password-assignment.conf \
+  --verbose
+```
+
+## First Baseline / Diff Workflow
+
+Run a scan and keep the JSON output:
+
+```bash
+./bin/snablr scan \
+  --config examples/config.domain.yaml \
+  --output-format all \
+  --json-out results.json \
+  --html-out report.html
+```
+
+Later, compare a new run against that baseline:
+
+```bash
+./bin/snablr scan \
+  --config examples/config.domain.yaml \
+  --baseline results.json \
+  --output-format all \
+  --json-out results-new.json \
+  --html-out report-new.html
+```
+
+Or compare two existing JSON reports directly:
+
+```bash
+./bin/snablr diff --old results.json --new results-new.json
+```
+
 ## Next Steps
 
-After your first scan:
+After the first successful run:
 
-1. validate and review the active rule pack
-2. add organization-specific rules under a custom rules directory
-3. test those rules against fixtures before using them live
-4. use checkpoints for larger scans
-5. review the HTML report for grouped triage
-
-Related docs:
-
-- `docs/configuration.md`
-- `docs/rules.md`
-- `docs/reporting.md`
-- `docs/workflows.md`
-- `docs/troubleshooting.md`
+1. review `docs/configuration.md`
+2. review `docs/rules.md`
+3. review `docs/reporting.md`
+4. add custom rules under `configs/rules/custom/`
+5. use checkpoints for long scans
+6. keep JSON output for later baseline comparisons

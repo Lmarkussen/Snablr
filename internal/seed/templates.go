@@ -472,7 +472,11 @@ func text(lines ...string) []byte {
 func mustJSON(v any) []byte {
 	out, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		panic(fmt.Sprintf("seed template json marshal failed: %v", err))
+		return text(
+			"snablr_seed_error=true",
+			"error=synthetic_json_render_failed",
+			"detail="+fmt.Sprintf("%v", err),
+		)
 	}
 	return append(out, '\n')
 }

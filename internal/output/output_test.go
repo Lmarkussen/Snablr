@@ -63,6 +63,43 @@ func sampleFinding() scanner.Finding {
 	}
 }
 
+func sampleHeuristicFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:              "filename.password_export",
+		RuleName:            "Password Export Filename",
+		Severity:            "medium",
+		Confidence:          "medium",
+		RuleConfidence:      "medium",
+		ConfidenceScore:     54,
+		ConfidenceReasons:   []string{"filename rule matched \"passwords\" for Detect credential-style exports.", "planner marked this path as relevant review material"},
+		Category:            "credentials",
+		Priority:            72,
+		PriorityReason:      "test filename priority reason",
+		SharePriority:       60,
+		SharePriorityReason: "user profile share",
+		FilePath:            "Users/Alice/Desktop/passwords.txt",
+		Share:               "Users",
+		ShareDescription:    "User profile home directories",
+		ShareType:           "disk",
+		Host:                "fs01",
+		Source:              "cli",
+		SignalType:          "filename",
+		Match:               "passwords",
+		MatchedText:         "passwords",
+		MatchedTextRedacted: "passwords",
+		MatchReason:         "filename matched a heuristic naming pattern covered by the rule.",
+		RuleExplanation:     "This heuristic catches filenames that commonly indicate plaintext credential exports.",
+		RuleRemediation:     "Review the file contents and remove plaintext secrets from shared locations.",
+		MatchedRuleIDs:      []string{"filename.password_export"},
+		MatchedSignalTypes:  []string{"filename", "path"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "filename", RuleID: "filename.password_export", RuleName: "Password Export Filename", Match: "passwords", Confidence: "medium", Weight: 18, Reason: "filename rule matched \"passwords\" for Detect credential-style exports."},
+			{SignalType: "path", Weight: 12, Reason: "path contains a desktop-style review location"},
+		},
+		Tags: []string{"credentials", "filenames", "review"},
+	}
+}
+
 func TestJSONWriterGeneratesStructuredReport(t *testing.T) {
 	t.Parallel()
 
@@ -193,12 +230,15 @@ func TestHTMLWriterRendersStandaloneTriageReport(t *testing.T) {
 	if err := writer.WriteFinding(sampleFinding()); err != nil {
 		t.Fatalf("WriteFinding returned error: %v", err)
 	}
+	if err := writer.WriteFinding(sampleHeuristicFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
 	if err := writer.Close(); err != nil {
 		t.Fatalf("Close returned error: %v", err)
 	}
 
 	out := buf.String()
-	for _, want := range []string{"Snablr Scan Report", "Version", "quickFilter", "Severity Summary", "Category Summary", "Host Summary", "SYSVOL", "Type: sysvol", "Description: Domain policies and scripts", "source dfs", "signal content", "Correlated rules", "Signals:", "Matched text: password = ********", "Potential account context: user = alice", "Line 12", "Rule Explanation", "confidence high", "Supporting Signals", "Remediation"} {
+	for _, want := range []string{"Snablr Scan Report", "Version", "quickFilter", "Severity Summary", "Category Summary", "Host Summary", "SYSVOL", "Signal Type", "Password Export Filename", "Show Evidence", "Visible Evidence", "Raw Supporting Signals", "password = ********", "password = ReplaceMe123!", "user = alice", "Line Number", "Heuristic file hit", "filename matched a heuristic naming pattern covered by the rule.", "Rule Explanation", "confidence high", "Supporting Signals", "Remediation"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected html output to contain %q", want)
 		}

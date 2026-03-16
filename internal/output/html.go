@@ -61,25 +61,30 @@ type severitySummary struct {
 
 func NewHTMLWriter(w io.Writer, closer io.Closer) (*HTMLWriter, error) {
 	tmpl, err := template.New("report.html.tmpl").Funcs(template.FuncMap{
-		"joinTags":         strings.Join,
-		"joinList":         strings.Join,
-		"severityClass":    severityClass,
-		"confidenceClass":  confidenceClass,
-		"priorityClass":    priorityClass,
-		"priorityLabel":    priorityLabel,
-		"sourceClass":      sourceClass,
-		"diffClass":        diffClass,
-		"diffLabel":        diffLabel,
-		"signalLabel":      signalLabel,
-		"signalClass":      signalClass,
-		"primarySignal":    primarySignal,
-		"signalMatchLabel": signalMatchLabel,
-		"truncatePath":     truncatePath,
-		"uncPath":          uncPath,
-		"valueOrDash":      valueOrDash,
-		"formatScanTime":   formatScanTime,
-		"formatDuration":   formatDuration,
-		"slug":             slug,
+		"joinTags":          strings.Join,
+		"joinList":          strings.Join,
+		"severityClass":     severityClass,
+		"confidenceClass":   confidenceClass,
+		"priorityClass":     priorityClass,
+		"priorityLabel":     priorityLabel,
+		"sourceClass":       sourceClass,
+		"diffClass":         diffClass,
+		"diffLabel":         diffLabel,
+		"signalLabel":       signalLabel,
+		"signalClass":       signalClass,
+		"primarySignal":     primarySignal,
+		"signalMatchLabel":  signalMatchLabel,
+		"truncatePath":      truncatePath,
+		"uncPath":           uncPath,
+		"valueOrDash":       valueOrDash,
+		"displayMatch":      displayMatch,
+		"displayContext":    displayContext,
+		"displayRawMatch":   displayRawMatch,
+		"displayRawContext": displayRawContext,
+		"isHeuristicHit":    isHeuristicHit,
+		"formatScanTime":    formatScanTime,
+		"formatDuration":    formatDuration,
+		"slug":              slug,
 	}).ParseFS(reportTemplates, "templates/report.html.tmpl")
 	if err != nil {
 		return nil, err
@@ -290,6 +295,49 @@ func signalMatchLabel(signal string) string {
 		return "Matched directory token"
 	default:
 		return "Matched value"
+	}
+}
+
+func displayMatch(f scanner.Finding) string {
+	if strings.TrimSpace(f.MatchedTextRedacted) != "" {
+		return strings.TrimSpace(f.MatchedTextRedacted)
+	}
+	if strings.TrimSpace(f.MatchedText) != "" {
+		return strings.TrimSpace(f.MatchedText)
+	}
+	return strings.TrimSpace(f.Match)
+}
+
+func displayRawMatch(f scanner.Finding) string {
+	if strings.TrimSpace(f.MatchedText) != "" {
+		return strings.TrimSpace(f.MatchedText)
+	}
+	return strings.TrimSpace(f.Match)
+}
+
+func displayContext(f scanner.Finding) string {
+	if strings.TrimSpace(f.ContextRedacted) != "" {
+		return strings.TrimSpace(f.ContextRedacted)
+	}
+	if strings.TrimSpace(f.Context) != "" {
+		return strings.TrimSpace(f.Context)
+	}
+	return strings.TrimSpace(f.Snippet)
+}
+
+func displayRawContext(f scanner.Finding) string {
+	if strings.TrimSpace(f.Context) != "" {
+		return strings.TrimSpace(f.Context)
+	}
+	return strings.TrimSpace(f.Snippet)
+}
+
+func isHeuristicHit(f scanner.Finding) bool {
+	switch strings.ToLower(strings.TrimSpace(primarySignal(f))) {
+	case "filename", "extension", "path", "directory":
+		return true
+	default:
+		return false
 	}
 }
 

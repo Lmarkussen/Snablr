@@ -134,30 +134,38 @@ type jsonDiffSummary struct {
 }
 
 type jsonFinding struct {
-	Host                string   `json:"host,omitempty"`
-	Share               string   `json:"share,omitempty"`
-	ShareDescription    string   `json:"share_description,omitempty"`
-	ShareType           string   `json:"share_type,omitempty"`
-	FilePath            string   `json:"file_path"`
-	Source              string   `json:"source,omitempty"`
-	DFSNamespacePath    string   `json:"dfs_namespace_path,omitempty"`
-	DFSLinkPath         string   `json:"dfs_link_path,omitempty"`
-	RuleID              string   `json:"rule_id"`
-	RuleName            string   `json:"rule_name"`
-	Severity            string   `json:"severity"`
-	Confidence          string   `json:"confidence,omitempty"`
-	Category            string   `json:"category"`
-	FromSYSVOL          bool     `json:"from_sysvol,omitempty"`
-	FromNETLOGON        bool     `json:"from_netlogon,omitempty"`
-	Tags                []string `json:"tags,omitempty"`
-	Match               string   `json:"match,omitempty"`
-	MatchSnippet        string   `json:"match_snippet,omitempty"`
-	MatchReason         string   `json:"match_reason,omitempty"`
-	RuleExplanation     string   `json:"rule_explanation,omitempty"`
-	RuleRemediation     string   `json:"rule_remediation,omitempty"`
-	RemediationGuidance string   `json:"remediation_guidance,omitempty"`
-	DiffStatus          string   `json:"diff_status,omitempty"`
-	ChangedFields       []string `json:"changed_fields,omitempty"`
+	Host                string                     `json:"host,omitempty"`
+	Share               string                     `json:"share,omitempty"`
+	ShareDescription    string                     `json:"share_description,omitempty"`
+	ShareType           string                     `json:"share_type,omitempty"`
+	FilePath            string                     `json:"file_path"`
+	Source              string                     `json:"source,omitempty"`
+	DFSNamespacePath    string                     `json:"dfs_namespace_path,omitempty"`
+	DFSLinkPath         string                     `json:"dfs_link_path,omitempty"`
+	RuleID              string                     `json:"rule_id"`
+	RuleName            string                     `json:"rule_name"`
+	Severity            string                     `json:"severity"`
+	Confidence          string                     `json:"confidence,omitempty"`
+	RuleConfidence      string                     `json:"rule_confidence,omitempty"`
+	ConfidenceScore     int                        `json:"confidence_score,omitempty"`
+	ConfidenceReasons   []string                   `json:"confidence_reasons,omitempty"`
+	Category            string                     `json:"category"`
+	SharePriority       int                        `json:"share_priority,omitempty"`
+	SharePriorityReason string                     `json:"share_priority_reason,omitempty"`
+	FromSYSVOL          bool                       `json:"from_sysvol,omitempty"`
+	FromNETLOGON        bool                       `json:"from_netlogon,omitempty"`
+	MatchedRuleIDs      []string                   `json:"matched_rule_ids,omitempty"`
+	MatchedSignalTypes  []string                   `json:"matched_signal_types,omitempty"`
+	SupportingSignals   []scanner.SupportingSignal `json:"supporting_signals,omitempty"`
+	Tags                []string                   `json:"tags,omitempty"`
+	Match               string                     `json:"match,omitempty"`
+	MatchSnippet        string                     `json:"match_snippet,omitempty"`
+	MatchReason         string                     `json:"match_reason,omitempty"`
+	RuleExplanation     string                     `json:"rule_explanation,omitempty"`
+	RuleRemediation     string                     `json:"rule_remediation,omitempty"`
+	RemediationGuidance string                     `json:"remediation_guidance,omitempty"`
+	DiffStatus          string                     `json:"diff_status,omitempty"`
+	ChangedFields       []string                   `json:"changed_fields,omitempty"`
 }
 
 func toJSONFinding(f scanner.Finding, delta diff.FindingDelta) jsonFinding {
@@ -174,9 +182,17 @@ func toJSONFinding(f scanner.Finding, delta diff.FindingDelta) jsonFinding {
 		RuleName:            f.RuleName,
 		Severity:            f.Severity,
 		Confidence:          f.Confidence,
+		RuleConfidence:      f.RuleConfidence,
+		ConfidenceScore:     f.ConfidenceScore,
+		ConfidenceReasons:   append([]string{}, f.ConfidenceReasons...),
 		Category:            f.Category,
+		SharePriority:       f.SharePriority,
+		SharePriorityReason: f.SharePriorityReason,
 		FromSYSVOL:          f.FromSYSVOL,
 		FromNETLOGON:        f.FromNETLOGON,
+		MatchedRuleIDs:      append([]string{}, f.MatchedRuleIDs...),
+		MatchedSignalTypes:  append([]string{}, f.MatchedSignalTypes...),
+		SupportingSignals:   append([]scanner.SupportingSignal{}, f.SupportingSignals...),
 		Tags:                append([]string{}, f.Tags...),
 		Match:               f.Match,
 		MatchSnippet:        f.Snippet,

@@ -191,10 +191,10 @@ func applyDiscoverOverrides(cfg *config.Config, opts DiscoverOptions) {
 
 func validateScanConfig(cfg config.Config) error {
 	if strings.TrimSpace(cfg.Scan.Username) == "" {
-		return fmt.Errorf("missing SMB username: set scan.username in config or pass --username")
+		return fmt.Errorf("missing SMB username: set scan.username in config or pass --username (run `snablr scan --help` for examples)")
 	}
 	if cfg.Scan.Password == "" {
-		return fmt.Errorf("missing SMB password: set scan.password in config or pass --password")
+		return fmt.Errorf("missing SMB password: set scan.password in config or pass --password (run `snablr scan --help` for examples)")
 	}
 	if _, err := cfg.Scan.MaxScanDuration(); err != nil {
 		return err
@@ -211,10 +211,10 @@ func validateScanConfig(cfg config.Config) error {
 		return fmt.Errorf("unsupported output format %q: use console, json, html, or all", cfg.Output.Format)
 	}
 	if (strings.EqualFold(cfg.Output.Format, "json") || strings.EqualFold(cfg.Output.Format, "all")) && strings.TrimSpace(cfg.Output.JSONOut) == "" {
-		return fmt.Errorf("output format %q requires json_out: set output.json_out or pass --json-out", cfg.Output.Format)
+		return fmt.Errorf("output format %q requires json_out: set output.json_out or pass --json-out so Snablr knows where to write the JSON report", cfg.Output.Format)
 	}
 	if (strings.EqualFold(cfg.Output.Format, "html") || strings.EqualFold(cfg.Output.Format, "all")) && strings.TrimSpace(cfg.Output.HTMLOut) == "" {
-		return fmt.Errorf("output format %q requires html_out: set output.html_out or pass --html-out", cfg.Output.Format)
+		return fmt.Errorf("output format %q requires html_out: set output.html_out or pass --html-out so Snablr knows where to write the HTML report", cfg.Output.Format)
 	}
 	return nil
 }
@@ -426,7 +426,7 @@ func RunRulesValidate(opts RulesOptions) error {
 
 func RunRulesShow(opts RulesShowOptions) error {
 	if strings.TrimSpace(opts.ID) == "" {
-		return fmt.Errorf("rule id is required")
+		return fmt.Errorf("rule id is required: pass --id <rule-id> (run `snablr rules show --help` for usage)")
 	}
 
 	_, _, manager, err := loadRuntime(opts.ConfigPath, opts.LogLevel, opts.RulesDirectory)
@@ -447,10 +447,10 @@ func RunRulesShow(opts RulesShowOptions) error {
 
 func RunRulesTest(opts RulesTestOptions) error {
 	if strings.TrimSpace(opts.RuleFile) == "" {
-		return fmt.Errorf("rule file is required")
+		return fmt.Errorf("rule file is required: pass --rule <rulefile> (run `snablr rules test --help` for an example)")
 	}
 	if strings.TrimSpace(opts.InputFile) == "" {
-		return fmt.Errorf("input file is required")
+		return fmt.Errorf("input file is required: pass --input <file> (run `snablr rules test --help` for an example)")
 	}
 
 	cfg, logger, err := loadConfigAndLogger(opts.ConfigPath, opts.LogLevel)
@@ -493,7 +493,7 @@ func RunRulesTestDir(opts RulesTestDirOptions) error {
 		rulesDir = cfg.RulePaths()[0]
 	}
 	if strings.TrimSpace(opts.FixturesDir) == "" {
-		return fmt.Errorf("fixtures directory is required")
+		return fmt.Errorf("fixtures directory is required: pass --fixtures <dir> (run `snablr rules test-dir --help` for an example)")
 	}
 
 	_, logger, err := loadConfigAndLogger(opts.ConfigPath, opts.LogLevel)

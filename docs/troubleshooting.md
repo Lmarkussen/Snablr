@@ -2,6 +2,57 @@
 
 This guide covers common operational issues when running Snablr.
 
+## Command Not Found
+
+### Symptom
+
+Your shell reports:
+
+- `snablr: command not found`
+
+### What To Do
+
+- if you built from source, run `./bin/snablr --help`
+- if you downloaded a release, run the binary from the extracted folder
+- if you want `snablr` available globally, move it into a directory on your `PATH`
+
+Quick verification:
+
+```bash
+./bin/snablr version
+```
+
+## Go Not Installed
+
+### Symptom
+
+Build commands fail because `go` is missing.
+
+### What To Do
+
+- install Go `1.24+`
+- verify with `go version`
+- then rerun:
+
+```bash
+go build ./...
+make build
+```
+
+## Build Failed
+
+### Symptom
+
+`go build`, `make build`, or `make test` fails.
+
+### What To Check
+
+- run `go version` and confirm Go `1.24+`
+- run `go mod tidy`
+- run `go build ./...`
+- run `go test ./...`
+- if you are only trying to verify the project quickly, use `go build ./...` first and then `make build`
+
 ## LDAP Discovery Issues
 
 ### Symptom
@@ -9,7 +60,7 @@ This guide covers common operational issues when running Snablr.
 No targets are discovered when running:
 
 ```bash
-./bin/snablr scan --user 'DOMAIN\user' --pass 'REPLACE_ME'
+./bin/snablr scan --user 'EXAMPLE\user' --pass 'REPLACE_ME'
 ```
 
 ### Common Causes
@@ -28,6 +79,26 @@ No targets are discovered when running:
 - confirm port and name resolution to the target DC
 
 If LDAP discovery remains unreliable, fall back to explicit targets until domain context is confirmed.
+
+## No Targets Found
+
+### Symptom
+
+Snablr exits with an error explaining that no reachable SMB targets are available.
+
+### Common Causes
+
+- the provided target list was empty
+- LDAP discovery returned nothing useful
+- reachability checks filtered out all hosts
+- SMB hosts are offline or blocked
+
+### What To Check
+
+- provide an explicit target with `--targets`
+- use `snablr discover --help` to inspect discovery behavior
+- verify you did not accidentally set `--no-ldap` without also providing targets
+- use `--skip-reachability-check` only when you intentionally want to inspect hosts even if TCP `445` probes fail
 
 ## DC Detection Issues
 
@@ -65,12 +136,50 @@ Connections fail during share enumeration or file reads.
 
 ### What To Check
 
-- try `DOMAIN\user`
+- try `EXAMPLE\user`
 - try `user@domain`
 - confirm the account can access the share manually
 - use `--skip-reachability-check` only if you are sure the host is reachable and want to bypass the TCP probe
 
 Also verify that permission-denied shares are expected. Snablr will skip inaccessible shares rather than crashing.
+
+## HTML Report Not Generated
+
+### Symptom
+
+The scan ran, but the expected HTML report file does not exist.
+
+### What To Check
+
+- confirm `--output-format html` or `--output-format all`
+- confirm `--html-out` is set, or that your config file sets `output.html_out`
+- confirm the output directory is writable
+- check the terminal for any final output writer error
+
+Minimal known-good example:
+
+```bash
+./bin/snablr scan \
+  --targets 10.0.0.5 \
+  --user 'EXAMPLE\user' \
+  --pass 'REPLACE_ME' \
+  --output-format html \
+  --html-out report.html
+```
+
+## Empty JSON Output
+
+### Symptom
+
+The JSON file exists, but it contains no findings.
+
+### What To Check
+
+- verify the scan actually completed
+- confirm you used `--output-format json` or `--output-format all`
+- review filters such as `share`, `exclude_share`, `path`, `exclude_path`, and `max_depth`
+- confirm the rule pack is valid with `snablr rules validate`
+- test expected matches directly with `snablr rules test`
 
 ## No Findings
 

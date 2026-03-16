@@ -352,20 +352,22 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 
 				shareInfo := shareInfoByName[strings.ToLower(strings.TrimSpace(remote.Share))]
 				meta := scanner.FileMetadata{
-					Host:             remote.Host,
-					Share:            remote.Share,
-					ShareDescription: shareInfo.Description,
-					ShareType:        shareInfo.Type,
-					FilePath:         remote.Path,
-					Source:           sharePlan.Source,
-					Priority:         filePlan.Priority,
-					PriorityReason:   filePlan.Reason,
-					Name:             remote.Name,
-					Extension:        remote.Extension,
-					Size:             remote.Size,
-					IsDir:            remote.IsDir,
-					FromSYSVOL:       strings.EqualFold(remote.Share, "SYSVOL"),
-					FromNETLOGON:     strings.EqualFold(remote.Share, "NETLOGON"),
+					Host:                remote.Host,
+					Share:               remote.Share,
+					ShareDescription:    shareInfo.Description,
+					ShareType:           shareInfo.Type,
+					SharePriority:       sharePlan.Priority,
+					SharePriorityReason: sharePlan.Reason,
+					FilePath:            remote.Path,
+					Source:              sharePlan.Source,
+					Priority:            filePlan.Priority,
+					PriorityReason:      filePlan.Reason,
+					Name:                remote.Name,
+					Extension:           remote.Extension,
+					Size:                remote.Size,
+					IsDir:               remote.IsDir,
+					FromSYSVOL:          strings.EqualFold(remote.Share, "SYSVOL"),
+					FromNETLOGON:        strings.EqualFold(remote.Share, "NETLOGON"),
 				}
 				if hasDFSHint {
 					meta.Source = "dfs"

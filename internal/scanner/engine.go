@@ -96,6 +96,7 @@ func (e *Engine) Evaluate(meta FileMetadata, content []byte) Evaluation {
 
 	evaluation.NeedContent = e.shouldReadContent(meta, e.contentRules)
 	if !evaluation.NeedContent || len(content) == 0 {
+		evaluation.Findings = correlateFindings(meta, evaluation.Findings)
 		return evaluation
 	}
 
@@ -105,6 +106,7 @@ func (e *Engine) Evaluate(meta FileMetadata, content []byte) Evaluation {
 	}
 
 	evaluation.Findings = append(evaluation.Findings, e.contentScanner.Scan(e.contentRules, meta, content)...)
+	evaluation.Findings = correlateFindings(meta, evaluation.Findings)
 	return evaluation
 }
 

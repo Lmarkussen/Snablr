@@ -29,6 +29,10 @@ func main() {
 		err = runDiscover(os.Args[2:])
 	case "diff":
 		err = runDiff(os.Args[2:])
+	case "benchmark":
+		err = runBenchmark(os.Args[2:])
+	case "eval":
+		err = runEval(os.Args[2:])
 	case "rules":
 		err = runRules(os.Args[2:])
 	case "version":
@@ -217,6 +221,65 @@ func runDiff(args []string) error {
 	})
 }
 
+func runBenchmark(args []string) error {
+	fs := flag.NewFlagSet("benchmark", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	fs.Usage = func() { printBenchmarkUsage(fs) }
+
+	configPath := fs.String("config", "", "Path to the benchmark YAML config file")
+	dataset := fs.String("dataset", "", "Path to the local benchmark dataset directory")
+	rulesDir := fs.String("rules-directory", "", "Directory containing YAML rules")
+	outPath := fs.String("out", "", "Path to write the benchmark JSON report")
+	logLevel := fs.String("log-level", "", "Log level override")
+
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if strings.TrimSpace(*configPath) == "" {
+		return fmt.Errorf("benchmark config is required: pass --config <file> (run `snablr benchmark --help` for an example)")
+	}
+
+	return app.RunBenchmark(context.Background(), app.BenchmarkOptions{
+		ConfigPath:     *configPath,
+		Dataset:        *dataset,
+		RulesDirectory: *rulesDir,
+		OutPath:        *outPath,
+		LogLevel:       *logLevel,
+	})
+}
+
+func runEval(args []string) error {
+	fs := flag.NewFlagSet("eval", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	fs.Usage = func() { printEvalUsage(fs) }
+
+	configPath := fs.String("config", "configs/config.yaml", "Path to the Snablr YAML config file")
+	dataset := fs.String("dataset", "", "Path to the local evaluation dataset directory")
+	labelsPath := fs.String("labels", "", "Path to the labels YAML or JSON file")
+	rulesDir := fs.String("rules-directory", "", "Directory containing YAML rules")
+	outPath := fs.String("out", "", "Path to write the evaluation JSON report")
+	logLevel := fs.String("log-level", "", "Log level override")
+
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+
+	return app.RunEval(context.Background(), app.EvalOptions{
+		ConfigPath:     *configPath,
+		Dataset:        *dataset,
+		LabelsPath:     *labelsPath,
+		RulesDirectory: *rulesDir,
+		OutPath:        *outPath,
+		LogLevel:       *logLevel,
+	})
+}
+
 func runRules(args []string) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		printRulesUsage()
@@ -367,6 +430,10 @@ func printHelp(args []string) {
 		printRulesUsage()
 	case "diff":
 		printDiffUsage(flag.NewFlagSet("diff", flag.ContinueOnError))
+	case "benchmark":
+		printBenchmarkUsage(flag.NewFlagSet("benchmark", flag.ContinueOnError))
+	case "eval":
+		printEvalUsage(flag.NewFlagSet("eval", flag.ContinueOnError))
 	case "version":
 		printVersionUsage()
 	default:
@@ -386,6 +453,8 @@ func printUsage() {
 	fmt.Println("  discover   Resolve targets through CLI input, LDAP, DFS, and reachability checks")
 	fmt.Println("  rules      List, validate, inspect, and test rule files")
 	fmt.Println("  diff       Compare two Snablr JSON result files")
+	fmt.Println("  benchmark  Measure scan performance and finding volume on a local dataset")
+	fmt.Println("  eval       Compare findings against a labeled local dataset")
 	fmt.Println("  version    Show version, commit, and build metadata")
 	fmt.Println("  help       Show top-level or command-specific help")
 	fmt.Println()
@@ -402,6 +471,8 @@ func printUsage() {
 	fmt.Println("  snablr discover --discover-dfs --username USER --password PASS")
 	fmt.Println("  snablr rules test --rule configs/rules/default/content.yml --input testdata/rules/fixtures/content/password-assignment.conf --verbose")
 	fmt.Println("  snablr diff --old results-old.json --new results-new.json")
+	fmt.Println("  snablr benchmark --config examples/eval/benchmark.yaml --out benchmark.json")
+	fmt.Println("  snablr eval --dataset examples/eval/dataset --labels examples/eval/labels.yaml --out eval.json")
 	fmt.Println()
 	fmt.Println("Authorized use only. Run Snablr only against systems and data you are explicitly permitted to assess.")
 	fmt.Println()
@@ -474,6 +545,38 @@ func printDiffUsage(fs *flag.FlagSet) {
 	fmt.Println("Examples:")
 	fmt.Println("  snablr diff --old baseline.json --new current.json")
 	fmt.Println("  snablr diff --old weekly-results.json --new latest-results.json")
+	fmt.Println()
+	fmt.Println("Flags:")
+	fs.PrintDefaults()
+}
+
+func printBenchmarkUsage(fs *flag.FlagSet) {
+	fmt.Println("Usage:")
+	fmt.Println("  snablr benchmark --config <file> [options]")
+	fmt.Println()
+	fmt.Println("Description:")
+	fmt.Println("  Runs Snablr against an authorized local dataset and records scan duration, time to first")
+	fmt.Println("  finding, files visited/read, grouped findings, and high-confidence findings.")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  snablr benchmark --config examples/eval/benchmark.yaml --out benchmark.json")
+	fmt.Println("  snablr benchmark --config examples/eval/benchmark.yaml --dataset examples/eval/dataset")
+	fmt.Println()
+	fmt.Println("Flags:")
+	fs.PrintDefaults()
+}
+
+func printEvalUsage(fs *flag.FlagSet) {
+	fmt.Println("Usage:")
+	fmt.Println("  snablr eval --dataset <dir> --labels <file> [options]")
+	fmt.Println()
+	fmt.Println("Description:")
+	fmt.Println("  Scans an authorized local dataset, compares findings to labels, and reports precision-like,")
+	fmt.Println("  recall-like, noisy findings, duplicate findings, and missed rule candidates.")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  snablr eval --dataset examples/eval/dataset --labels examples/eval/labels.yaml --out eval.json")
+	fmt.Println("  snablr eval --dataset examples/eval/dataset --labels examples/eval/labels.yaml --rules-directory configs/rules/default")
 	fmt.Println()
 	fmt.Println("Flags:")
 	fs.PrintDefaults()

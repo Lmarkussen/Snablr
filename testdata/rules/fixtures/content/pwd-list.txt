@@ -1,0 +1,3 @@
+pwd list
+svc_sql
+NOT_A_REAL_SECRET

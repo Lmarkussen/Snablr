@@ -1,0 +1,3 @@
+login info
+user: demo-user
+pw: NOT_A_REAL_SECRET

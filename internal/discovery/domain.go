@@ -151,6 +151,9 @@ func detectDomainFromHostnameCommand(ctx context.Context, args ...string) string
 			return normalized
 		}
 	}
+	if args[0] == "-f" {
+		return ""
+	}
 	return normalized
 }
 
@@ -245,7 +248,25 @@ func normalizeDetectedDomain(value string) string {
 	if strings.Contains(value, " ") {
 		return ""
 	}
+	switch value {
+	case "(none)", "none":
+		return ""
+	}
+	if strings.ContainsAny(value, "()") {
+		return ""
+	}
 	return value
+}
+
+func downLevelBindDomain(domain string) string {
+	domain = normalizeDetectedDomain(domain)
+	if domain == "" {
+		return ""
+	}
+	if idx := strings.Index(domain, "."); idx > 0 {
+		domain = domain[:idx]
+	}
+	return strings.ToUpper(domain)
 }
 
 func logDomainContext(logger Logger, context DomainContext) {

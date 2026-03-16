@@ -40,6 +40,26 @@ rules:
     max_file_size: 524288
     action: report
 
+  # Safe default: focused on credential-note style text, not generic mentions of account help or login prompts.
+  - id: content.credential_note_indicators
+    name: Credential Note Indicators
+    description: Detect explicit credential-note phrases such as creds, pw, pwd list, login info, or account details in human-written files.
+    type: content
+    pattern: '(?im)^(?:[#;*\-]\s*)?(?:old\s+|saved\s+|shared\s+)?(?:creds?|credentials?|passwords?|pw|pwd(?:\s+list)?|login\s+(?:details|info)|account\s+(?:details|credentials))\b.{0,80}$'
+    case_sensitive: false
+    severity: medium
+    confidence: low
+    explanation: This pattern is intended to catch human-written notes or lists that explicitly advertise stored credentials or login information.
+    remediation: Review the file for stored credentials or login details, move secrets to managed storage, and remove credential notes from shared locations.
+    tags: [credentials, notes, review]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp, winsxs]
+    file_extensions: [.bat, .cmd, .conf, .config, .env, .ini, .log, .md, .ps1, .py, .sh, .txt, .xml, .yaml, .yml]
+    max_file_size: 262144
+    action: report
+
   # Noisy but useful: token variable names are common in sample files and templates.
   # Enable only after narrowing file_extensions and excluding local build or documentation paths.
   - id: content.api_token_assignment_indicators

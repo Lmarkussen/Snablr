@@ -1,0 +1,5 @@
+<unattend>
+  <component name="Setup">
+    <Credentials>NOT_A_REAL_SECRET</Credentials>
+  </component>
+</unattend>

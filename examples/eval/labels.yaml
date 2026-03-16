@@ -1,0 +1,41 @@
+version: 1
+name: example-authorized-dataset
+description: |
+  Safe synthetic labels for tuning and benchmarking Snablr against the example local dataset.
+expectations:
+  - id: expected-password-filename
+    path: Finance/passwords.txt
+    category: credentials
+    rule_ids:
+      - filename.credentials_and_secrets_keywords
+    minimum_severity: high
+    minimum_confidence: low
+    notes: Filename should trigger a credentials review finding.
+
+  - id: expected-web-config
+    path: Web/web.config
+    category: configuration
+    rule_ids:
+      - filename.sensitive_config_names
+      - extension.sensitive_config_extensions
+    minimum_severity: medium
+    minimum_confidence: medium
+    notes: Config naming and extension should produce a grouped configuration finding.
+
+  - id: expected-unattend
+    path: Deploy/unattend.xml
+    category: deployment
+    rule_ids:
+      - filename.deployment_answer_files
+    minimum_severity: high
+    minimum_confidence: medium
+    notes: Deployment answer-file naming should be preserved as a deployment finding.
+
+  - id: expected-script-extension
+    path: Scripts/install-printer.ps1
+    category: scripts
+    rule_ids:
+      - extension.script_extensions
+    minimum_severity: medium
+    minimum_confidence: low
+    notes: PowerShell script should be surfaced for script review.

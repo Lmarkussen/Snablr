@@ -34,13 +34,20 @@ func DiscoverDFS(ctx context.Context, opts LDAPOptions, logger Logger) ([]DFSTar
 	}
 	defer conn.Close()
 
-	if err := bindLDAP(conn, opts, domainContext.DomainName); err != nil {
+	rootDSE, err := preBindRootDSE(conn, &domainContext, logger)
+	if err != nil {
 		return nil, err
 	}
 
-	rootDSE, err := queryRootDSE(conn)
-	if err != nil {
+	if err := bindLDAP(conn, opts, domainContext.DomainName, logger); err != nil {
 		return nil, err
+	}
+
+	if rootDSE.DefaultNamingContext == "" && rootDSE.RootNamingContext == "" {
+		rootDSE, err = queryRootDSE(conn)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	baseDN := strings.TrimSpace(domainContext.BaseDN)

@@ -61,22 +61,25 @@ type severitySummary struct {
 
 func NewHTMLWriter(w io.Writer, closer io.Closer) (*HTMLWriter, error) {
 	tmpl, err := template.New("report.html.tmpl").Funcs(template.FuncMap{
-		"joinTags":        strings.Join,
-		"joinList":        strings.Join,
-		"severityClass":   severityClass,
-		"confidenceClass": confidenceClass,
-		"priorityClass":   priorityClass,
-		"priorityLabel":   priorityLabel,
-		"sourceClass":     sourceClass,
-		"diffClass":       diffClass,
-		"diffLabel":       diffLabel,
-		"signalLabel":     signalLabel,
-		"truncatePath":    truncatePath,
-		"uncPath":         uncPath,
-		"valueOrDash":     valueOrDash,
-		"formatScanTime":  formatScanTime,
-		"formatDuration":  formatDuration,
-		"slug":            slug,
+		"joinTags":         strings.Join,
+		"joinList":         strings.Join,
+		"severityClass":    severityClass,
+		"confidenceClass":  confidenceClass,
+		"priorityClass":    priorityClass,
+		"priorityLabel":    priorityLabel,
+		"sourceClass":      sourceClass,
+		"diffClass":        diffClass,
+		"diffLabel":        diffLabel,
+		"signalLabel":      signalLabel,
+		"signalClass":      signalClass,
+		"primarySignal":    primarySignal,
+		"signalMatchLabel": signalMatchLabel,
+		"truncatePath":     truncatePath,
+		"uncPath":          uncPath,
+		"valueOrDash":      valueOrDash,
+		"formatScanTime":   formatScanTime,
+		"formatDuration":   formatDuration,
+		"slug":             slug,
 	}).ParseFS(reportTemplates, "templates/report.html.tmpl")
 	if err != nil {
 		return nil, err
@@ -243,6 +246,50 @@ func signalLabel(value string) string {
 		return "planner priority"
 	default:
 		return value
+	}
+}
+
+func signalClass(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "content":
+		return "signal-content"
+	case "filename":
+		return "signal-filename"
+	case "extension":
+		return "signal-extension"
+	case "path":
+		return "signal-path"
+	case "directory":
+		return "signal-directory"
+	default:
+		return "signal-generic"
+	}
+}
+
+func primarySignal(f scanner.Finding) string {
+	if strings.TrimSpace(f.SignalType) != "" {
+		return strings.TrimSpace(f.SignalType)
+	}
+	if len(f.MatchedSignalTypes) > 0 {
+		return strings.TrimSpace(f.MatchedSignalTypes[0])
+	}
+	return ""
+}
+
+func signalMatchLabel(signal string) string {
+	switch strings.ToLower(strings.TrimSpace(signal)) {
+	case "content":
+		return "Matched text"
+	case "filename":
+		return "Matched filename token"
+	case "extension":
+		return "Matched extension"
+	case "path":
+		return "Matched path token"
+	case "directory":
+		return "Matched directory token"
+	default:
+		return "Matched value"
 	}
 }
 

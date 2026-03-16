@@ -83,8 +83,29 @@ func correlateGroup(meta FileMetadata, group []Finding) Finding {
 		if correlated.Match == "" && finding.Match != "" {
 			correlated.Match = finding.Match
 		}
+		if correlated.SignalType == "" && finding.SignalType != "" {
+			correlated.SignalType = finding.SignalType
+		}
+		if correlated.MatchedText == "" && finding.MatchedText != "" {
+			correlated.MatchedText = finding.MatchedText
+		}
+		if correlated.MatchedTextRedacted == "" && finding.MatchedTextRedacted != "" {
+			correlated.MatchedTextRedacted = finding.MatchedTextRedacted
+		}
 		if correlated.Snippet == "" && finding.Snippet != "" {
 			correlated.Snippet = finding.Snippet
+		}
+		if correlated.Context == "" && finding.Context != "" {
+			correlated.Context = finding.Context
+		}
+		if correlated.ContextRedacted == "" && finding.ContextRedacted != "" {
+			correlated.ContextRedacted = finding.ContextRedacted
+		}
+		if correlated.PotentialAccount == "" && finding.PotentialAccount != "" {
+			correlated.PotentialAccount = finding.PotentialAccount
+		}
+		if correlated.LineNumber == 0 && finding.LineNumber > 0 {
+			correlated.LineNumber = finding.LineNumber
 		}
 		if severityRank(finding.Severity) > severityRank(correlated.Severity) {
 			correlated.Severity = finding.Severity

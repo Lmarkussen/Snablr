@@ -83,6 +83,9 @@ func (c *ConsoleWriter) WriteFinding(f scanner.Finding) error {
 			return err
 		}
 	}
+	if _, err := fmt.Fprintf(c.w, "Signal: %s\n", valueOrDash(primarySignalType(f))); err != nil {
+		return err
+	}
 	if _, err := fmt.Fprintf(c.w, "Category: %s\n", valueOrDash(f.Category)); err != nil {
 		return err
 	}
@@ -108,13 +111,8 @@ func (c *ConsoleWriter) WriteFinding(f scanner.Finding) error {
 	if _, err := fmt.Fprintf(c.w, "Tags: %s\n", tagsOrDash(f.Tags)); err != nil {
 		return err
 	}
-	if f.Match != "" {
-		if _, err := fmt.Fprintf(c.w, "Match: %s\n", f.Match); err != nil {
-			return err
-		}
-	}
-	if f.Snippet != "" {
-		if _, err := fmt.Fprintf(c.w, "Match Snippet: %s\n", f.Snippet); err != nil {
+	for _, line := range consoleEvidenceLines(f) {
+		if _, err := fmt.Fprintln(c.w, line); err != nil {
 			return err
 		}
 	}
@@ -224,4 +222,67 @@ func (c *ConsoleWriter) Close() error {
 		return nil
 	}
 	return c.closer.Close()
+}
+
+func consoleEvidenceLines(f scanner.Finding) []string {
+	signalType := primarySignalType(f)
+	switch signalType {
+	case "content":
+		lines := make([]string, 0, 5)
+		if f.LineNumber > 0 {
+			lines = append(lines, fmt.Sprintf("Line: %d", f.LineNumber))
+		}
+		if f.PotentialAccount != "" {
+			lines = append(lines, fmt.Sprintf("Potential account context: %s", f.PotentialAccount))
+		}
+		if value := firstNonEmpty(f.MatchedTextRedacted, f.Match); value != "" {
+			lines = append(lines, fmt.Sprintf("Matched text: %s", value))
+		}
+		if value := firstNonEmpty(f.ContextRedacted, f.Snippet); value != "" {
+			lines = append(lines, "Context:")
+			for _, rawLine := range strings.Split(value, "\n") {
+				lines = append(lines, "  "+rawLine)
+			}
+		}
+		return lines
+	case "filename":
+		if value := firstNonEmpty(f.MatchedTextRedacted, f.Match); value != "" {
+			return []string{fmt.Sprintf("Matched filename token: %s", value)}
+		}
+	case "extension":
+		if value := firstNonEmpty(f.MatchedTextRedacted, f.Match); value != "" {
+			return []string{fmt.Sprintf("Matched extension: %s", value)}
+		}
+	case "path", "directory":
+		if value := firstNonEmpty(f.MatchedTextRedacted, f.Match); value != "" {
+			return []string{fmt.Sprintf("Matched %s token: %s", signalType, value)}
+		}
+	}
+
+	if value := firstNonEmpty(f.MatchedTextRedacted, f.Match); value != "" {
+		return []string{fmt.Sprintf("Matched value: %s", value)}
+	}
+	if f.Snippet != "" {
+		return []string{fmt.Sprintf("Snippet: %s", f.Snippet)}
+	}
+	return nil
+}
+
+func primarySignalType(f scanner.Finding) string {
+	if strings.TrimSpace(f.SignalType) != "" {
+		return strings.TrimSpace(f.SignalType)
+	}
+	if len(f.MatchedSignalTypes) > 0 {
+		return strings.TrimSpace(f.MatchedSignalTypes[0])
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

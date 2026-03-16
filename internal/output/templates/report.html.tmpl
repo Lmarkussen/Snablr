@@ -250,6 +250,12 @@
     .badge.conf-high { background: #dcfce7; color: #15803d; }
     .badge.conf-unknown { background: var(--prio-low-bg); color: var(--prio-low); }
     .badge.good { background: var(--ok-bg); color: var(--ok); }
+    .badge.signal-content { background: #e0f2fe; color: #0f766e; }
+    .badge.signal-filename { background: #fff7ed; color: #c2410c; }
+    .badge.signal-extension { background: #f3e8ff; color: #7c3aed; }
+    .badge.signal-path { background: #ecfccb; color: #4d7c0f; }
+    .badge.signal-directory { background: #ecfccb; color: #365314; }
+    .badge.signal-generic { background: var(--generic-bg); color: var(--generic); }
     .badge.diff-new { background: var(--diff-new-bg); color: var(--diff-new); }
     .badge.diff-changed { background: var(--diff-changed-bg); color: var(--diff-changed); }
     .badge.diff-removed { background: var(--diff-removed-bg); color: var(--diff-removed); }
@@ -404,7 +410,7 @@
       border-radius: 10px;
       font-size: 0.84rem;
       line-height: 1.45;
-      white-space: normal;
+      white-space: pre-wrap;
       box-shadow: 0 14px 28px rgba(17, 24, 39, 0.22);
       opacity: 0;
       pointer-events: none;
@@ -818,14 +824,14 @@
                 <th>Rule</th>
                 <th>Host / Share</th>
                 <th>File Path</th>
-                <th>Context</th>
+                <th>Evidence</th>
                 <th>Why It Matched</th>
-                <th>Match Snippet</th>
+                <th>Matched Context</th>
               </tr>
             </thead>
             <tbody>
               {{- range .Findings }}
-              <tr class="{{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" data-search="{{ .Finding.Category }} {{ .Finding.Severity }} {{ .Finding.Confidence }} {{ .Finding.RuleID }} {{ .Finding.RuleName }} {{ .Finding.Host }} {{ .Finding.Share }} {{ .Finding.ShareType }} {{ .Finding.ShareDescription }} {{ .Finding.FilePath }} {{ .Finding.Source }} {{ .Finding.DFSNamespacePath }} {{ .Finding.DFSLinkPath }} {{ joinTags .Finding.Tags " " }} {{ .Finding.MatchReason }} {{ .Finding.RuleExplanation }} {{ .Finding.RuleRemediation }} {{ .Finding.Snippet }} {{ .DiffStatus }} {{ joinTags .ChangedFields " " }} {{ joinList .Finding.MatchedRuleIDs " " }} {{ joinList .Finding.MatchedSignalTypes " " }} {{ joinList .Finding.ConfidenceReasons " " }}">
+              <tr class="{{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" data-search="{{ .Finding.Category }} {{ .Finding.Severity }} {{ .Finding.Confidence }} {{ .Finding.RuleID }} {{ .Finding.RuleName }} {{ .Finding.Host }} {{ .Finding.Share }} {{ .Finding.ShareType }} {{ .Finding.ShareDescription }} {{ .Finding.FilePath }} {{ .Finding.Source }} {{ .Finding.DFSNamespacePath }} {{ .Finding.DFSLinkPath }} {{ joinTags .Finding.Tags " " }} {{ .Finding.MatchReason }} {{ .Finding.RuleExplanation }} {{ .Finding.RuleRemediation }} {{ .Finding.Snippet }} {{ .Finding.ContextRedacted }} {{ .Finding.MatchedTextRedacted }} {{ .Finding.PotentialAccount }} {{ .DiffStatus }} {{ joinTags .ChangedFields " " }} {{ joinList .Finding.MatchedRuleIDs " " }} {{ joinList .Finding.MatchedSignalTypes " " }} {{ joinList .Finding.ConfidenceReasons " " }}">
                 <td>
                   <span class="badge {{ severityClass .Finding.Severity }}">{{ .Finding.Severity }}</span>
                 </td>
@@ -837,6 +843,7 @@
                   {{- end }}
                   <div class="badge-row">
                     <span class="badge {{ priorityClass .Finding.Priority }}" title="{{ .Finding.PriorityReason }}">{{ priorityLabel .Finding.Priority }}</span>
+                    {{- if primarySignal .Finding }}<span class="badge {{ signalClass (primarySignal .Finding) }}">signal {{ signalLabel (primarySignal .Finding) }}</span>{{ end -}}
                     {{- if .Finding.Confidence }}<span class="badge {{ confidenceClass .Finding.Confidence }}" title="score {{ .Finding.ConfidenceScore }}">confidence {{ .Finding.Confidence }}</span>{{ end -}}
                     {{- if .DiffStatus }}<span class="badge {{ diffClass .DiffStatus }}">{{ diffLabel .DiffStatus }}</span>{{ end -}}
                     {{- if .Finding.Source }}<span class="badge {{ sourceClass .Finding.Source }}">source {{ .Finding.Source }}</span>{{ end -}}
@@ -877,6 +884,33 @@
                   {{- if .Finding.MatchedSignalTypes }}
                   <div class="muted" style="margin-top:8px;">Signals: {{- range $i, $signal := .Finding.MatchedSignalTypes }}{{- if $i }}, {{ end -}}{{ signalLabel $signal }}{{- end }}</div>
                   {{- end }}
+                  <div class="detail-stack" style="margin-top:10px;">
+                    <div class="detail-panel">
+                      <strong>Evidence</strong>
+                      {{- if eq (primarySignal .Finding) "content" }}
+                        {{- if .Finding.LineNumber }}<div class="muted">Line {{ .Finding.LineNumber }}</div>{{ end -}}
+                        {{- if .Finding.PotentialAccount }}
+                        <span class="tooltip reason-text" data-tip="{{ .Finding.PotentialAccount }}">
+                          <span>Potential account context: {{ .Finding.PotentialAccount }}</span>
+                        </span>
+                        {{- end }}
+                        {{- if .Finding.MatchedTextRedacted }}
+                        <span class="tooltip reason-text" data-tip="{{ .Finding.MatchedTextRedacted }}">
+                          <span>{{ signalMatchLabel (primarySignal .Finding) }}: {{ .Finding.MatchedTextRedacted }}</span>
+                        </span>
+                        {{- else }}
+                        <span class="muted">Content rule matched with contextual evidence below.</span>
+                        {{- end }}
+                      {{- else if .Finding.MatchedTextRedacted }}
+                        <span class="tooltip reason-text" data-tip="{{ .Finding.MatchedTextRedacted }}">
+                          <span>{{ signalMatchLabel (primarySignal .Finding) }}: {{ .Finding.MatchedTextRedacted }}</span>
+                        </span>
+                        <div class="muted" style="margin-top:6px;">Heuristic file hit only. Review file contents separately if needed.</div>
+                      {{- else }}
+                        <span class="muted">No additional evidence captured.</span>
+                      {{- end }}
+                    </div>
+                  </div>
                 </td>
                 <td>
                   <div class="detail-stack">
@@ -921,13 +955,21 @@
                   </div>
                 </td>
                 <td>
-                  {{- if .Finding.Snippet }}
+                  {{- if eq (primarySignal .Finding) "content" }}
+                    {{- if .Finding.ContextRedacted }}
+                  <span class="tooltip snippet-text" data-tip="{{ .Finding.ContextRedacted }}">
+                    <span>{{ .Finding.ContextRedacted }}</span>
+                  </span>
+                    {{- else if .Finding.Snippet }}
                   <span class="tooltip snippet-text" data-tip="{{ .Finding.Snippet }}">
                     <span>{{ .Finding.Snippet }}</span>
                   </span>
-                  {{- else if .Finding.Match }}
-                  <span class="tooltip snippet-text" data-tip="{{ .Finding.Match }}">
-                    <span>{{ .Finding.Match }}</span>
+                    {{- else }}
+                  <span class="muted">-</span>
+                    {{- end }}
+                  {{- else if .Finding.MatchedTextRedacted }}
+                  <span class="tooltip snippet-text" data-tip="{{ .Finding.MatchedTextRedacted }}">
+                    <span>Filename/path heuristic only</span>
                   </span>
                   {{- else }}
                   <span class="muted">-</span>

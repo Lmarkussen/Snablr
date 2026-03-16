@@ -18,6 +18,18 @@ type SupportingSignal struct {
 	Reason     string `json:"reason,omitempty"`
 }
 
+type findingEvidence struct {
+	SignalType          string
+	Match               string
+	MatchedText         string
+	MatchedTextRedacted string
+	Snippet             string
+	Context             string
+	ContextRedacted     string
+	PotentialAccount    string
+	LineNumber          int
+}
+
 type Finding struct {
 	RuleID              string             `json:"rule_id"`
 	RuleName            string             `json:"rule_name"`
@@ -39,8 +51,15 @@ type Finding struct {
 	Source              string             `json:"source,omitempty"`
 	DFSNamespacePath    string             `json:"dfs_namespace_path,omitempty"`
 	DFSLinkPath         string             `json:"dfs_link_path,omitempty"`
+	SignalType          string             `json:"signal_type,omitempty"`
 	Match               string             `json:"match,omitempty"`
+	MatchedText         string             `json:"matched_text,omitempty"`
+	MatchedTextRedacted string             `json:"matched_text_redacted,omitempty"`
 	Snippet             string             `json:"snippet,omitempty"`
+	Context             string             `json:"context,omitempty"`
+	ContextRedacted     string             `json:"context_redacted,omitempty"`
+	PotentialAccount    string             `json:"potential_account,omitempty"`
+	LineNumber          int                `json:"line_number,omitempty"`
 	MatchReason         string             `json:"match_reason,omitempty"`
 	RuleExplanation     string             `json:"rule_explanation,omitempty"`
 	RuleRemediation     string             `json:"rule_remediation,omitempty"`
@@ -106,7 +125,7 @@ func (m FileMetadata) Normalized() FileMetadata {
 	return out
 }
 
-func newFinding(rule rules.Rule, meta FileMetadata, match string, snippet string) Finding {
+func newFinding(rule rules.Rule, meta FileMetadata, evidence findingEvidence) Finding {
 	tags := append([]string{}, rule.Tags...)
 	if meta.FromSYSVOL {
 		tags = append(tags, "ad-share:sysvol")
@@ -123,10 +142,10 @@ func newFinding(rule rules.Rule, meta FileMetadata, match string, snippet string
 		SignalType: signalType,
 		RuleID:     rule.ID,
 		RuleName:   rule.Name,
-		Match:      match,
+		Match:      evidence.Match,
 		Confidence: strings.TrimSpace(string(rule.Confidence)),
 		Weight:     baseSignalWeight(signalType),
-		Reason:     signalReasonForRule(rule, match),
+		Reason:     signalReasonForRule(rule, evidence.Match),
 	}
 
 	return Finding{
@@ -148,9 +167,16 @@ func newFinding(rule rules.Rule, meta FileMetadata, match string, snippet string
 		Source:              meta.Source,
 		DFSNamespacePath:    meta.DFSNamespacePath,
 		DFSLinkPath:         meta.DFSLinkPath,
-		Match:               match,
-		Snippet:             snippet,
-		MatchReason:         matchReason(rule, match, meta),
+		SignalType:          signalType,
+		Match:               evidence.Match,
+		MatchedText:         evidence.MatchedText,
+		MatchedTextRedacted: evidence.MatchedTextRedacted,
+		Snippet:             evidence.Snippet,
+		Context:             evidence.Context,
+		ContextRedacted:     evidence.ContextRedacted,
+		PotentialAccount:    evidence.PotentialAccount,
+		LineNumber:          evidence.LineNumber,
+		MatchReason:         matchReason(rule, evidence.Match, meta),
 		RuleExplanation:     strings.TrimSpace(rule.Explanation),
 		RuleRemediation:     strings.TrimSpace(rule.Remediation),
 		FromSYSVOL:          meta.FromSYSVOL,
@@ -172,10 +198,10 @@ func matchReason(rule rules.Rule, match string, meta FileMetadata) string {
 		context = "contained text that matches the rule"
 	case rules.RuleTypeFilename:
 		surface = "filename"
-		context = "contains a keyword or naming pattern covered by the rule"
+		context = "matched a heuristic naming pattern covered by the rule"
 	case rules.RuleTypeExtension:
 		surface = "file extension"
-		context = "uses an extension prioritized by the rule"
+		context = "matched an extension-based heuristic covered by the rule"
 	}
 
 	reason := strings.TrimSpace(rule.Description)
@@ -193,6 +219,16 @@ func matchReason(rule rules.Rule, match string, meta FileMetadata) string {
 	}
 
 	return surface + " " + context + ` with match "` + match + `" for ` + reason + "."
+}
+
+func heuristicEvidence(ruleType rules.RuleType, match string) findingEvidence {
+	signalType := signalTypeForRule(ruleType)
+	return findingEvidence{
+		SignalType:          signalType,
+		Match:               match,
+		MatchedText:         match,
+		MatchedTextRedacted: match,
+	}
 }
 
 func signalTypeForRule(ruleType rules.RuleType) string {

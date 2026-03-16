@@ -1,8 +1,9 @@
 package scanner
 
 import (
-	"bytes"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"snablr/internal/rules"
 )
@@ -10,6 +11,23 @@ import (
 type ContentScanner struct {
 	snippetBytes int
 }
+
+type contentMatchDetails struct {
+	match               string
+	matchedText         string
+	matchedTextRedacted string
+	snippet             string
+	context             string
+	contextRedacted     string
+	potentialAccount    string
+	lineNumber          int
+}
+
+var (
+	assignmentSecretRegex = regexp.MustCompile(`(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|secret[_-]?key|client[_-]?secret|connection\s*string|conn(?:ection)?[_-]?string)\b(\s*[:=]\s*)(["']?)([^"'\r\n;]+)(?:["']?)`)
+	xmlSecretRegex        = regexp.MustCompile(`(?i)<(password|passwd|pwd|secret|token|apikey|clientsecret)>([^<]+)</[^>]+>`)
+	identityLineRegex     = regexp.MustCompile(`(?i)\b(user(name)?|login|account|email|upn)\b`)
+)
 
 func NewContentScanner(snippetBytes int) ContentScanner {
 	if snippetBytes <= 0 {
@@ -48,53 +66,164 @@ func (s ContentScanner) Scan(ruleSet []rules.Rule, meta FileMetadata, content []
 			continue
 		}
 
-		match, ok := firstMatch(rule, contentString)
+		details, ok := buildContentMatchDetails(rule, contentString, s.snippetBytes)
 		if !ok {
 			continue
 		}
 
-		snippet := makeSnippet(content, match, s.snippetBytes, rule.CaseSensitive)
-		findings = append(findings, newFinding(rule, meta, match, snippet))
+		findings = append(findings, newFinding(rule, meta, findingEvidence{
+			SignalType:          signalTypeForRule(rule.Type),
+			Match:               details.match,
+			MatchedText:         details.matchedText,
+			MatchedTextRedacted: details.matchedTextRedacted,
+			Snippet:             details.snippet,
+			Context:             details.context,
+			ContextRedacted:     details.contextRedacted,
+			PotentialAccount:    details.potentialAccount,
+			LineNumber:          details.lineNumber,
+		}))
 	}
 	return findings
 }
 
-func makeSnippet(content []byte, match string, snippetBytes int, caseSensitive bool) string {
-	if len(content) == 0 || match == "" {
+func buildContentMatchDetails(rule rules.Rule, content string, snippetBytes int) (contentMatchDetails, bool) {
+	rx, err := compiledPattern(rule)
+	if err != nil {
+		return contentMatchDetails{}, false
+	}
+
+	matchRange := rx.FindStringIndex(content)
+	if len(matchRange) != 2 {
+		return contentMatchDetails{}, false
+	}
+
+	match := content[matchRange[0]:matchRange[1]]
+	context, lineNumber, potentialAccount := captureMatchContext(content, matchRange[0], matchRange[1])
+	redactedMatch := redactSensitiveText(match)
+	redactedContext := redactSensitiveText(context)
+
+	return contentMatchDetails{
+		match:               match,
+		matchedText:         match,
+		matchedTextRedacted: redactedMatch,
+		snippet:             flattenSnippet(redactedContext, snippetBytes),
+		context:             limitRunes(context, 320),
+		contextRedacted:     limitRunes(redactedContext, 320),
+		potentialAccount:    limitRunes(redactSensitiveText(potentialAccount), 160),
+		lineNumber:          lineNumber,
+	}, true
+}
+
+func captureMatchContext(content string, start, end int) (string, int, string) {
+	normalized := strings.ReplaceAll(content, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+
+	start = clampIndex(normalizedIndex(content, start), len(normalized))
+	end = clampIndex(normalizedIndex(content, end), len(normalized))
+
+	lines := strings.Split(normalized, "\n")
+	lineIndex := strings.Count(normalized[:start], "\n")
+	if lineIndex < 0 {
+		lineIndex = 0
+	}
+	if lineIndex >= len(lines) {
+		lineIndex = len(lines) - 1
+	}
+
+	contextStart := max(0, lineIndex-1)
+	contextEnd := min(len(lines), lineIndex+2)
+	context := strings.TrimSpace(strings.Join(lines[contextStart:contextEnd], "\n"))
+	if context == "" && lineIndex >= 0 && lineIndex < len(lines) {
+		context = strings.TrimSpace(lines[lineIndex])
+	}
+
+	return context, lineIndex + 1, nearbyIdentityLine(lines, lineIndex)
+}
+
+func normalizedIndex(content string, idx int) int {
+	idx = clampIndex(idx, len(content))
+	return len(strings.ReplaceAll(content[:idx], "\r", ""))
+}
+
+func flattenSnippet(content string, maxBytes int) string {
+	content = strings.ReplaceAll(content, "\n", `\n`)
+	content = strings.ReplaceAll(content, "\r", "")
+	return limitRunes(content, maxBytes)
+}
+
+func nearbyIdentityLine(lines []string, lineIndex int) string {
+	if len(lines) == 0 {
 		return ""
 	}
 
-	haystack := content
-	needle := []byte(match)
-	if !caseSensitive {
-		haystack = bytes.ToLower(content)
-		needle = bytes.ToLower(needle)
+	check := func(idx int) string {
+		if idx < 0 || idx >= len(lines) {
+			return ""
+		}
+		line := strings.TrimSpace(lines[idx])
+		if line == "" || !identityLineRegex.MatchString(line) {
+			return ""
+		}
+		return line
 	}
 
-	index := bytes.Index(haystack, needle)
-	if index < 0 {
-		return truncateSnippet(string(content), snippetBytes)
+	if line := check(lineIndex); line != "" {
+		return line
 	}
-
-	start := index - (snippetBytes / 2)
-	if start < 0 {
-		start = 0
+	for offset := 1; offset <= 3; offset++ {
+		if line := check(lineIndex - offset); line != "" {
+			return line
+		}
+		if line := check(lineIndex + offset); line != "" {
+			return line
+		}
 	}
-	end := start + snippetBytes
-	if end > len(content) {
-		end = len(content)
-	}
-
-	snippet := strings.ReplaceAll(string(content[start:end]), "\n", "\\n")
-	snippet = strings.ReplaceAll(snippet, "\r", "")
-	return snippet
+	return ""
 }
 
-func truncateSnippet(content string, max int) string {
-	if max <= 0 || len(content) <= max {
-		return content
+func redactSensitiveText(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
 	}
-	content = strings.ReplaceAll(content[:max], "\n", "\\n")
-	content = strings.ReplaceAll(content, "\r", "")
-	return content
+
+	redacted := assignmentSecretRegex.ReplaceAllString(text, `${1}${2}${3}********`)
+	redacted = xmlSecretRegex.ReplaceAllString(redacted, `<${1}>********</${1}>`)
+	return redacted
+}
+
+func limitRunes(value string, maxCount int) string {
+	if maxCount <= 0 {
+		return value
+	}
+	if utf8.RuneCountInString(value) <= maxCount {
+		return value
+	}
+
+	runes := []rune(value)
+	return string(runes[:maxCount]) + "..."
+}
+
+func clampIndex(value, maxValue int) int {
+	switch {
+	case value < 0:
+		return 0
+	case value > maxValue:
+		return maxValue
+	default:
+		return value
+	}
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

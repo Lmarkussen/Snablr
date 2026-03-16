@@ -158,7 +158,15 @@ type jsonFinding struct {
 	MatchedSignalTypes  []string                   `json:"matched_signal_types,omitempty"`
 	SupportingSignals   []scanner.SupportingSignal `json:"supporting_signals,omitempty"`
 	Tags                []string                   `json:"tags,omitempty"`
+	SignalType          string                     `json:"signal_type,omitempty"`
 	Match               string                     `json:"match,omitempty"`
+	MatchedText         string                     `json:"matched_text,omitempty"`
+	MatchedTextRedacted string                     `json:"matched_text_redacted,omitempty"`
+	Snippet             string                     `json:"snippet,omitempty"`
+	Context             string                     `json:"context,omitempty"`
+	ContextRedacted     string                     `json:"context_redacted,omitempty"`
+	PotentialAccount    string                     `json:"potential_account,omitempty"`
+	LineNumber          int                        `json:"line_number,omitempty"`
 	MatchSnippet        string                     `json:"match_snippet,omitempty"`
 	MatchReason         string                     `json:"match_reason,omitempty"`
 	RuleExplanation     string                     `json:"rule_explanation,omitempty"`
@@ -194,7 +202,15 @@ func toJSONFinding(f scanner.Finding, delta diff.FindingDelta) jsonFinding {
 		MatchedSignalTypes:  append([]string{}, f.MatchedSignalTypes...),
 		SupportingSignals:   append([]scanner.SupportingSignal{}, f.SupportingSignals...),
 		Tags:                append([]string{}, f.Tags...),
+		SignalType:          f.SignalType,
 		Match:               f.Match,
+		MatchedText:         f.MatchedText,
+		MatchedTextRedacted: f.MatchedTextRedacted,
+		Snippet:             f.Snippet,
+		Context:             f.Context,
+		ContextRedacted:     f.ContextRedacted,
+		PotentialAccount:    f.PotentialAccount,
+		LineNumber:          f.LineNumber,
 		MatchSnippet:        f.Snippet,
 		MatchReason:         f.MatchReason,
 		RuleExplanation:     f.RuleExplanation,

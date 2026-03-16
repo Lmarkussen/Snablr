@@ -73,8 +73,18 @@ func TestCorrelateFindingsGroupsSignalsByFileAndCategory(t *testing.T) {
 	}
 
 	correlated := correlateFindings(meta, []Finding{
-		newFinding(filenameRule, meta, "app.env", ""),
-		newFinding(contentRule, meta, "password=EXAMPLE_PASSWORD_001", "password=EXAMPLE_PASSWORD_001"),
+		newFinding(filenameRule, meta, heuristicEvidence(filenameRule.Type, "app.env")),
+		newFinding(contentRule, meta, findingEvidence{
+			SignalType:          "content",
+			Match:               "password=EXAMPLE_PASSWORD_001",
+			MatchedText:         "password=EXAMPLE_PASSWORD_001",
+			MatchedTextRedacted: "password=********",
+			Snippet:             "password=********",
+			Context:             "password=EXAMPLE_PASSWORD_001",
+			ContextRedacted:     "password=********",
+			PotentialAccount:    "user=demo",
+			LineNumber:          1,
+		}),
 	})
 
 	if len(correlated) != 1 {

@@ -37,8 +37,15 @@ func sampleFinding() scanner.Finding {
 		Source:              "dfs",
 		DFSNamespacePath:    `\\example.local\dfs\policies`,
 		DFSLinkPath:         "Policies/Groups.xml",
+		SignalType:          "content",
 		Match:               "password = ReplaceMe123!",
-		Snippet:             `password = ReplaceMe123!`,
+		MatchedText:         "password = ReplaceMe123!",
+		MatchedTextRedacted: "password = ********",
+		Snippet:             `user = alice\npassword = ********\ndomain = example.local`,
+		Context:             "user = alice\npassword = ReplaceMe123!\ndomain = example.local",
+		ContextRedacted:     "user = alice\npassword = ********\ndomain = example.local",
+		PotentialAccount:    "user = alice",
+		LineNumber:          12,
 		MatchReason:         "file contents contained text that matches the rule.",
 		RuleExplanation:     "This synthetic pattern simulates a hardcoded password assignment in a config-like file.",
 		RuleRemediation:     "Move credentials into a managed secret store or environment-specific secret injection path.",
@@ -87,6 +94,9 @@ func TestJSONWriterGeneratesStructuredReport(t *testing.T) {
 	}
 	if report.Findings[0].Confidence != "high" || report.Findings[0].RuleConfidence != "medium" || report.Findings[0].RuleExplanation == "" || report.Findings[0].RuleRemediation == "" {
 		t.Fatalf("expected explainability metadata in JSON finding, got %#v", report.Findings[0])
+	}
+	if report.Findings[0].SignalType != "content" || report.Findings[0].MatchedTextRedacted == "" || report.Findings[0].LineNumber != 12 || report.Findings[0].ContextRedacted == "" || report.Findings[0].PotentialAccount != "user = alice" {
+		t.Fatalf("expected signal-specific content metadata in JSON finding, got %#v", report.Findings[0])
 	}
 	if report.Findings[0].ConfidenceScore == 0 || len(report.Findings[0].MatchedRuleIDs) != 2 || len(report.Findings[0].SupportingSignals) == 0 {
 		t.Fatalf("expected correlated signal metadata in JSON finding, got %#v", report.Findings[0])
@@ -162,7 +172,7 @@ func TestConsoleWriterIncludesContextMetadata(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, want := range []string{"Share Type: sysvol", "Share Description: Domain policies and scripts", "Source: dfs", "AD Share: SYSVOL", "DFS Namespace:", "Confidence: HIGH (78)", "Matched Rules:", "Signals:", "Confidence Raised By:", "Rule Note:", "Remediation:"} {
+	for _, want := range []string{"Share Type: sysvol", "Share Description: Domain policies and scripts", "Source: dfs", "AD Share: SYSVOL", "DFS Namespace:", "Confidence: HIGH (78)", "Matched Rules:", "Signals:", "Signal: content", "Line: 12", "Potential account context: user = alice", "Matched text: password = ********", "Context:", "Confidence Raised By:", "Rule Note:", "Remediation:"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected output to contain %q, got %s", want, out)
 		}
@@ -188,7 +198,7 @@ func TestHTMLWriterRendersStandaloneTriageReport(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, want := range []string{"Snablr Scan Report", "Version", "quickFilter", "Severity Summary", "Category Summary", "Host Summary", "SYSVOL", "Type: sysvol", "Description: Domain policies and scripts", "source dfs", "Correlated rules", "Signals:", "Rule Explanation", "confidence high", "Supporting Signals", "Remediation"} {
+	for _, want := range []string{"Snablr Scan Report", "Version", "quickFilter", "Severity Summary", "Category Summary", "Host Summary", "SYSVOL", "Type: sysvol", "Description: Domain policies and scripts", "source dfs", "signal content", "Correlated rules", "Signals:", "Matched text: password = ********", "Potential account context: user = alice", "Line 12", "Rule Explanation", "confidence high", "Supporting Signals", "Remediation"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected html output to contain %q", want)
 		}

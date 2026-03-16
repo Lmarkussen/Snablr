@@ -20,7 +20,7 @@ func (s FilenameScanner) Scan(ruleSet []rules.Rule, meta FileMetadata) []Finding
 		if !ok {
 			continue
 		}
-		findings = append(findings, newFinding(rule, meta, match, ""))
+		findings = append(findings, newFinding(rule, meta, heuristicEvidence(rule.Type, match)))
 	}
 	return findings
 }
@@ -44,7 +44,7 @@ func (s ExtensionScanner) Scan(ruleSet []rules.Rule, meta FileMetadata) []Findin
 		if !ok {
 			continue
 		}
-		findings = append(findings, newFinding(rule, meta, match, ""))
+		findings = append(findings, newFinding(rule, meta, heuristicEvidence(rule.Type, match)))
 	}
 	return findings
 }

@@ -60,6 +60,46 @@ rules:
     max_file_size: 262144
     action: report
 
+  # Safe default: catches simple note-style account:value pairs in human-written text files without requiring a formal config key name.
+  - id: content.note_style_credential_pair_indicators
+    name: Note-Style Credential Pair Indicators
+    description: Detect account-like labels followed by secret-like values in human-written notes, lists, and text files.
+    type: content
+    pattern: '(?im)^(?:[A-Za-z][A-Za-z0-9._@-]{1,32})\s*[:=]\s*\S{6,64}$'
+    case_sensitive: false
+    severity: high
+    confidence: medium
+    explanation: This pattern is intended to catch simple account-or-service labels paired directly with a password-like value in note-style files.
+    remediation: Move credential notes into a managed secret store, rotate exposed values, and remove plaintext credential lists from shared locations.
+    tags: [credentials, notes, remediation]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp, winsxs]
+    file_extensions: [.conf, .env, .ini, .log, .md, .txt, .yaml, .yml]
+    max_file_size: 262144
+    action: report
+
+  # Safe default: covers loose password notes where a password-like value follows the word password without a strict assignment operator.
+  - id: content.password_note_value_indicators
+    name: Password Note Value Indicators
+    description: Detect password-note phrasing followed by a password-like value in text notes or exports.
+    type: content
+    pattern: '(?im)\bpassword\b(?:\s+is|\s*[:=]|\s+)\S{4,64}$'
+    case_sensitive: false
+    severity: high
+    confidence: medium
+    explanation: This pattern is intended to catch human-written password notes that present a password-like value without a strict config assignment format.
+    remediation: Remove plaintext password notes from shared locations, rotate the exposed value, and move credentials to managed storage.
+    tags: [credentials, notes, passwords]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: [node_modules, vendor, cache, temp, tmp, winsxs]
+    file_extensions: [.log, .md, .txt]
+    max_file_size: 262144
+    action: report
+
   # Noisy but useful: token variable names are common in sample files and templates.
   # Enable only after narrowing file_extensions and excluding local build or documentation paths.
   - id: content.api_token_assignment_indicators

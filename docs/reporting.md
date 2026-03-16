@@ -38,6 +38,13 @@ snablr scan \
   --md-out output/summary.md
 ```
 
+In that example, Snablr writes:
+
+- JSON to `output/results.json`
+- HTML to `output/report.html`
+- CSV to `output/findings.csv`
+- Markdown to `output/summary.md`
+
 ## Console Output
 
 Console output is designed for live terminal triage.
@@ -130,6 +137,8 @@ Use HTML when you need:
 - a review artifact for another analyst
 - a browser-friendly grouped report
 - a standalone file for remediation review
+
+After a scan, open the file you passed to `--html-out` in a browser.
 
 ## CSV Output
 

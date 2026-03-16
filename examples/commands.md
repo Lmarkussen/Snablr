@@ -11,7 +11,7 @@
 ```bash
 ./bin/snablr rules test \
   --rule configs/rules/default/content.yml \
-  --input testdata/rules/fixtures/passwords/sample.conf \
+  --input testdata/rules/fixtures/content/password-assignment.conf \
   --verbose
 ```
 
@@ -19,9 +19,9 @@
 
 ```bash
 ./bin/snablr scan \
-  --targets 172.16.0.90 \
-  --user 'DOMAIN\user' \
-  --pass 'Password123!' \
+  --targets 10.0.0.5 \
+  --user 'EXAMPLE\user' \
+  --pass 'REPLACE_ME' \
   --output-format console
 ```
 
@@ -29,7 +29,7 @@
 
 ```bash
 ./bin/snablr scan \
-  --config examples/config.example.yaml \
+  --config examples/config.basic.yaml \
   --output-format all \
   --json-out results.json \
   --html-out report.html \

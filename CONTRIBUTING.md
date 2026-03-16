@@ -2,6 +2,8 @@
 
 Thanks for contributing to Snablr.
 
+Please use Snablr only for authorized defensive work and keep all contributed fixtures, templates, and examples synthetic and safe to publish.
+
 ## Development Setup
 
 ```bash

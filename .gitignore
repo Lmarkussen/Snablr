@@ -7,7 +7,14 @@
 /report.html
 /findings.csv
 /summary.md
+/output/
+/results/
 /state/
+/*.seed-manifest.json
+/seed-manifest.json
+/*.manifest.json
+/*.csv
+/*.md.out
 /*.checkpoint.json
 /*.results.json
 /*.report.html

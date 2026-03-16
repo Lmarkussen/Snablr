@@ -92,8 +92,12 @@ func CurrentStatuses(result DiffResult) map[FindingFingerprint]FindingDelta {
 }
 
 func Fingerprint(f scanner.Finding) FindingFingerprint {
+	ruleID := normalizeIdentity(f.RuleID)
+	if len(f.MatchedRuleIDs) > 0 {
+		ruleID = normalizeIdentity(strings.Join(sortedStrings(f.MatchedRuleIDs), "|"))
+	}
 	return FindingFingerprint{
-		RuleID:   normalizeIdentity(f.RuleID),
+		RuleID:   ruleID,
 		Host:     normalizeIdentity(f.Host),
 		Share:    normalizeIdentity(f.Share),
 		FilePath: normalizePathIdentity(f.FilePath),
@@ -123,6 +127,12 @@ func compareFields(previous, current scanner.Finding) []string {
 	if !strings.EqualFold(strings.TrimSpace(previous.Confidence), strings.TrimSpace(current.Confidence)) {
 		fields = append(fields, "confidence")
 	}
+	if !strings.EqualFold(strings.TrimSpace(previous.RuleConfidence), strings.TrimSpace(current.RuleConfidence)) {
+		fields = append(fields, "rule_confidence")
+	}
+	if previous.ConfidenceScore != current.ConfidenceScore {
+		fields = append(fields, "confidence_score")
+	}
 	if !strings.EqualFold(strings.TrimSpace(previous.Category), strings.TrimSpace(current.Category)) {
 		fields = append(fields, "category")
 	}
@@ -131,6 +141,12 @@ func compareFields(previous, current scanner.Finding) []string {
 	}
 	if strings.TrimSpace(previous.PriorityReason) != strings.TrimSpace(current.PriorityReason) {
 		fields = append(fields, "priority_reason")
+	}
+	if previous.SharePriority != current.SharePriority {
+		fields = append(fields, "share_priority")
+	}
+	if strings.TrimSpace(previous.SharePriorityReason) != strings.TrimSpace(current.SharePriorityReason) {
+		fields = append(fields, "share_priority_reason")
 	}
 	if strings.TrimSpace(previous.ShareDescription) != strings.TrimSpace(current.ShareDescription) {
 		fields = append(fields, "share_description")
@@ -168,6 +184,18 @@ func compareFields(previous, current scanner.Finding) []string {
 	if !equalStringSlices(previous.Tags, current.Tags) {
 		fields = append(fields, "tags")
 	}
+	if !equalStringSlices(previous.MatchedRuleIDs, current.MatchedRuleIDs) {
+		fields = append(fields, "matched_rule_ids")
+	}
+	if !equalStringSlices(previous.MatchedSignalTypes, current.MatchedSignalTypes) {
+		fields = append(fields, "matched_signal_types")
+	}
+	if !equalStringSlices(previous.ConfidenceReasons, current.ConfidenceReasons) {
+		fields = append(fields, "confidence_reasons")
+	}
+	if !equalSignals(previous.SupportingSignals, current.SupportingSignals) {
+		fields = append(fields, "supporting_signals")
+	}
 
 	return fields
 }
@@ -192,10 +220,51 @@ func equalStringSlices(left, right []string) bool {
 func cloneFinding(f scanner.Finding) scanner.Finding {
 	out := f
 	out.Tags = append([]string{}, f.Tags...)
+	out.MatchedRuleIDs = append([]string{}, f.MatchedRuleIDs...)
+	out.MatchedSignalTypes = append([]string{}, f.MatchedSignalTypes...)
+	out.ConfidenceReasons = append([]string{}, f.ConfidenceReasons...)
+	out.SupportingSignals = append([]scanner.SupportingSignal{}, f.SupportingSignals...)
 	return out
 }
 
 func findingSortKey(f scanner.Finding) string {
 	fp := Fingerprint(f)
 	return strings.Join([]string{fp.RuleID, fp.Host, fp.Share, fp.FilePath, fp.Match}, "|")
+}
+
+func sortedStrings(values []string) []string {
+	out := append([]string{}, values...)
+	sort.Strings(out)
+	return out
+}
+
+func equalSignals(left, right []scanner.SupportingSignal) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	leftCopy := append([]scanner.SupportingSignal{}, left...)
+	rightCopy := append([]scanner.SupportingSignal{}, right...)
+	sort.Slice(leftCopy, func(i, j int) bool {
+		return signalSortKey(leftCopy[i]) < signalSortKey(leftCopy[j])
+	})
+	sort.Slice(rightCopy, func(i, j int) bool {
+		return signalSortKey(rightCopy[i]) < signalSortKey(rightCopy[j])
+	})
+	for i := range leftCopy {
+		if leftCopy[i] != rightCopy[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func signalSortKey(signal scanner.SupportingSignal) string {
+	return strings.Join([]string{
+		signal.SignalType,
+		signal.RuleID,
+		signal.RuleName,
+		signal.Match,
+		signal.Confidence,
+		signal.Reason,
+	}, "|")
 }

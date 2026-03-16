@@ -26,9 +26,18 @@ RELEASE_TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd
 
 .PHONY: build test lint release release-snapshot clean
 
+help:
+	@echo "Snablr build targets"
+	@echo ""
+	@echo "  make build             Build ./bin/$(APP) with version metadata"
+	@echo "  make test              Run go test ./..."
+	@echo "  make lint              Run go vet ./..."
+	@echo "  make release-snapshot  Build release archives under ./dist"
+
 build:
 	mkdir -p $(BIN_DIR)
 	$(GOENV) $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP) $(CMD)
+	@echo "Built $(BIN_DIR)/$(APP)"
 
 test:
 	$(GOENV) $(GO) test ./...
@@ -66,6 +75,7 @@ release-snapshot:
 		fi; \
 	done; \
 	rm -rf "$(STAGE_DIR)"
+	@echo "Release snapshot archives written to $(DIST_DIR)/"
 
 clean:
 	rm -rf $(BIN_DIR) $(DIST_DIR)

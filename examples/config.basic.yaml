@@ -6,9 +6,9 @@ app:
 scan:
   # Minimal direct-target example.
   targets:
-    - 172.16.0.90
+    - 10.0.0.5
   targets_file: ""
-  username: "DOMAIN\\scanuser"
+  username: "EXAMPLE\\scanuser"
   password: "REPLACE_ME"
 
   # Leave these empty for a simple direct host scan.

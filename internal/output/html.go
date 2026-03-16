@@ -12,6 +12,7 @@ import (
 
 	"snablr/internal/diff"
 	"snablr/internal/metrics"
+	"snablr/internal/planner"
 	"snablr/internal/scanner"
 	"snablr/internal/version"
 )
@@ -61,6 +62,7 @@ type severitySummary struct {
 func NewHTMLWriter(w io.Writer, closer io.Closer) (*HTMLWriter, error) {
 	tmpl, err := template.New("report.html.tmpl").Funcs(template.FuncMap{
 		"joinTags":        strings.Join,
+		"joinList":        strings.Join,
 		"severityClass":   severityClass,
 		"confidenceClass": confidenceClass,
 		"priorityClass":   priorityClass,
@@ -68,6 +70,7 @@ func NewHTMLWriter(w io.Writer, closer io.Closer) (*HTMLWriter, error) {
 		"sourceClass":     sourceClass,
 		"diffClass":       diffClass,
 		"diffLabel":       diffLabel,
+		"signalLabel":     signalLabel,
 		"truncatePath":    truncatePath,
 		"uncPath":         uncPath,
 		"valueOrDash":     valueOrDash,
@@ -224,6 +227,25 @@ func confidenceClass(value string) string {
 	}
 }
 
+func signalLabel(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "content":
+		return "content"
+	case "filename":
+		return "filename"
+	case "extension":
+		return "extension"
+	case "path":
+		return "path"
+	case "share_priority":
+		return "share priority"
+	case "planner_priority":
+		return "planner priority"
+	default:
+		return value
+	}
+}
+
 func truncatePath(value string) string {
 	if len(value) <= 72 {
 		return value
@@ -293,12 +315,12 @@ func buildSeveritySummaries(findings []scanner.Finding) []severitySummary {
 }
 
 func priorityClass(value int) string {
-	switch {
-	case value >= 120:
+	switch planner.PriorityBand(value) {
+	case "critical":
 		return "prio-critical"
-	case value >= 80:
+	case "high":
 		return "prio-high"
-	case value >= 40:
+	case "medium":
 		return "prio-medium"
 	default:
 		return "prio-low"
@@ -306,12 +328,12 @@ func priorityClass(value int) string {
 }
 
 func priorityLabel(value int) string {
-	switch {
-	case value >= 120:
+	switch planner.PriorityBand(value) {
+	case "critical":
 		return "priority critical"
-	case value >= 80:
+	case "high":
 		return "priority high"
-	case value >= 40:
+	case "medium":
 		return "priority medium"
 	default:
 		return "priority low"

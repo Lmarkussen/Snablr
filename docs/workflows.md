@@ -2,6 +2,8 @@
 
 This guide collects a few practical workflows that map directly to how Snablr is designed to be used in real environments.
 
+Use these workflows only in environments where you have explicit authorization to enumerate and review SMB-accessible data.
+
 ## Run A Direct Host Scan
 
 Use this when you already know the host or small host list you want to review.
@@ -10,8 +12,8 @@ Example:
 
 ```bash
 ./bin/snablr scan \
-  --targets 172.16.0.90,172.16.0.91 \
-  --user 'DOMAIN\user' \
+  --targets 10.0.0.5,10.0.0.6 \
+  --user 'EXAMPLE\user' \
   --pass 'REPLACE_ME' \
   --output-format all \
   --json-out results/direct.json \
@@ -52,6 +54,30 @@ Good fit for:
 - identifying exposed share content across many hosts
 - generating a full report set for review and remediation
 
+## Generate HTML And JSON Output
+
+Use this when you want both:
+
+- JSON for automation or baseline comparison
+- HTML for browser-based triage
+
+Example:
+
+```bash
+./bin/snablr scan \
+  --targets 10.0.0.5 \
+  --user 'EXAMPLE\user' \
+  --pass 'REPLACE_ME' \
+  --output-format all \
+  --json-out results.json \
+  --html-out report.html
+```
+
+Output locations in this example:
+
+- `results.json`
+- `report.html`
+
 ## Test Custom Rules
 
 Before using custom rules in a live scan, validate and test them offline.
@@ -85,6 +111,22 @@ Good fit for:
 - CI validation
 - noise reduction before rollout
 - organization-specific keyword tuning
+
+## Compare Two Scans With Diff Mode
+
+Use this when you already have two JSON reports and want to focus on what changed.
+
+Example:
+
+```bash
+./bin/snablr diff --old previous-results.json --new current-results.json
+```
+
+Good fit for:
+
+- repeated scheduled scans
+- remediation tracking
+- identifying newly exposed content
 
 ## Resume A Scan
 

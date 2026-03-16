@@ -170,3 +170,16 @@ func normalizeExtension(value string) string {
 	}
 	return "." + value
 }
+
+func PriorityBand(value int) string {
+	switch {
+	case value >= 120:
+		return "critical"
+	case value >= 80:
+		return "high"
+	case value >= 40:
+		return "medium"
+	default:
+		return "low"
+	}
+}

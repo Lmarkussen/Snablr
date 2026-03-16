@@ -4,10 +4,8 @@ Date: 2026-03-16
 
 Scope:
 - Full validation pass covering build/tooling, CLI, rules, output/reporting, discovery, checkpoint/resume, diff mode, seeder verification, and release packaging.
-- Lab context provided:
-  - Domain: `evilhaxxor.local`
-  - DC01: `172.16.0.80`
-  - FS01: `172.16.0.90`
+- Controlled lab context was used during the original validation pass.
+- Specific internal domain and host details are intentionally redacted for public publication.
 
 Environment notes:
 - Local build/test execution was performed with isolated Go caches under `/tmp`.
@@ -179,8 +177,8 @@ Commands:
 ```bash
 /tmp/snablr-validate discover --targets-file /tmp/snablr-targets.txt --skip-reachability-check --no-ldap
 /tmp/snablr-validate discover --no-ldap
-/tmp/snablr-validate discover --domain evilhaxxor.local --dc 172.16.0.80
-/tmp/snablr-validate discover --targets 172.16.0.80,172.16.0.90 --no-ldap --reachability-timeout 2
+/tmp/snablr-validate discover --domain example.local --dc 10.0.0.10
+/tmp/snablr-validate discover --targets 10.0.0.10,10.0.0.20 --no-ldap --reachability-timeout 2
 ```
 
 Expected result:
@@ -196,7 +194,7 @@ Actual result:
   - Reachable targets shown correctly
 - `discover --no-ldap` failed with actionable error
 - Domain/DC override without creds failed with actionable LDAP credential error
-- Live reachability to `172.16.0.80` and `172.16.0.90` succeeded:
+- Live reachability to the two supplied SMB hosts succeeded:
   - `Reachable SMB hosts: 2`
 
 Status: PARTIAL
@@ -210,7 +208,7 @@ Not verified:
 
 Command:
 ```bash
-/tmp/snablr-validate scan --targets 172.16.0.90 --username fake --password fake --no-ldap --skip-reachability-check --output-format console --max-scan-time 30s
+/tmp/snablr-validate scan --targets 10.0.0.20 --username fake --password fake --no-ldap --skip-reachability-check --output-format console --max-scan-time 30s
 ```
 
 Expected result:
@@ -222,7 +220,7 @@ Expected result:
 Actual result:
 - Target loading, planning, metrics, and summary all executed
 - Live SMB auth failure was reported clearly:
-  - `connect failed: authenticate to 172.16.0.90: response error: The attempted logon is invalid...`
+  - `connect failed: authenticate to 10.0.0.20: response error: The attempted logon is invalid...`
 
 Status: PARTIAL
 
@@ -237,8 +235,8 @@ Not verified:
 Commands:
 ```bash
 env GOCACHE=/tmp/snablr-gocache GOMODCACHE=/tmp/snablr-gomodcache go test -run 'TestStore|TestManager' -v ./internal/state
-/tmp/snablr-validate scan --targets 172.16.0.90 --username fake --password fake --no-ldap --skip-reachability-check --resume --checkpoint-file <bad-json>
-/tmp/snablr-validate scan --targets 172.16.0.90 --username fake --password fake --no-ldap --skip-reachability-check --checkpoint-file <new-file>
+/tmp/snablr-validate scan --targets 10.0.0.20 --username fake --password fake --no-ldap --skip-reachability-check --resume --checkpoint-file <bad-json>
+/tmp/snablr-validate scan --targets 10.0.0.20 --username fake --password fake --no-ldap --skip-reachability-check --checkpoint-file <new-file>
 ```
 
 Expected result:

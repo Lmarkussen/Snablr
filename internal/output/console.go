@@ -61,7 +61,25 @@ func (c *ConsoleWriter) WriteFinding(f scanner.Finding) error {
 		return err
 	}
 	if f.Confidence != "" {
-		if _, err := fmt.Fprintf(c.w, "Confidence: %s\n", strings.ToUpper(f.Confidence)); err != nil {
+		if _, err := fmt.Fprintf(c.w, "Confidence: %s", strings.ToUpper(f.Confidence)); err != nil {
+			return err
+		}
+		if f.ConfidenceScore > 0 {
+			if _, err := fmt.Fprintf(c.w, " (%d)", f.ConfidenceScore); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(c.w); err != nil {
+			return err
+		}
+	}
+	if len(f.MatchedRuleIDs) > 0 {
+		if _, err := fmt.Fprintf(c.w, "Matched Rules: %s\n", strings.Join(f.MatchedRuleIDs, ", ")); err != nil {
+			return err
+		}
+	}
+	if len(f.MatchedSignalTypes) > 0 {
+		if _, err := fmt.Fprintf(c.w, "Signals: %s\n", strings.Join(f.MatchedSignalTypes, ", ")); err != nil {
 			return err
 		}
 	}
@@ -105,6 +123,11 @@ func (c *ConsoleWriter) WriteFinding(f scanner.Finding) error {
 			return err
 		}
 	}
+	if len(f.ConfidenceReasons) > 0 {
+		if _, err := fmt.Fprintf(c.w, "Confidence Raised By: %s\n", strings.Join(limitStrings(f.ConfidenceReasons, 3), "; ")); err != nil {
+			return err
+		}
+	}
 	if f.RuleExplanation != "" {
 		if _, err := fmt.Fprintf(c.w, "Rule Note: %s\n", f.RuleExplanation); err != nil {
 			return err
@@ -121,6 +144,13 @@ func (c *ConsoleWriter) WriteFinding(f scanner.Finding) error {
 	}
 	_, err := fmt.Fprintln(c.w)
 	return err
+}
+
+func limitStrings(values []string, max int) []string {
+	if len(values) <= max || max <= 0 {
+		return values
+	}
+	return values[:max]
 }
 
 func (c *ConsoleWriter) RecordHost(host string) {

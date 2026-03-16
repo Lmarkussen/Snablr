@@ -4,6 +4,10 @@ Snablr is a Go-based SMB share triage tool for defensive review of Windows file 
 
 The project is inspired by the general Snaffler workflow, but it is implemented as a clean Go codebase with a rules-first design, resumable scans, offline rule testing, and reporting aimed at defensive triage rather than exploitation.
 
+## Authorized Use
+
+Snablr is intended for authorized defensive security work only. Run it only against systems, shares, and directories that you own or have explicit permission to assess.
+
 ## Feature Overview
 
 - Domain-aware target discovery with LDAP and optional DFS discovery
@@ -42,6 +46,7 @@ Snablr is organized around a small set of focused modules:
 ### Requirements
 
 - Go `1.24+`
+- `make` if you want to use the convenience build targets
 - Network access to target SMB hosts on TCP `445`
 - Valid SMB credentials for target shares
 - LDAP connectivity and credentials if you want automatic domain discovery
@@ -70,7 +75,21 @@ Windows archives contain:
 - `README.md`
 - `LICENSE`
 
+Quick verification after download:
+
+```bash
+./snablr version
+```
+
+On Windows PowerShell:
+
+```powershell
+.\snablr.exe version
+```
+
 ### Build From Source
+
+Run these commands from the repository root.
 
 Recommended local build:
 
@@ -88,19 +107,62 @@ go build -o bin/snablr ./cmd/snablr
 ./bin/snablr --help
 ```
 
+If you are on Windows and do not use `make`, use:
+
+```powershell
+go build -o bin/snablr.exe ./cmd/snablr
+.\bin\snablr.exe --help
+```
+
 Note:
 - `make build` injects version, commit, and build date metadata.
 - Plain `go build` is fine for development, but will usually show `dev` / `unknown` metadata unless you pass ldflags yourself.
 
+Minimum source-build verification:
+
+```bash
+go build ./...
+make build
+./bin/snablr version
+```
+
 ## Quick Start
 
-Direct target scan with JSON and HTML output:
+### 1. Download A Release Or Build From Source
+
+Use either:
+
+- a release archive from GitHub Releases
+- `make build` if you are building locally
+
+### 2. Verify The Binary Works
+
+If `snablr` is not installed on your `PATH`, use `./bin/snablr` instead.
+
+```bash
+snablr version
+```
+
+Or, if you are running from the repo:
+
+```bash
+./bin/snablr version
+```
+
+### 3. Run A Simple Direct-Host Scan
+
+Use this when you already know the host you want to review.
+
+You need:
+
+- one reachable Windows host with SMB enabled
+- a username and password that can authenticate to that host
 
 ```bash
 snablr scan --targets 10.0.0.5 --user USER --pass PASS --output-format all --json-out results.json --html-out report.html
 ```
 
-That workflow:
+What this does:
 
 1. loads config defaults and rule packs
 2. uses the explicit target instead of LDAP discovery
@@ -109,14 +171,87 @@ That workflow:
 5. scans matching files with the active rule set
 6. writes findings to console, JSON, and HTML
 
+### 4. Open The HTML Report
+
+The HTML report is written to the path you supplied with `--html-out`.
+
+In the example above:
+
+- JSON results go to `results.json`
+- HTML report goes to `report.html`
+
+Open `report.html` in a browser after the scan completes.
+
+If you are running from the repo root and the binary is not on `PATH`, use:
+
+```bash
+./bin/snablr scan --targets 10.0.0.5 --user USER --pass PASS --output-format all --json-out results.json --html-out report.html
+```
+
+### 5. Try A Domain-Aware Scan
+
+Use this when you want Snablr to discover targets from LDAP automatically.
+
+You need:
+
+- LDAP connectivity to a domain controller
+- credentials that work for LDAP and SMB
+
+```bash
+snablr scan --user USER --pass PASS --output-format all --json-out results.json --html-out report.html
+```
+
+LDAP discovery is used only when you do not provide `--targets` or `--targets-file`.
+
+## When To Use What
+
+- Direct target scan
+  Use when you already know the file server or small host list you want to review.
+- Domain-aware scan
+  Use when you want Snablr to discover likely targets from LDAP automatically.
+- `rules test`
+  Use before a live scan when you want to verify a rule against a known file.
+- `diff`
+  Use after repeated scans when you want to focus on what changed since the last run.
+
+## Output Formats
+
+Snablr supports these primary output modes:
+
+- `console`
+  Prints findings directly to the terminal.
+- `json`
+  Writes one machine-readable JSON report to `--json-out`.
+- `html`
+  Writes one standalone HTML report to `--html-out`.
+- `all`
+  Writes console output and both JSON and HTML reports.
+
+Optional sidecar exports:
+
+- `--csv-out`
+- `--md-out`
+
+If you do not provide output paths, the defaults from your config file are used. If you override them on the CLI, Snablr writes to the paths you provide.
+
+## First-Time User Tip
+
+If you are unsure where to start:
+
+1. build with `make build`
+2. run `./bin/snablr version`
+3. run one direct target scan with `--output-format all`
+4. open the generated `report.html`
+5. only then move on to LDAP discovery, custom rules, and diff mode
+
 ## Common Workflows
 
 ### Scan A Single Host
 
 ```bash
 snablr scan \
-  --targets 172.16.0.90 \
-  --user 'DOMAIN\user' \
+  --targets 10.0.0.5 \
+  --user 'EXAMPLE\user' \
   --pass 'REPLACE_ME' \
   --output-format console
 ```
@@ -133,7 +268,7 @@ If `targets` and `targets_file` are empty, Snablr tries to detect domain context
 
 ```bash
 snablr scan \
-  --user 'DOMAIN\user' \
+  --user 'EXAMPLE\user' \
   --pass 'REPLACE_ME' \
   --output-format console
 ```
@@ -273,6 +408,7 @@ The [`examples`](examples) directory includes:
 
 ## Additional Documentation
 
+- [Build And Release](docs/building.md)
 - [Getting Started](docs/getting-started.md)
 - [Configuration](docs/configuration.md)
 - [Rules](docs/rules.md)
@@ -280,6 +416,8 @@ The [`examples`](examples) directory includes:
 - [Architecture](docs/architecture.md)
 - [Workflows](docs/workflows.md)
 - [Validation Report](docs/validation-report.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Security Policy](SECURITY.md)
 
 ## Development
 
@@ -304,4 +442,4 @@ The release snapshot and GitHub release workflow build:
 
 ## License
 
-This repository is licensed under the terms of the [MIT License](LICENSE).
+This repository is licensed under the terms of the [GNU GPLv3](LICENSE).

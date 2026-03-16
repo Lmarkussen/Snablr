@@ -4,6 +4,10 @@ Snablr is a defensive SMB share triage tool. It helps you discover likely Window
 
 This guide is the shortest path from a fresh clone to a first useful run.
 
+Snablr is intended for authorized defensive security work only. Use it only against systems and shares that you are explicitly permitted to assess.
+
+All source-build commands below assume you are running from the repository root.
+
 ## What Snablr Does
 
 At a high level, a Snablr scan does this:
@@ -55,9 +59,31 @@ Alternative build:
 go build -o bin/snablr ./cmd/snablr
 ```
 
+If `make` is not available, `go build ./...` is the simplest fallback build check.
+
+Windows fallback:
+
+```powershell
+go build -o bin/snablr.exe ./cmd/snablr
+.\bin\snablr.exe version
+```
+
 Note:
 - `make build` injects version metadata.
 - plain `go build` is fine for development, but usually reports `dev` / `unknown` metadata unless you provide ldflags.
+
+## Verify Installation
+
+Run:
+
+```bash
+./bin/snablr version
+./bin/snablr --help
+```
+
+If `version` prints a version string and `--help` shows the command list, the binary is ready to use.
+
+If the binary is not on your `PATH`, keep using `./bin/snablr` from the repo root.
 
 ## First Scan: Direct Host
 
@@ -65,13 +91,19 @@ Start with one explicit target:
 
 ```bash
 ./bin/snablr scan \
-  --targets 172.16.0.90 \
-  --user 'DOMAIN\user' \
+  --targets 10.0.0.5 \
+  --user 'EXAMPLE\user' \
   --pass 'REPLACE_ME' \
   --output-format all \
   --json-out results.json \
   --html-out report.html
 ```
+
+Replace:
+
+- `10.0.0.5` with a reachable Windows host
+- `EXAMPLE\user` with a real account name
+- `REPLACE_ME` with the real password at runtime
 
 Expected behavior:
 
@@ -81,6 +113,13 @@ Expected behavior:
 - accessible shares are enumerated
 - files are filtered, prioritized, and scanned
 - findings are written to console, JSON, and HTML
+
+Where results go in this example:
+
+- `results.json`
+- `report.html`
+
+Open `report.html` in a browser after the scan finishes.
 
 ## First Scan: Config-Driven
 
@@ -105,7 +144,7 @@ If you do not provide targets, Snablr tries LDAP discovery by default unless `--
 
 ```bash
 ./bin/snablr scan \
-  --user 'DOMAIN\user' \
+  --user 'EXAMPLE\user' \
   --pass 'REPLACE_ME' \
   --output-format console
 ```
@@ -124,14 +163,16 @@ Expected behavior:
 - it merges discovered hosts into the target pipeline
 - it tests reachability before SMB enumeration
 
+If LDAP discovery fails, start over with a direct target scan first. That usually tells you whether the problem is discovery or SMB access.
+
 ## First Scan: Targeted Triage
 
 If you want a fast, narrow validation run:
 
 ```bash
 ./bin/snablr scan \
-  --targets fs01.example.local \
-  --user 'DOMAIN\user' \
+  --targets fileserver.example.local \
+  --user 'EXAMPLE\user' \
   --pass 'REPLACE_ME' \
   --share Finance \
   --path Payroll/ \
@@ -195,9 +236,9 @@ Example:
 
 ```text
 [HIGH] content.password_assignment_indicators
-Host: FS01
+Host: FILESERVER01
 Share: Finance
-File: \\FS01\Finance\web.config
+File: \\FILESERVER01\Finance\web.config
 Rule: Password Assignment Indicators
 Category: credentials
 Match: password=Secret123
@@ -284,6 +325,25 @@ Or compare two existing JSON reports directly:
 ```bash
 ./bin/snablr diff --old results.json --new results-new.json
 ```
+
+## Build And Release Notes
+
+Local developer checks:
+
+```bash
+go build ./...
+go test ./...
+make build
+make test
+```
+
+Version metadata check:
+
+```bash
+./bin/snablr version
+```
+
+If you want embedded version, commit, and build-date metadata, use `make build` or a release artifact instead of a plain ad-hoc `go build`.
 
 ## Next Steps
 

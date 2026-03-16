@@ -11,11 +11,12 @@ import (
 )
 
 type VerificationFindingSummary struct {
-	RuleID   string
-	RuleName string
-	Severity string
-	Category string
-	Tags     []string
+	RuleID     string
+	RuleName   string
+	Severity   string
+	Category   string
+	SignalType string
+	Tags       []string
 }
 
 type VerifiedSeedItem struct {
@@ -30,6 +31,13 @@ type CoverageSummary struct {
 	Missed   int
 }
 
+type SignalCoverageSummary struct {
+	SignalType string
+	Expected   int
+	Found      int
+	Missed     int
+}
+
 type VerificationReport struct {
 	ManifestPath       string
 	ResultsPath        string
@@ -41,6 +49,7 @@ type VerificationReport struct {
 	Missed             []SeedManifestEntry
 	Unexpected         []scanner.Finding
 	Coverage           []CoverageSummary
+	SignalCoverage     []SignalCoverageSummary
 }
 
 func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
@@ -54,16 +63,18 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 	}
 
 	result := VerificationReport{
-		ManifestPath: manifestPath,
-		ResultsPath:  resultsPath,
-		Found:        make([]VerifiedSeedItem, 0),
-		Missed:       make([]SeedManifestEntry, 0),
-		Unexpected:   make([]scanner.Finding, 0),
-		Coverage:     make([]CoverageSummary, 0),
+		ManifestPath:   manifestPath,
+		ResultsPath:    resultsPath,
+		Found:          make([]VerifiedSeedItem, 0),
+		Missed:         make([]SeedManifestEntry, 0),
+		Unexpected:     make([]scanner.Finding, 0),
+		Coverage:       make([]CoverageSummary, 0),
+		SignalCoverage: make([]SignalCoverageSummary, 0),
 	}
 
 	manifestByKey := make(map[string]SeedManifestEntry, len(manifest.Entries))
 	coverage := make(map[string]*CoverageSummary)
+	signalCoverage := make(map[string]*SignalCoverageSummary)
 	for _, entry := range manifest.Entries {
 		key := manifestKey(entry)
 		if key == "" {
@@ -75,6 +86,16 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 			coverage[category] = &CoverageSummary{Category: category}
 		}
 		coverage[category].Expected++
+		for _, signalType := range entry.ExpectedSignalTypes {
+			normalized := normalizeSignalType(signalType)
+			if normalized == "" {
+				continue
+			}
+			if _, ok := signalCoverage[normalized]; !ok {
+				signalCoverage[normalized] = &SignalCoverageSummary{SignalType: normalized}
+			}
+			signalCoverage[normalized].Expected++
+		}
 	}
 
 	findingsByKey := make(map[string][]scanner.Finding)
@@ -91,6 +112,13 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 		if len(matches) == 0 {
 			result.Missed = append(result.Missed, entry)
 			coverage[normalizedCategory(entry.Category)].Missed++
+			for _, signalType := range entry.ExpectedSignalTypes {
+				normalized := normalizeSignalType(signalType)
+				if normalized == "" {
+					continue
+				}
+				signalCoverage[normalized].Missed++
+			}
 			continue
 		}
 
@@ -100,11 +128,12 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 		}
 		for _, finding := range matches {
 			item.Findings = append(item.Findings, VerificationFindingSummary{
-				RuleID:   finding.RuleID,
-				RuleName: finding.RuleName,
-				Severity: finding.Severity,
-				Category: finding.Category,
-				Tags:     append([]string{}, finding.Tags...),
+				RuleID:     finding.RuleID,
+				RuleName:   finding.RuleName,
+				Severity:   finding.Severity,
+				Category:   finding.Category,
+				SignalType: primaryVerificationSignalType(finding),
+				Tags:       append([]string{}, finding.Tags...),
 			})
 		}
 		sort.Slice(item.Findings, func(i, j int) bool {
@@ -115,6 +144,25 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 		})
 		result.Found = append(result.Found, item)
 		coverage[normalizedCategory(entry.Category)].Found++
+		foundSignals := make(map[string]struct{})
+		for _, finding := range matches {
+			normalized := normalizeSignalType(primaryVerificationSignalType(finding))
+			if normalized == "" {
+				continue
+			}
+			foundSignals[normalized] = struct{}{}
+		}
+		for _, signalType := range entry.ExpectedSignalTypes {
+			normalized := normalizeSignalType(signalType)
+			if normalized == "" {
+				continue
+			}
+			if _, ok := foundSignals[normalized]; ok {
+				signalCoverage[normalized].Found++
+			} else {
+				signalCoverage[normalized].Missed++
+			}
+		}
 	}
 
 	for key, findings := range findingsByKey {
@@ -126,6 +174,9 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 
 	for _, summary := range coverage {
 		result.Coverage = append(result.Coverage, *summary)
+	}
+	for _, summary := range signalCoverage {
+		result.SignalCoverage = append(result.SignalCoverage, *summary)
 	}
 
 	sort.Slice(result.Found, func(i, j int) bool {
@@ -160,6 +211,9 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 	sort.Slice(result.Coverage, func(i, j int) bool {
 		return result.Coverage[i].Category < result.Coverage[j].Category
 	})
+	sort.Slice(result.SignalCoverage, func(i, j int) bool {
+		return result.SignalCoverage[i].SignalType < result.SignalCoverage[j].SignalType
+	})
 
 	result.ExpectedItems = len(manifestByKey)
 	result.FoundItems = len(result.Found)
@@ -179,6 +233,12 @@ func PrintVerificationReport(report VerificationReport) {
 		fmt.Println("\nCoverage by category:")
 		for _, category := range report.Coverage {
 			fmt.Printf("- %s: found %d/%d missed %d\n", category.Category, category.Found, category.Expected, category.Missed)
+		}
+	}
+	if len(report.SignalCoverage) > 0 {
+		fmt.Println("\nCoverage by signal type:")
+		for _, signal := range report.SignalCoverage {
+			fmt.Printf("- %s: found %d/%d missed %d\n", signal.SignalType, signal.Found, signal.Expected, signal.Missed)
 		}
 	}
 
@@ -237,6 +297,24 @@ func normalizedCategory(value string) string {
 		return "uncategorized"
 	}
 	return value
+}
+
+func normalizeSignalType(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+	return value
+}
+
+func primaryVerificationSignalType(finding scanner.Finding) string {
+	if strings.TrimSpace(finding.SignalType) != "" {
+		return finding.SignalType
+	}
+	if len(finding.MatchedSignalTypes) > 0 {
+		return finding.MatchedSignalTypes[0]
+	}
+	return ""
 }
 
 func valueOrDash(value string) string {

@@ -3,26 +3,30 @@ package seed
 import "time"
 
 type SeedFile struct {
-	Category           string
-	Format             string
-	RelativePath       string
-	Filename           string
-	Content            []byte
-	ExpectedTags       []string
-	ExpectedRuleThemes []string
-	ExpectedSeverity   string
+	Category            string
+	Format              string
+	RelativePath        string
+	Filename            string
+	Content             []byte
+	IntendedAs          string
+	ExpectedSignalTypes []string
+	ExpectedTags        []string
+	ExpectedRuleThemes  []string
+	ExpectedSeverity    string
 }
 
 type SeedManifestEntry struct {
-	Host               string   `json:"host"`
-	Share              string   `json:"share"`
-	Path               string   `json:"path"`
-	Category           string   `json:"category"`
-	Format             string   `json:"format"`
-	ExpectedTags       []string `json:"expected_tags,omitempty"`
-	ExpectedRuleThemes []string `json:"expected_rule_themes,omitempty"`
-	ExpectedSeverity   string   `json:"expected_severity,omitempty"`
-	Status             string   `json:"status,omitempty"`
+	Host                string   `json:"host"`
+	Share               string   `json:"share"`
+	Path                string   `json:"path"`
+	Category            string   `json:"category"`
+	Format              string   `json:"format"`
+	IntendedAs          string   `json:"intended_as,omitempty"`
+	ExpectedSignalTypes []string `json:"expected_signal_types,omitempty"`
+	ExpectedTags        []string `json:"expected_tags,omitempty"`
+	ExpectedRuleThemes  []string `json:"expected_rule_themes,omitempty"`
+	ExpectedSeverity    string   `json:"expected_severity,omitempty"`
+	Status              string   `json:"status,omitempty"`
 }
 
 type Manifest struct {
@@ -32,26 +36,37 @@ type Manifest struct {
 }
 
 type GenerateOptions struct {
-	CountPerCategory int
-	MaxFiles         int
-	SeedPrefix       string
-	RandomSeed       int64
+	CountPerCategory    int
+	MaxFiles            int
+	Depth               int
+	SeedPrefix          string
+	RandomSeed          int64
+	LikelyHitRatio      int
+	FilenameOnlyRatio   int
+	HighSeverityRatio   int
+	MediumSeverityRatio int
 }
 
 type WriteOptions struct {
-	Targets     []string
-	Username    string
-	Password    string
-	Shares      []string
-	SeedPrefix  string
-	DryRun      bool
-	CleanPrefix bool
-	ManifestOut string
-	RandomSeed  int64
-	Logf        func(string, ...any)
-	Warnf       func(string, ...any)
-	CountPerCat int
-	MaxFiles    int
+	Targets             []string
+	Username            string
+	Password            string
+	Shares              []string
+	SeedPrefix          string
+	DryRun              bool
+	CleanPrefix         bool
+	ManifestOut         string
+	RandomSeed          int64
+	Depth               int
+	SharesPerTarget     int
+	LikelyHitRatio      int
+	FilenameOnlyRatio   int
+	HighSeverityRatio   int
+	MediumSeverityRatio int
+	Logf                func(string, ...any)
+	Warnf               func(string, ...any)
+	CountPerCat         int
+	MaxFiles            int
 }
 
 type ShareTarget struct {
@@ -60,19 +75,37 @@ type ShareTarget struct {
 }
 
 type templateSpec struct {
-	Category           string
-	Formats            []string
-	Directories        []string
-	FilenamePrefixes   []string
-	ExpectedTags       []string
-	ExpectedRuleThemes []string
-	ExpectedSeverity   string
-	Render             func(renderContext) []byte
+	Category        string
+	Directories     []string
+	Variants        []templateVariant
+	Personas        []string
+	ServiceAccounts []string
+	Labels          []string
+	Render          func(renderContext, templateVariant) []byte
+}
+
+type templateVariant struct {
+	Filename            string
+	Format              string
+	IntendedAs          string
+	ExpectedSignalTypes []string
+	ExpectedTags        []string
+	ExpectedRuleThemes  []string
+	ExpectedSeverity    string
+	ContentStyle        string
 }
 
 type renderContext struct {
-	Index    int
-	Format   string
-	Filename string
-	Token    string
+	Index          int
+	Format         string
+	Filename       string
+	Token          string
+	Category       string
+	Directory      string
+	Persona        string
+	PersonaDisplay string
+	ServiceAccount string
+	Label          string
+	IntendedAs     string
+	ContentStyle   string
 }

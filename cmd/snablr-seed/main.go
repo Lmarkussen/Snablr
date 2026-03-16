@@ -41,8 +41,14 @@ func run(args []string) error {
 
 	var shares multiValueFlag
 	fs.Var(&shares, "share", "Restrict seeding to a share name; may be repeated")
-	countPerCategory := fs.Int("count-per-category", 3, "Number of files to generate per category")
-	maxFiles := fs.Int("max-files", 120, "Maximum total files to generate")
+	countPerCategory := fs.Int("count-per-category", 6, "Number of files to generate per category")
+	maxFiles := fs.Int("max-files", 480, "Maximum total files to generate")
+	depth := fs.Int("depth", 1, "Additional nested directory depth to add under each base path")
+	sharesPerTarget := fs.Int("shares-per-target", 0, "Maximum number of shares to seed per target; 0 uses all accessible shares")
+	likelyHitRatio := fs.Int("likely-hit-ratio", 65, "Approximate percentage of generated files intended as likely hits")
+	filenameOnlyRatio := fs.Int("filename-only-ratio", 30, "Approximate percentage of generated files biased toward filename/path-only hits")
+	highSeverityRatio := fs.Int("high-severity-ratio", 35, "Approximate percentage of generated files biased toward high severity")
+	mediumSeverityRatio := fs.Int("medium-severity-ratio", 45, "Approximate percentage of generated files biased toward medium severity")
 	dryRun := fs.Bool("dry-run", false, "Plan and manifest output only; do not write files")
 	manifestOut := fs.String("manifest-out", "seed-manifest.json", "Path to manifest JSON output")
 	cleanPrefix := fs.Bool("clean-prefix", false, "Remove previously seeded content under the seed prefix before writing")
@@ -73,19 +79,25 @@ func run(args []string) error {
 
 	logger := logx.New(*logLevel)
 	manifest, err := seed.Seed(context.Background(), seed.WriteOptions{
-		Targets:     targetList,
-		Username:    username,
-		Password:    password,
-		Shares:      append([]string{}, shares...),
-		SeedPrefix:  *seedPrefix,
-		DryRun:      *dryRun,
-		CleanPrefix: *cleanPrefix,
-		ManifestOut: *manifestOut,
-		RandomSeed:  *randomSeed,
-		CountPerCat: *countPerCategory,
-		MaxFiles:    *maxFiles,
-		Logf:        logger.Infof,
-		Warnf:       logger.Warnf,
+		Targets:             targetList,
+		Username:            username,
+		Password:            password,
+		Shares:              append([]string{}, shares...),
+		SeedPrefix:          *seedPrefix,
+		DryRun:              *dryRun,
+		CleanPrefix:         *cleanPrefix,
+		ManifestOut:         *manifestOut,
+		RandomSeed:          *randomSeed,
+		Depth:               *depth,
+		SharesPerTarget:     *sharesPerTarget,
+		LikelyHitRatio:      *likelyHitRatio,
+		FilenameOnlyRatio:   *filenameOnlyRatio,
+		HighSeverityRatio:   *highSeverityRatio,
+		MediumSeverityRatio: *mediumSeverityRatio,
+		CountPerCat:         *countPerCategory,
+		MaxFiles:            *maxFiles,
+		Logf:                logger.Infof,
+		Warnf:               logger.Warnf,
 	})
 	if err != nil {
 		return err
@@ -182,6 +194,9 @@ func printUsage(fs *flag.FlagSet) {
 	fmt.Println("  snablr-seed --targets fs01 --username USER --password PASS --dry-run")
 	fmt.Println("  snablr-seed --targets fs01,fs02 --username USER --password PASS --manifest-out seed-manifest.json")
 	fmt.Println("  snablr-seed --targets fs01 --username USER --password PASS --share Finance --clean-prefix")
+	fmt.Println("  snablr-seed --targets 172.16.0.80,172.16.0.90 --username USER --password PASS --count-per-category 24 --max-files 1200 --depth 3 --shares-per-target 2")
+	fmt.Println("  snablr-seed --targets fs01 --username USER --password PASS --likely-hit-ratio 35 --filename-only-ratio 20")
+	fmt.Println("  snablr-seed --targets fs01 --username USER --password PASS --likely-hit-ratio 85 --high-severity-ratio 60 --medium-severity-ratio 25")
 	fmt.Println("  snablr-seed --targets fs01 --username USER --password PASS --seed-prefix SnablrLab --random-seed 20260315")
 	fmt.Println("  snablr-seed verify --manifest seed-manifest.json --results results.json")
 	fmt.Println()

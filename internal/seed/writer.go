@@ -26,10 +26,15 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 	opts.SeedPrefix = prefix
 
 	files, err := Generate(GenerateOptions{
-		CountPerCategory: opts.CountPerCat,
-		MaxFiles:         opts.MaxFiles,
-		SeedPrefix:       opts.SeedPrefix,
-		RandomSeed:       opts.RandomSeed,
+		CountPerCategory:    opts.CountPerCat,
+		MaxFiles:            opts.MaxFiles,
+		Depth:               opts.Depth,
+		SeedPrefix:          opts.SeedPrefix,
+		RandomSeed:          opts.RandomSeed,
+		LikelyHitRatio:      opts.LikelyHitRatio,
+		FilenameOnlyRatio:   opts.FilenameOnlyRatio,
+		HighSeverityRatio:   opts.HighSeverityRatio,
+		MediumSeverityRatio: opts.MediumSeverityRatio,
 	})
 	if err != nil {
 		return Manifest{}, err
@@ -60,14 +65,16 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 		target := destinations[i%len(destinations)]
 		fullPath := FullPath(file)
 		entry := SeedManifestEntry{
-			Host:               target.Host,
-			Share:              target.Share,
-			Path:               fullPath,
-			Category:           file.Category,
-			Format:             formatLabel(file),
-			ExpectedTags:       append([]string{}, file.ExpectedTags...),
-			ExpectedRuleThemes: append([]string{}, file.ExpectedRuleThemes...),
-			ExpectedSeverity:   file.ExpectedSeverity,
+			Host:                target.Host,
+			Share:               target.Share,
+			Path:                fullPath,
+			Category:            file.Category,
+			Format:              formatLabel(file),
+			IntendedAs:          file.IntendedAs,
+			ExpectedSignalTypes: append([]string{}, file.ExpectedSignalTypes...),
+			ExpectedTags:        append([]string{}, file.ExpectedTags...),
+			ExpectedRuleThemes:  append([]string{}, file.ExpectedRuleThemes...),
+			ExpectedSeverity:    file.ExpectedSeverity,
 		}
 
 		if opts.DryRun {
@@ -123,6 +130,7 @@ func discoverDestinations(ctx context.Context, opts WriteOptions) ([]ShareTarget
 
 	destinations := make([]ShareTarget, 0)
 	seen := make(map[string]struct{})
+	perHost := make(map[string]int)
 	for _, host := range opts.Targets {
 		select {
 		case <-ctx.Done():
@@ -142,8 +150,15 @@ func discoverDestinations(ctx context.Context, opts WriteOptions) ([]ShareTarget
 			logWarn(opts, "list shares failed for %s: %v", host, err)
 			continue
 		}
+		sort.Slice(shares, func(i, j int) bool {
+			return shares[i].Name < shares[j].Name
+		})
 
 		for _, share := range shares {
+			hostKey := strings.ToLower(strings.TrimSpace(host))
+			if opts.SharesPerTarget > 0 && perHost[hostKey] >= opts.SharesPerTarget {
+				break
+			}
 			key := strings.ToLower(strings.TrimSpace(host + "::" + share.Name))
 			if key == "" {
 				continue
@@ -157,6 +172,7 @@ func discoverDestinations(ctx context.Context, opts WriteOptions) ([]ShareTarget
 				continue
 			}
 			seen[key] = struct{}{}
+			perHost[hostKey]++
 			destinations = append(destinations, ShareTarget{
 				Host:  host,
 				Share: share.Name,

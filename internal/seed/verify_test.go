@@ -17,16 +17,18 @@ func TestVerifyReportsFoundMissedUnexpectedAndCoverage(t *testing.T) {
 		SeedPrefix: "SnablrLab",
 		Entries: []SeedManifestEntry{
 			{
-				Host:     "fs01",
-				Share:    "Finance",
-				Path:     "SnablrLab/Finance/payroll_export_001.csv",
-				Category: "payroll",
+				Host:                "fs01",
+				Share:               "Finance",
+				Path:                "SnablrLab/Finance/payroll_export_001.csv",
+				Category:            "payroll",
+				ExpectedSignalTypes: []string{"content", "filename"},
 			},
 			{
-				Host:     "fs01",
-				Share:    "Config",
-				Path:     "SnablrLab/Config/appsettings_001.conf",
-				Category: "config",
+				Host:                "fs01",
+				Share:               "Config",
+				Path:                "SnablrLab/Config/appsettings_001.conf",
+				Category:            "config",
+				ExpectedSignalTypes: []string{"content"},
 			},
 		},
 	}
@@ -36,15 +38,16 @@ func TestVerifyReportsFoundMissedUnexpectedAndCoverage(t *testing.T) {
 
 	results := []byte(`{
   "findings": [
-    {
-      "host": "fs01",
-      "share": "Finance",
-      "file_path": "SnablrLab/Finance/payroll_export_001.csv",
-      "rule_id": "filename.payroll",
-      "rule_name": "Payroll File",
-      "severity": "high",
-      "category": "business-data"
-    },
+	    {
+	      "host": "fs01",
+	      "share": "Finance",
+	      "file_path": "SnablrLab/Finance/payroll_export_001.csv",
+	      "rule_id": "filename.payroll",
+	      "rule_name": "Payroll File",
+	      "severity": "high",
+	      "category": "business-data",
+	      "signal_type": "filename"
+	    },
     {
       "host": "fs01",
       "share": "Web",
@@ -70,5 +73,11 @@ func TestVerifyReportsFoundMissedUnexpectedAndCoverage(t *testing.T) {
 	}
 	if len(report.Coverage) != 2 {
 		t.Fatalf("expected 2 coverage entries, got %+v", report.Coverage)
+	}
+	if len(report.SignalCoverage) != 2 {
+		t.Fatalf("expected 2 signal coverage entries, got %+v", report.SignalCoverage)
+	}
+	if report.SignalCoverage[0].Expected+report.SignalCoverage[1].Expected != 3 {
+		t.Fatalf("expected aggregate signal coverage count 3, got %+v", report.SignalCoverage)
 	}
 }

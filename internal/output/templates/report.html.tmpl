@@ -285,14 +285,14 @@
       font-weight: 600;
       box-shadow: var(--shadow);
     }
-    details.group {
-      background: rgba(255,255,255,0.94);
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      box-shadow: var(--shadow);
-      margin-bottom: 18px;
-      overflow: hidden;
-    }
+	    details.group {
+	      background: rgba(255,255,255,0.94);
+	      border: 1px solid var(--line);
+	      border-radius: 18px;
+	      box-shadow: var(--shadow);
+	      margin-bottom: 18px;
+	      overflow: visible;
+	    }
     details.group[open] {
       background: #fff;
     }
@@ -333,9 +333,9 @@
       color: #183153;
       max-width: 1000px;
     }
-    .table-wrap {
-      overflow: auto;
-    }
+	    .table-wrap {
+	      overflow-x: auto;
+	    }
     table {
       width: 100%;
       border-collapse: separate;
@@ -361,10 +361,11 @@
     tbody tr.sev-critical { background: linear-gradient(90deg, rgba(250,232,239,0.96), rgba(255,255,255,0.97)); }
     tbody tr.status-new { box-shadow: inset 4px 0 0 var(--diff-new); }
     tbody tr.status-changed { box-shadow: inset 4px 0 0 var(--diff-changed); }
-    tbody tr.is-hidden,
-    .group.is-hidden {
-      display: none;
-    }
+	    tbody tr.is-hidden,
+	    .finding-card.is-hidden,
+	    .group.is-hidden {
+	      display: none;
+	    }
     td {
       padding: 14px 16px;
       vertical-align: top;
@@ -384,10 +385,10 @@
       flex-wrap: wrap;
       margin-top: 7px;
     }
-    .tooltip {
-      position: relative;
-      display: inline-block;
-      max-width: 100%;
+	    .tooltip {
+	      position: relative;
+	      display: inline-block;
+	      max-width: 100%;
     }
     .tooltip > span {
       display: inline-block;
@@ -423,16 +424,205 @@
       opacity: 1;
       transform: translateY(0);
     }
-    .path-text { max-width: 380px; }
-    .snippet-text,
-    .reason-text {
-      white-space: normal;
-      overflow-wrap: anywhere;
-      max-width: 420px;
-    }
-    .meta-block {
-      display: grid;
-      gap: 8px;
+	    .path-text { max-width: 380px; }
+	    .snippet-text,
+	    .reason-text {
+	      white-space: normal;
+	      overflow-wrap: anywhere;
+	      max-width: 420px;
+	    }
+	    .finding-list {
+	      display: grid;
+	      gap: 16px;
+	      padding: 18px 20px 22px;
+	    }
+	    .finding-card {
+	      background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(247,250,252,0.96));
+	      border: 1px solid var(--line);
+	      border-radius: 16px;
+	      padding: 18px;
+	      box-shadow: 0 8px 20px rgba(16, 35, 62, 0.06);
+	    }
+	    .finding-card.sev-high {
+	      border-color: #f4c7cf;
+	      background: linear-gradient(180deg, rgba(254,242,242,0.96), rgba(255,255,255,0.98));
+	    }
+	    .finding-card.sev-critical {
+	      border-color: #efbfd0;
+	      background: linear-gradient(180deg, rgba(252,241,245,0.98), rgba(255,255,255,0.98));
+	    }
+	    .finding-card.status-new { box-shadow: inset 4px 0 0 var(--diff-new), 0 8px 20px rgba(16, 35, 62, 0.06); }
+	    .finding-card.status-changed { box-shadow: inset 4px 0 0 var(--diff-changed), 0 8px 20px rgba(16, 35, 62, 0.06); }
+	    .finding-card.status-removed { box-shadow: inset 4px 0 0 var(--diff-removed), 0 8px 20px rgba(16, 35, 62, 0.06); }
+	    .finding-card.status-unchanged { box-shadow: inset 4px 0 0 var(--diff-unchanged), 0 8px 20px rgba(16, 35, 62, 0.06); }
+	    .finding-card-header {
+	      display: grid;
+	      gap: 14px;
+	      grid-template-columns: minmax(0, 1.3fr) minmax(260px, 0.9fr);
+	      align-items: start;
+	    }
+	    .finding-title h4 {
+	      font-size: 1.1rem;
+	      line-height: 1.25;
+	      margin: 10px 0 4px;
+	    }
+	    .finding-rule-id {
+	      color: var(--muted);
+	      font-size: 0.9rem;
+	      font-weight: 600;
+	      overflow-wrap: anywhere;
+	    }
+	    .finding-location {
+	      display: grid;
+	      gap: 10px;
+	      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+	    }
+	    .meta-chip {
+	      background: rgba(248, 251, 255, 0.96);
+	      border: 1px solid var(--line);
+	      border-radius: 12px;
+	      padding: 10px 12px;
+	      min-width: 0;
+	    }
+	    .meta-chip strong {
+	      display: block;
+	      margin-top: 3px;
+	      overflow-wrap: anywhere;
+	    }
+	    .meta-chip span {
+	      color: var(--muted);
+	      font-size: 0.78rem;
+	      font-weight: 700;
+	      text-transform: uppercase;
+	      letter-spacing: 0.08em;
+	    }
+	    .finding-path {
+	      margin-top: 14px;
+	      padding: 12px 14px;
+	      border-radius: 12px;
+	      border: 1px solid var(--line);
+	      background: rgba(248, 251, 255, 0.96);
+	      color: #183153;
+	      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+	      font-size: 0.88rem;
+	      line-height: 1.5;
+	      white-space: pre-wrap;
+	      overflow-wrap: anywhere;
+	      word-break: break-word;
+	    }
+	    .finding-body {
+	      display: grid;
+	      gap: 14px;
+	      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+	      margin-top: 14px;
+	    }
+	    .finding-panel {
+	      min-width: 0;
+	      background: rgba(248, 251, 255, 0.92);
+	      border: 1px solid var(--line);
+	      border-radius: 14px;
+	      padding: 14px;
+	    }
+	    .panel-title {
+	      display: block;
+	      margin-bottom: 10px;
+	      font-size: 0.84rem;
+	      font-weight: 700;
+	      letter-spacing: 0.08em;
+	      text-transform: uppercase;
+	      color: var(--muted);
+	    }
+	    .detail-list {
+	      display: grid;
+	      gap: 10px;
+	    }
+	    .finding-text {
+	      white-space: pre-wrap;
+	      overflow-wrap: anywhere;
+	      word-break: break-word;
+	    }
+	    .finding-note {
+	      border-radius: 12px;
+	      border: 1px solid #d7e7f4;
+	      background: #f8fbff;
+	      padding: 10px 12px;
+	      color: #23405c;
+	    }
+	    .finding-note.heuristic {
+	      border-color: #f6d8bf;
+	      background: #fff7ed;
+	      color: #9a3412;
+	    }
+	    .confidence-reasons,
+	    .supporting-signal-list,
+	    .raw-signal-list {
+	      margin: 0;
+	      padding-left: 18px;
+	      display: grid;
+	      gap: 8px;
+	    }
+	    .supporting-signal-list li,
+	    .confidence-reasons li,
+	    .raw-signal-list li {
+	      overflow-wrap: anywhere;
+	    }
+	    .kv-grid {
+	      display: grid;
+	      gap: 10px;
+	    }
+	    .evidence-pair {
+	      display: grid;
+	      gap: 6px;
+	    }
+	    .evidence-label {
+	      color: var(--muted);
+	      font-size: 0.76rem;
+	      font-weight: 700;
+	      text-transform: uppercase;
+	      letter-spacing: 0.08em;
+	    }
+	    .evidence-block {
+	      margin: 0;
+	      border-radius: 12px;
+	      border: 1px solid var(--line);
+	      background: #fff;
+	      padding: 12px;
+	      white-space: pre-wrap;
+	      overflow-wrap: anywhere;
+	      word-break: break-word;
+	      font: 0.88rem/1.5 "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+	    }
+	    .evidence-toggle {
+	      margin-top: 14px;
+	      border: 1px solid var(--line);
+	      border-radius: 14px;
+	      background: rgba(248, 251, 255, 0.92);
+	      overflow: hidden;
+	    }
+	    .evidence-toggle summary {
+	      cursor: pointer;
+	      list-style: none;
+	      padding: 12px 14px;
+	      font-weight: 700;
+	      color: #183153;
+	    }
+	    .evidence-toggle summary::-webkit-details-marker { display: none; }
+	    .evidence-grid {
+	      display: grid;
+	      gap: 12px;
+	      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+	      padding: 0 14px 14px;
+	    }
+	    .evidence-section {
+	      min-width: 0;
+	      background: #fff;
+	      border: 1px solid var(--line);
+	      border-radius: 12px;
+	      padding: 12px;
+	    }
+	    .meta-block {
+	      display: grid;
+	      gap: 8px;
     }
     .detail-stack {
       display: grid;
@@ -485,18 +675,27 @@
         position: static;
       }
     }
-    @media (max-width: 900px) {
-      .toolbar {
-        grid-template-columns: 1fr;
-      }
-      .filter-help {
-        text-align: left;
-      }
-      thead th,
-      td {
-        padding: 12px 10px;
-      }
-    }
+	    @media (max-width: 900px) {
+	      .toolbar {
+	        grid-template-columns: 1fr;
+	      }
+	      .filter-help {
+	        text-align: left;
+	      }
+	      .finding-list {
+	        padding: 14px 14px 18px;
+	      }
+	      .finding-card {
+	        padding: 14px;
+	      }
+	      .finding-card-header {
+	        grid-template-columns: 1fr;
+	      }
+	      thead th,
+	      td {
+	        padding: 12px 10px;
+	      }
+	    }
   </style>
 </head>
 <body>
@@ -798,7 +997,7 @@
       </div>
 
       {{- range .CategoryGroups }}
-      <details class="group" id="cat-{{ slug .Summary.Category }}" open>
+	      <details class="group finding-group" id="cat-{{ slug .Summary.Category }}" open>
         <summary class="group-summary">
           <div class="group-top">
             <div class="group-title">
@@ -816,173 +1015,231 @@
           <p class="group-guidance">{{ .Summary.RemediationGuidance }}</p>
         </summary>
 
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Severity</th>
-                <th>Rule</th>
-                <th>Host / Share</th>
-                <th>File Path</th>
-                <th>Evidence</th>
-                <th>Why It Matched</th>
-                <th>Matched Context</th>
-              </tr>
-            </thead>
-            <tbody>
-              {{- range .Findings }}
-              <tr class="{{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" data-search="{{ .Finding.Category }} {{ .Finding.Severity }} {{ .Finding.Confidence }} {{ .Finding.RuleID }} {{ .Finding.RuleName }} {{ .Finding.Host }} {{ .Finding.Share }} {{ .Finding.ShareType }} {{ .Finding.ShareDescription }} {{ .Finding.FilePath }} {{ .Finding.Source }} {{ .Finding.DFSNamespacePath }} {{ .Finding.DFSLinkPath }} {{ joinTags .Finding.Tags " " }} {{ .Finding.MatchReason }} {{ .Finding.RuleExplanation }} {{ .Finding.RuleRemediation }} {{ .Finding.Snippet }} {{ .Finding.ContextRedacted }} {{ .Finding.MatchedTextRedacted }} {{ .Finding.PotentialAccount }} {{ .DiffStatus }} {{ joinTags .ChangedFields " " }} {{ joinList .Finding.MatchedRuleIDs " " }} {{ joinList .Finding.MatchedSignalTypes " " }} {{ joinList .Finding.ConfidenceReasons " " }}">
-                <td>
-                  <span class="badge {{ severityClass .Finding.Severity }}">{{ .Finding.Severity }}</span>
-                </td>
-                <td>
-                  <strong>{{ .Finding.RuleID }}</strong>
-                  <span class="rule-name">{{ .Finding.RuleName }}</span>
-                  {{- if .Finding.MatchedRuleIDs }}
-                  <div class="muted" style="margin-top:6px;">Correlated rules: {{ joinList .Finding.MatchedRuleIDs ", " }}</div>
-                  {{- end }}
-                  <div class="badge-row">
-                    <span class="badge {{ priorityClass .Finding.Priority }}" title="{{ .Finding.PriorityReason }}">{{ priorityLabel .Finding.Priority }}</span>
-                    {{- if primarySignal .Finding }}<span class="badge {{ signalClass (primarySignal .Finding) }}">signal {{ signalLabel (primarySignal .Finding) }}</span>{{ end -}}
-                    {{- if .Finding.Confidence }}<span class="badge {{ confidenceClass .Finding.Confidence }}" title="score {{ .Finding.ConfidenceScore }}">confidence {{ .Finding.Confidence }}</span>{{ end -}}
-                    {{- if .DiffStatus }}<span class="badge {{ diffClass .DiffStatus }}">{{ diffLabel .DiffStatus }}</span>{{ end -}}
-                    {{- if .Finding.Source }}<span class="badge {{ sourceClass .Finding.Source }}">source {{ .Finding.Source }}</span>{{ end -}}
-                    {{- if .Finding.FromSYSVOL }}<span class="badge ad-share">SYSVOL</span>{{ end -}}
-                    {{- if .Finding.FromNETLOGON }}<span class="badge ad-share">NETLOGON</span>{{ end -}}
-                  </div>
-                </td>
-                <td>
-                  <div><strong>{{ valueOrDash .Finding.Host }}</strong></div>
-                  <div class="muted">{{ valueOrDash .Finding.Share }}</div>
-                  {{- if .Finding.ShareType }}
-                  <div class="muted">Type: {{ .Finding.ShareType }}</div>
-                  {{- end }}
-                  {{- if .Finding.ShareDescription }}
-                  <div class="tooltip reason-text muted" data-tip="{{ .Finding.ShareDescription }}">
-                    <span>Description: {{ .Finding.ShareDescription }}</span>
-                  </div>
-                  {{- end }}
-                  {{- if .Finding.DFSNamespacePath }}
-                  <div class="badge-row">
-                    <span class="badge source-dfs" title="{{ .Finding.DFSNamespacePath }}">Namespace</span>
-                  </div>
-                  {{- end }}
-                </td>
-                <td>
-                  <span class="tooltip path-text" data-tip="{{ uncPath .Finding }}">
-                    <span>{{ truncatePath (uncPath .Finding) }}</span>
-                  </span>
-                </td>
-                <td>
-                  <div class="badge-row" style="margin-top:0;">
-                    {{- if .Finding.DFSNamespacePath }}<span class="badge source-dfs" title="{{ .Finding.DFSNamespacePath }}">DFS Namespace</span>{{ end -}}
-                    {{- if .Finding.DFSLinkPath }}<span class="badge source-dfs" title="{{ .Finding.DFSLinkPath }}">DFS Link</span>{{ end -}}
-                    {{- if .Finding.SharePriority }}<span class="badge {{ priorityClass .Finding.SharePriority }}" title="{{ .Finding.SharePriorityReason }}">share priority {{ .Finding.SharePriority }}</span>{{ end -}}
-                    {{- if .ChangedFields }}{{- range .ChangedFields }}<span class="badge diff-changed">{{ . }}</span>{{ end }}{{ end -}}
-                    {{- if .Finding.Tags }}{{- range .Finding.Tags }}<span class="badge good">{{ . }}</span>{{ end }}{{ else }}<span class="muted">-</span>{{ end -}}
-                  </div>
-                  {{- if .Finding.MatchedSignalTypes }}
-                  <div class="muted" style="margin-top:8px;">Signals: {{- range $i, $signal := .Finding.MatchedSignalTypes }}{{- if $i }}, {{ end -}}{{ signalLabel $signal }}{{- end }}</div>
-                  {{- end }}
-                  <div class="detail-stack" style="margin-top:10px;">
-                    <div class="detail-panel">
-                      <strong>Evidence</strong>
-                      {{- if eq (primarySignal .Finding) "content" }}
-                        {{- if .Finding.LineNumber }}<div class="muted">Line {{ .Finding.LineNumber }}</div>{{ end -}}
-                        {{- if .Finding.PotentialAccount }}
-                        <span class="tooltip reason-text" data-tip="{{ .Finding.PotentialAccount }}">
-                          <span>Potential account context: {{ .Finding.PotentialAccount }}</span>
-                        </span>
-                        {{- end }}
-                        {{- if .Finding.MatchedTextRedacted }}
-                        <span class="tooltip reason-text" data-tip="{{ .Finding.MatchedTextRedacted }}">
-                          <span>{{ signalMatchLabel (primarySignal .Finding) }}: {{ .Finding.MatchedTextRedacted }}</span>
-                        </span>
-                        {{- else }}
-                        <span class="muted">Content rule matched with contextual evidence below.</span>
-                        {{- end }}
-                      {{- else if .Finding.MatchedTextRedacted }}
-                        <span class="tooltip reason-text" data-tip="{{ .Finding.MatchedTextRedacted }}">
-                          <span>{{ signalMatchLabel (primarySignal .Finding) }}: {{ .Finding.MatchedTextRedacted }}</span>
-                        </span>
-                        <div class="muted" style="margin-top:6px;">Heuristic file hit only. Review file contents separately if needed.</div>
-                      {{- else }}
-                        <span class="muted">No additional evidence captured.</span>
-                      {{- end }}
-                    </div>
-                  </div>
-                </td>
-                <td>
-                  <div class="detail-stack">
-                    <div class="detail-panel">
-                      <strong>Match Reason</strong>
-                      <span class="tooltip reason-text" data-tip="{{ .Finding.MatchReason }}">
-                        <span>{{ .Finding.MatchReason }}</span>
-                      </span>
-                    </div>
-                    {{- if .Finding.ConfidenceReasons }}
-                    <div class="detail-panel">
-                      <strong>Confidence</strong>
-                      <span class="tooltip reason-text" data-tip="{{ joinList .Finding.ConfidenceReasons "; " }}">
-                        <span>{{ .Finding.Confidence }} confidence (score {{ .Finding.ConfidenceScore }}) driven by {{ joinList .Finding.ConfidenceReasons "; " }}</span>
-                      </span>
-                    </div>
-                    {{- end }}
-                    {{- if .Finding.SupportingSignals }}
-                    <div class="detail-panel">
-                      <strong>Supporting Signals</strong>
-                      <span class="tooltip reason-text" data-tip="{{- range $i, $signal := .Finding.SupportingSignals }}{{- if $i }}; {{ end -}}{{ signalLabel $signal.SignalType }}: {{ $signal.Reason }}{{- end }}">
-                        <span>{{- range $i, $signal := .Finding.SupportingSignals }}{{- if $i }}; {{ end -}}{{ signalLabel $signal.SignalType }}{{ if $signal.RuleID }} {{ $signal.RuleID }}{{ end }}{{- end }}</span>
-                      </span>
-                    </div>
-                    {{- end }}
-                    {{- if .Finding.RuleExplanation }}
-                    <div class="detail-panel">
-                      <strong>Rule Explanation</strong>
-                      <span class="tooltip reason-text" data-tip="{{ .Finding.RuleExplanation }}">
-                        <span>{{ .Finding.RuleExplanation }}</span>
-                      </span>
-                    </div>
-                    {{- end }}
-                    {{- if .Finding.RuleRemediation }}
-                    <div class="detail-panel">
-                      <strong>Remediation</strong>
-                      <span class="tooltip reason-text" data-tip="{{ .Finding.RuleRemediation }}">
-                        <span>{{ .Finding.RuleRemediation }}</span>
-                      </span>
-                    </div>
-                    {{- end }}
-                  </div>
-                </td>
-                <td>
-                  {{- if eq (primarySignal .Finding) "content" }}
-                    {{- if .Finding.ContextRedacted }}
-                  <span class="tooltip snippet-text" data-tip="{{ .Finding.ContextRedacted }}">
-                    <span>{{ .Finding.ContextRedacted }}</span>
-                  </span>
-                    {{- else if .Finding.Snippet }}
-                  <span class="tooltip snippet-text" data-tip="{{ .Finding.Snippet }}">
-                    <span>{{ .Finding.Snippet }}</span>
-                  </span>
-                    {{- else }}
-                  <span class="muted">-</span>
-                    {{- end }}
-                  {{- else if .Finding.MatchedTextRedacted }}
-                  <span class="tooltip snippet-text" data-tip="{{ .Finding.MatchedTextRedacted }}">
-                    <span>Filename/path heuristic only</span>
-                  </span>
-                  {{- else }}
-                  <span class="muted">-</span>
-                  {{- end }}
-                </td>
-              </tr>
-              {{- end }}
-            </tbody>
-          </table>
-        </div>
-      </details>
-      {{- end }}
-    </section>
+	        <div class="finding-list">
+	          {{- range .Findings }}
+	          <article class="finding-card {{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" data-search="{{ .Finding.Category }} {{ .Finding.Severity }} {{ .Finding.Confidence }} {{ .Finding.RuleID }} {{ .Finding.RuleName }} {{ .Finding.Host }} {{ .Finding.Share }} {{ .Finding.ShareType }} {{ .Finding.ShareDescription }} {{ .Finding.FilePath }} {{ .Finding.Source }} {{ .Finding.DFSNamespacePath }} {{ .Finding.DFSLinkPath }} {{ joinTags .Finding.Tags " " }} {{ .Finding.MatchReason }} {{ .Finding.RuleExplanation }} {{ .Finding.RuleRemediation }} {{ .Finding.Snippet }} {{ .Finding.Context }} {{ .Finding.ContextRedacted }} {{ .Finding.MatchedText }} {{ .Finding.MatchedTextRedacted }} {{ .Finding.PotentialAccount }} {{ .DiffStatus }} {{ joinTags .ChangedFields " " }} {{ joinList .Finding.MatchedRuleIDs " " }} {{ joinList .Finding.MatchedSignalTypes " " }} {{ joinList .Finding.ConfidenceReasons " " }}">
+	            <header class="finding-card-header">
+	              <div class="finding-title">
+	                <div class="badge-row" style="margin-top:0;">
+	                  <span class="badge {{ severityClass .Finding.Severity }}">{{ .Finding.Severity }}</span>
+	                  <span class="badge {{ priorityClass .Finding.Priority }}" title="{{ .Finding.PriorityReason }}">{{ priorityLabel .Finding.Priority }}</span>
+	                  {{- if primarySignal .Finding }}<span class="badge {{ signalClass (primarySignal .Finding) }}">signal {{ signalLabel (primarySignal .Finding) }}</span>{{ end -}}
+	                  {{- if .Finding.Confidence }}<span class="badge {{ confidenceClass .Finding.Confidence }}" title="score {{ .Finding.ConfidenceScore }}">confidence {{ .Finding.Confidence }}</span>{{ end -}}
+	                  {{- if .DiffStatus }}<span class="badge {{ diffClass .DiffStatus }}">{{ diffLabel .DiffStatus }}</span>{{ end -}}
+	                  {{- if .Finding.Source }}<span class="badge {{ sourceClass .Finding.Source }}">source {{ .Finding.Source }}</span>{{ end -}}
+	                  {{- if .Finding.FromSYSVOL }}<span class="badge ad-share">SYSVOL</span>{{ end -}}
+	                  {{- if .Finding.FromNETLOGON }}<span class="badge ad-share">NETLOGON</span>{{ end -}}
+	                </div>
+	                <h4>{{ .Finding.RuleName }}</h4>
+	                <div class="finding-rule-id">{{ .Finding.RuleID }}</div>
+	                {{- if .Finding.MatchedRuleIDs }}
+	                <div class="muted" style="margin-top:8px;">Correlated rules: {{ joinList .Finding.MatchedRuleIDs ", " }}</div>
+	                {{- end }}
+	              </div>
+	              <div class="finding-location">
+	                <div class="meta-chip">
+	                  <span>Host</span>
+	                  <strong>{{ valueOrDash .Finding.Host }}</strong>
+	                </div>
+	                <div class="meta-chip">
+	                  <span>Share</span>
+	                  <strong>{{ valueOrDash .Finding.Share }}</strong>
+	                </div>
+	                <div class="meta-chip">
+	                  <span>Signal Type</span>
+	                  <strong>{{ valueOrDash (signalLabel (primarySignal .Finding)) }}</strong>
+	                </div>
+	                <div class="meta-chip">
+	                  <span>Share Type</span>
+	                  <strong>{{ valueOrDash .Finding.ShareType }}</strong>
+	                </div>
+	              </div>
+	            </header>
+	            <div class="finding-path" title="{{ uncPath .Finding }}">{{ uncPath .Finding }}</div>
+	            <div class="finding-body">
+	              <section class="finding-panel">
+	                <span class="panel-title">Finding Summary</span>
+	                <div class="detail-list">
+	                  {{- if .Finding.ShareDescription }}
+	                  <div>
+	                    <strong>Share Description</strong>
+	                    <div class="finding-text muted">{{ .Finding.ShareDescription }}</div>
+	                  </div>
+	                  {{- end }}
+	                  <div>
+	                    <strong>Evidence Tags</strong>
+	                    <div class="badge-row">
+	                      {{- if .Finding.Tags }}{{- range .Finding.Tags }}<span class="badge good">{{ . }}</span>{{ end }}{{ else }}<span class="muted">-</span>{{ end -}}
+	                    </div>
+	                  </div>
+	                  {{- if .Finding.MatchedSignalTypes }}
+	                  <div>
+	                    <strong>Matched Signals</strong>
+	                    <div class="finding-text muted">{{- range $i, $signal := .Finding.MatchedSignalTypes }}{{- if $i }}, {{ end -}}{{ signalLabel $signal }}{{- end }}</div>
+	                  </div>
+	                  {{- end }}
+	                  {{- if .Finding.DFSNamespacePath }}
+	                  <div>
+	                    <strong>DFS Namespace</strong>
+	                    <div class="finding-text">{{ .Finding.DFSNamespacePath }}</div>
+	                  </div>
+	                  {{- end }}
+	                  {{- if .Finding.DFSLinkPath }}
+	                  <div>
+	                    <strong>DFS Link</strong>
+	                    <div class="finding-text">{{ .Finding.DFSLinkPath }}</div>
+	                  </div>
+	                  {{- end }}
+	                  {{- if isHeuristicHit .Finding }}
+	                  <div class="finding-note heuristic">Heuristic file hit. The filename, path, or extension matched a rule. File content was not necessarily matched.</div>
+	                  {{- else if eq (primarySignal .Finding) "content" }}
+	                  <div class="finding-note">Content evidence was captured from the file body{{ if .Finding.LineNumber }} at line {{ .Finding.LineNumber }}{{ end }}.</div>
+	                  {{- end }}
+	                </div>
+	              </section>
+	              <section class="finding-panel">
+	                <span class="panel-title">Why It Matched</span>
+	                <div class="detail-list">
+	                  <div>
+	                    <strong>Match Reason</strong>
+	                    <div class="finding-text">{{ valueOrDash .Finding.MatchReason }}</div>
+	                  </div>
+	                  {{- if .Finding.Confidence }}
+	                  <div>
+	                    <strong>Confidence</strong>
+	                    <div class="finding-text">{{ .Finding.Confidence }} confidence{{ if .Finding.ConfidenceScore }} (score {{ .Finding.ConfidenceScore }}){{ end }}</div>
+	                  </div>
+	                  {{- end }}
+	                  {{- if .Finding.ConfidenceReasons }}
+	                  <div>
+	                    <strong>Confidence Reasons</strong>
+	                    <ul class="confidence-reasons">
+	                      {{- range .Finding.ConfidenceReasons }}
+	                      <li>{{ . }}</li>
+	                      {{- end }}
+	                    </ul>
+	                  </div>
+	                  {{- end }}
+	                  {{- if .Finding.SupportingSignals }}
+	                  <div>
+	                    <strong>Supporting Signals</strong>
+	                    <ul class="supporting-signal-list">
+	                      {{- range .Finding.SupportingSignals }}
+	                      <li>
+	                        <span class="badge {{ signalClass .SignalType }}">{{ signalLabel .SignalType }}</span>
+	                        {{- if .RuleID }} <strong>{{ .RuleID }}</strong>{{ end -}}
+	                        {{- if .Reason }} {{ .Reason }}{{ end -}}
+	                      </li>
+	                      {{- end }}
+	                    </ul>
+	                  </div>
+	                  {{- end }}
+	                </div>
+	              </section>
+	              <section class="finding-panel">
+	                <span class="panel-title">Visible Evidence</span>
+	                <div class="kv-grid">
+	                  {{- if displayMatch .Finding }}
+	                  <div class="evidence-pair">
+	                    <span class="evidence-label">{{ signalMatchLabel (primarySignal .Finding) }}</span>
+	                    <pre class="evidence-block">{{ displayMatch .Finding }}</pre>
+	                  </div>
+	                  {{- end }}
+	                  {{- if and .Finding.MatchedText .Finding.MatchedTextRedacted (ne .Finding.MatchedText .Finding.MatchedTextRedacted) }}
+	                  <div class="evidence-pair">
+	                    <span class="evidence-label">Raw Matched Text</span>
+	                    <pre class="evidence-block">{{ .Finding.MatchedText }}</pre>
+	                  </div>
+	                  {{- end }}
+	                  {{- if displayContext .Finding }}
+	                  <div class="evidence-pair">
+	                    <span class="evidence-label">Context / Snippet</span>
+	                    <pre class="evidence-block">{{ displayContext .Finding }}</pre>
+	                  </div>
+	                  {{- end }}
+	                  {{- if and .Finding.Context .Finding.ContextRedacted (ne .Finding.Context .Finding.ContextRedacted) }}
+	                  <div class="evidence-pair">
+	                    <span class="evidence-label">Raw Context</span>
+	                    <pre class="evidence-block">{{ .Finding.Context }}</pre>
+	                  </div>
+	                  {{- end }}
+	                  {{- if .Finding.LineNumber }}
+	                  <div><strong>Line Number</strong><div class="finding-text">{{ .Finding.LineNumber }}</div></div>
+	                  {{- end }}
+	                  {{- if .Finding.PotentialAccount }}
+	                  <div><strong>Potential Account Context</strong><div class="finding-text">{{ .Finding.PotentialAccount }}</div></div>
+	                  {{- end }}
+	                </div>
+	              </section>
+	              {{- if or .Finding.RuleExplanation .Finding.RuleRemediation }}
+	              <section class="finding-panel">
+	                <span class="panel-title">Guidance</span>
+	                <div class="detail-list">
+	                  {{- if .Finding.RuleExplanation }}
+	                  <div>
+	                    <strong>Rule Explanation</strong>
+	                    <div class="finding-text">{{ .Finding.RuleExplanation }}</div>
+	                  </div>
+	                  {{- end }}
+	                  {{- if .Finding.RuleRemediation }}
+	                  <div>
+	                    <strong>Remediation</strong>
+	                    <div class="finding-text">{{ .Finding.RuleRemediation }}</div>
+	                  </div>
+	                  {{- end }}
+	                </div>
+	              </section>
+	              {{- end }}
+	            </div>
+	            <details class="evidence-toggle">
+	              <summary>Show Evidence</summary>
+	              <div class="evidence-grid">
+	                <section class="evidence-section">
+	                  <strong>Matched Text</strong>
+	                  {{- if displayMatch .Finding }}
+	                  <pre class="evidence-block">{{ displayMatch .Finding }}</pre>
+	                  {{- else }}
+	                  <div class="muted">No matched text was captured.</div>
+	                  {{- end }}
+	                </section>
+	                <section class="evidence-section">
+	                  <strong>Context</strong>
+	                  {{- if displayContext .Finding }}
+	                  <pre class="evidence-block">{{ displayContext .Finding }}</pre>
+	                  {{- else }}
+	                  <div class="muted">No surrounding context was captured.</div>
+	                  {{- end }}
+	                  {{- if .Finding.LineNumber }}
+	                  <div style="margin-top:10px;"><strong>Line Number:</strong> {{ .Finding.LineNumber }}</div>
+	                  {{- end }}
+	                </section>
+	                <section class="evidence-section">
+	                  <strong>Raw Supporting Signals</strong>
+	                  {{- if .Finding.SupportingSignals }}
+	                  <ul class="raw-signal-list">
+	                    {{- range .Finding.SupportingSignals }}
+	                    <li>
+	                      <div><span class="badge {{ signalClass .SignalType }}">{{ signalLabel .SignalType }}</span>{{ if .RuleName }} <strong>{{ .RuleName }}</strong>{{ end }}</div>
+	                      {{- if .RuleID }}<div class="muted">Rule ID: {{ .RuleID }}</div>{{ end -}}
+	                      {{- if .Match }}<div class="finding-text">Match: {{ .Match }}</div>{{ end -}}
+	                      {{- if .Confidence }}<div class="muted">Confidence: {{ .Confidence }}</div>{{ end -}}
+	                      {{- if .Weight }}<div class="muted">Weight: {{ .Weight }}</div>{{ end -}}
+	                      {{- if .Reason }}<div class="finding-text">{{ .Reason }}</div>{{ end -}}
+	                    </li>
+	                    {{- end }}
+	                  </ul>
+	                  {{- else }}
+	                  <div class="muted">No supporting signals were recorded.</div>
+	                  {{- end }}
+	                </section>
+	              </div>
+	            </details>
+	          </article>
+	          {{- end }}
+	        </div>
+	      </details>
+	      {{- end }}
+	    </section>
   </main>
 
   <script>
@@ -992,18 +1249,18 @@
 
       function applyFilter() {
         var query = input.value.trim().toLowerCase();
-        var groups = document.querySelectorAll("details.group");
+	        var groups = document.querySelectorAll("details.finding-group");
 
-        groups.forEach(function (group) {
-          var rows = group.querySelectorAll("tbody tr");
-          var visible = 0;
+	        groups.forEach(function (group) {
+	          var cards = group.querySelectorAll(".finding-card");
+	          var visible = 0;
 
-          rows.forEach(function (row) {
-            var haystack = (row.getAttribute("data-search") || "").toLowerCase();
-            var match = query === "" || haystack.indexOf(query) !== -1;
-            row.classList.toggle("is-hidden", !match);
-            if (match) visible++;
-          });
+	          cards.forEach(function (card) {
+	            var haystack = (card.getAttribute("data-search") || "").toLowerCase();
+	            var match = query === "" || haystack.indexOf(query) !== -1;
+	            card.classList.toggle("is-hidden", !match);
+	            if (match) visible++;
+	          });
 
           group.classList.toggle("is-hidden", visible === 0);
           if (query !== "" && visible > 0) {

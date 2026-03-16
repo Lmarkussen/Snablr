@@ -166,7 +166,7 @@ func resolve(cfg Config) (Config, []string, *rules.Manager, *logx.Logger, error)
 		return Config{}, nil, nil, nil, fmt.Errorf("benchmark dataset %s is not a directory", out.Dataset)
 	}
 
-	rulesPaths := []string{"configs/rules/default", "configs/rules/custom"}
+	rulesPaths := config.Default().RulePaths()
 	if strings.TrimSpace(out.RulesDirectory) != "" {
 		rulesPaths = []string{out.RulesDirectory}
 	}

@@ -99,9 +99,9 @@ func defaultTemplates() []templateSpec {
 			noise("scripts-readme.md", "readme-noise", "low", []string{"noise"}, []string{"noise-review"}),
 		}, renderVariant),
 		newSpec("temp", []string{
-			"Temp", "Old", "Users/Charlie/Downloads", "Users/David/Desktop",
+			"Old", "Users/Charlie/Downloads", "Users/David/Desktop", "Archive",
 		}, []templateVariant{
-			likely("temp-secrets.log", "log-secrets", "high", []string{"content", "filename"}, []string{"logs", "credentials"}, []string{"log-review", "hardcoded-secret-indicators"}),
+			likely("scratch-notes.txt", "notes-creds", "high", []string{"content"}, []string{"logs", "credentials"}, []string{"log-review", "hardcoded-secret-indicators"}),
 			possible("debug-export.txt", "notes-cloud", "medium", []string{"filename", "path"}, []string{"temp"}, []string{"export-filename-review"}),
 			noise("app-log.log", "log-noise", "low", []string{"noise"}, []string{"noise-review"}),
 			noise("deployment-notes.txt", "notes-benign", "low", []string{"noise"}, []string{"noise-review"}),

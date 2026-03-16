@@ -44,6 +44,9 @@ type VerificationReport struct {
 	ExpectedItems      int
 	FoundItems         int
 	MissedItems        int
+	FillerItems        int
+	FillerMatchedItems int
+	FillerMissedItems  int
 	UnexpectedFindings int
 	Found              []VerifiedSeedItem
 	Missed             []SeedManifestEntry
@@ -81,6 +84,10 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 			continue
 		}
 		manifestByKey[key] = entry
+		if !isExpectedVerificationEntry(entry) {
+			result.FillerItems++
+			continue
+		}
 		category := normalizedCategory(entry.Category)
 		if _, ok := coverage[category]; !ok {
 			coverage[category] = &CoverageSummary{Category: category}
@@ -109,6 +116,14 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 
 	for key, entry := range manifestByKey {
 		matches := findingsByKey[key]
+		if !isExpectedVerificationEntry(entry) {
+			if len(matches) > 0 {
+				result.FillerMatchedItems++
+			} else {
+				result.FillerMissedItems++
+			}
+			continue
+		}
 		if len(matches) == 0 {
 			result.Missed = append(result.Missed, entry)
 			coverage[normalizedCategory(entry.Category)].Missed++
@@ -146,11 +161,9 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 		coverage[normalizedCategory(entry.Category)].Found++
 		foundSignals := make(map[string]struct{})
 		for _, finding := range matches {
-			normalized := normalizeSignalType(primaryVerificationSignalType(finding))
-			if normalized == "" {
-				continue
+			for _, normalized := range allVerificationSignalTypes(finding) {
+				foundSignals[normalized] = struct{}{}
 			}
-			foundSignals[normalized] = struct{}{}
 		}
 		for _, signalType := range entry.ExpectedSignalTypes {
 			normalized := normalizeSignalType(signalType)
@@ -215,9 +228,9 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 		return result.SignalCoverage[i].SignalType < result.SignalCoverage[j].SignalType
 	})
 
-	result.ExpectedItems = len(manifestByKey)
 	result.FoundItems = len(result.Found)
 	result.MissedItems = len(result.Missed)
+	result.ExpectedItems = result.FoundItems + result.MissedItems
 	result.UnexpectedFindings = len(result.Unexpected)
 	return result, nil
 }
@@ -227,6 +240,9 @@ func PrintVerificationReport(report VerificationReport) {
 	fmt.Printf("Expected items: %d\n", report.ExpectedItems)
 	fmt.Printf("Expected items found: %d\n", report.FoundItems)
 	fmt.Printf("Expected items missed: %d\n", report.MissedItems)
+	if report.FillerItems > 0 {
+		fmt.Printf("Filler/noise items: %d (%d matched, %d not matched)\n", report.FillerItems, report.FillerMatchedItems, report.FillerMissedItems)
+	}
 	fmt.Printf("Unexpected findings: %d\n", report.UnexpectedFindings)
 
 	if len(report.Coverage) > 0 {
@@ -308,6 +324,10 @@ func normalizeSignalType(value string) string {
 }
 
 func primaryVerificationSignalType(finding scanner.Finding) string {
+	signals := allVerificationSignalTypes(finding)
+	if len(signals) > 0 {
+		return signals[0]
+	}
 	if strings.TrimSpace(finding.SignalType) != "" {
 		return finding.SignalType
 	}
@@ -315,6 +335,47 @@ func primaryVerificationSignalType(finding scanner.Finding) string {
 		return finding.MatchedSignalTypes[0]
 	}
 	return ""
+}
+
+func allVerificationSignalTypes(finding scanner.Finding) []string {
+	values := make([]string, 0, 1+len(finding.MatchedSignalTypes)+len(finding.SupportingSignals))
+	if normalized := normalizeSignalType(finding.SignalType); normalized != "" {
+		values = append(values, normalized)
+	}
+	for _, signalType := range finding.MatchedSignalTypes {
+		if normalized := normalizeSignalType(signalType); normalized != "" {
+			values = append(values, normalized)
+		}
+	}
+	for _, signal := range finding.SupportingSignals {
+		if normalized := normalizeSignalType(signal.SignalType); normalized != "" {
+			values = append(values, normalized)
+		}
+	}
+	return uniqueNormalizedValues(values)
+}
+
+func uniqueNormalizedValues(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		normalized := normalizeSignalType(value)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func isExpectedVerificationEntry(entry SeedManifestEntry) bool {
+	intendedAs := strings.TrimSpace(strings.ToLower(entry.IntendedAs))
+	return intendedAs == "" || intendedAs != "filler/noise"
 }
 
 func valueOrDash(value string) string {

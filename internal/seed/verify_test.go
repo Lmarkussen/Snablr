@@ -30,6 +30,14 @@ func TestVerifyReportsFoundMissedUnexpectedAndCoverage(t *testing.T) {
 				Category:            "config",
 				ExpectedSignalTypes: []string{"content"},
 			},
+			{
+				Host:                "fs01",
+				Share:               "Temp",
+				Path:                "SnablrLab/Temp/readme.txt",
+				Category:            "noise",
+				IntendedAs:          "filler/noise",
+				ExpectedSignalTypes: []string{"filename"},
+			},
 		},
 	}
 	if err := manifest.Write(manifestPath); err != nil {
@@ -71,6 +79,9 @@ func TestVerifyReportsFoundMissedUnexpectedAndCoverage(t *testing.T) {
 	if report.ExpectedItems != 2 || report.FoundItems != 1 || report.MissedItems != 1 || report.UnexpectedFindings != 1 {
 		t.Fatalf("unexpected summary: %+v", report)
 	}
+	if report.FillerItems != 1 || report.FillerMatchedItems != 0 || report.FillerMissedItems != 1 {
+		t.Fatalf("unexpected filler summary: %+v", report)
+	}
 	if len(report.Coverage) != 2 {
 		t.Fatalf("expected 2 coverage entries, got %+v", report.Coverage)
 	}
@@ -79,5 +90,12 @@ func TestVerifyReportsFoundMissedUnexpectedAndCoverage(t *testing.T) {
 	}
 	if report.SignalCoverage[0].Expected+report.SignalCoverage[1].Expected != 3 {
 		t.Fatalf("expected aggregate signal coverage count 3, got %+v", report.SignalCoverage)
+	}
+	foundBySignal := make(map[string]int, len(report.SignalCoverage))
+	for _, summary := range report.SignalCoverage {
+		foundBySignal[summary.SignalType] = summary.Found
+	}
+	if foundBySignal["filename"] != 1 {
+		t.Fatalf("expected filename signal coverage to record one found item, got %+v", report.SignalCoverage)
 	}
 }

@@ -69,7 +69,7 @@ func Generate(opts GenerateOptions) ([]SeedFile, error) {
 			label := chooseValue(spec.Labels, i)
 			serviceAccount := chooseValue(spec.ServiceAccounts, i)
 			fullDir := applyDepth(dir, opts.Depth, i, spec.Category, persona)
-			variant := pickVariant(spec.Variants, opts, i)
+			variant := pickVariant(spec.Variants, opts, rng, len(out))
 			content := spec.Render(renderContext{
 				Index:          i,
 				Format:         variant.Format,
@@ -125,24 +125,24 @@ func chooseValue(values []string, index int) string {
 	return values[index%len(values)]
 }
 
-func pickVariant(variants []templateVariant, opts GenerateOptions, index int) templateVariant {
-	intent := desiredIntent(opts, index)
-	signalMode := desiredSignalMode(opts, index)
-	severity := desiredSeverity(opts, index)
+func pickVariant(variants []templateVariant, opts GenerateOptions, rng *rand.Rand, selectionIndex int) templateVariant {
+	intent := desiredIntent(opts, rng.Intn(100))
+	signalMode := desiredSignalMode(opts, rng.Intn(100))
+	severity := desiredSeverity(opts, rng.Intn(100))
 
-	if variant, ok := matchVariant(variants, intent, signalMode, severity, index); ok {
+	if variant, ok := matchVariant(variants, intent, signalMode, severity, selectionIndex); ok {
 		return variant
 	}
-	if variant, ok := matchVariant(variants, intent, "", severity, index); ok {
+	if variant, ok := matchVariant(variants, intent, "", severity, selectionIndex); ok {
 		return variant
 	}
-	if variant, ok := matchVariant(variants, intent, signalMode, "", index); ok {
+	if variant, ok := matchVariant(variants, intent, signalMode, "", selectionIndex); ok {
 		return variant
 	}
-	if variant, ok := matchVariant(variants, intent, "", "", index); ok {
+	if variant, ok := matchVariant(variants, intent, "", "", selectionIndex); ok {
 		return variant
 	}
-	return variants[index%len(variants)]
+	return variants[selectionIndex%len(variants)]
 }
 
 func matchVariant(variants []templateVariant, intent, signalMode, severity string, index int) (templateVariant, bool) {
@@ -189,8 +189,7 @@ func variantMatchesSignalMode(variant templateVariant, signalMode string) bool {
 	}
 }
 
-func desiredIntent(opts GenerateOptions, index int) string {
-	bucket := index % 100
+func desiredIntent(opts GenerateOptions, bucket int) string {
 	likely := opts.LikelyHitRatio
 	possible := 20
 	if likely+possible > 100 {
@@ -206,15 +205,14 @@ func desiredIntent(opts GenerateOptions, index int) string {
 	}
 }
 
-func desiredSignalMode(opts GenerateOptions, index int) string {
-	if index%100 < opts.FilenameOnlyRatio {
+func desiredSignalMode(opts GenerateOptions, bucket int) string {
+	if bucket < opts.FilenameOnlyRatio {
 		return "filename-only"
 	}
 	return "content-hit"
 }
 
-func desiredSeverity(opts GenerateOptions, index int) string {
-	bucket := (index * 17) % 100
+func desiredSeverity(opts GenerateOptions, bucket int) string {
 	switch {
 	case bucket < opts.HighSeverityRatio:
 		return "high"

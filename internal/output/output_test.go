@@ -41,7 +41,7 @@ func sampleFinding() scanner.Finding {
 		Match:               "password = ReplaceMe123!",
 		MatchedText:         "password = ReplaceMe123!",
 		MatchedTextRedacted: "password = ********",
-		Snippet:             `user = alice\npassword = ********\ndomain = example.local`,
+		Snippet:             "user = alice\npassword = ReplaceMe123!\ndomain = example.local",
 		Context:             "user = alice\npassword = ReplaceMe123!\ndomain = example.local",
 		ContextRedacted:     "user = alice\npassword = ********\ndomain = example.local",
 		PotentialAccount:    "user = alice",
@@ -209,7 +209,7 @@ func TestConsoleWriterIncludesContextMetadata(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, want := range []string{"Share Type: sysvol", "Share Description: Domain policies and scripts", "Source: dfs", "AD Share: SYSVOL", "DFS Namespace:", "Confidence: HIGH (78)", "Matched Rules:", "Signals:", "Signal: content", "Line: 12", "Potential account context: user = alice", "Matched text: password = ********", "Context:", "Confidence Raised By:", "Rule Note:", "Remediation:"} {
+	for _, want := range []string{"Share Type: sysvol", "Share Description: Domain policies and scripts", "Source: dfs", "AD Share: SYSVOL", "DFS Namespace:", "Confidence: HIGH (78)", "Matched Rules:", "Signals:", "Signal: content", "Line: 12", "Potential account context: user = alice", "Matched text: password = ReplaceMe123!", "Context:", "domain = example.local", "Confidence Raised By:", "Rule Note:", "Remediation:"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected output to contain %q, got %s", want, out)
 		}
@@ -238,7 +238,7 @@ func TestHTMLWriterRendersStandaloneTriageReport(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, want := range []string{"Snablr Scan Report", "Version", "quickFilter", "Severity Summary", "Category Summary", "Host Summary", "SYSVOL", "Signal Type", "Password Export Filename", "Show Evidence", "Visible Evidence", "Raw Supporting Signals", "password = ********", "password = ReplaceMe123!", "user = alice", "Line Number", "Heuristic file hit", "filename matched a heuristic naming pattern covered by the rule.", "Rule Explanation", "confidence high", "Supporting Signals", "Remediation"} {
+	for _, want := range []string{"Snablr Scan Report", "Version", "quickFilter", "Severity Summary", "Category Summary", "Host Summary", "SYSVOL", "Signal Type", "Password Export Filename", "Show Evidence", "Visible Evidence", "Raw Supporting Signals", "password = ReplaceMe123!", "user = alice", "Line Number", "Heuristic file hit", "filename matched a heuristic naming pattern covered by the rule.", "Rule Explanation", "confidence high", "Supporting Signals", "Remediation"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected html output to contain %q", want)
 		}

@@ -9,6 +9,15 @@ import (
 
 var defaultSkippedShares = []string{"IPC$", "PRINT$"}
 
+func IsAdministrativeShare(name string) bool {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "ADMIN$", "C$", "IPC$", "PRINT$":
+		return true
+	default:
+		return false
+	}
+}
+
 func IsADShare(name string) bool {
 	_, ok := ADShareType(name)
 	return ok

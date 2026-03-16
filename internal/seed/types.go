@@ -52,6 +52,7 @@ type WriteOptions struct {
 	Username            string
 	Password            string
 	Shares              []string
+	IncludeAdminShares  bool
 	SeedPrefix          string
 	DryRun              bool
 	CleanPrefix         bool

@@ -25,6 +25,9 @@ func sampleFinding() scanner.Finding {
 			"multiple independent signal types increased confidence",
 		},
 		Category:            "credentials",
+		TriageClass:         "actionable",
+		Actionable:          true,
+		Correlated:          true,
 		Priority:            95,
 		PriorityReason:      "test priority reason",
 		SharePriority:       90,
@@ -73,6 +76,9 @@ func sampleHeuristicFinding() scanner.Finding {
 		ConfidenceScore:     54,
 		ConfidenceReasons:   []string{"filename rule matched \"passwords\" for Detect credential-style exports.", "planner marked this path as relevant review material"},
 		Category:            "credentials",
+		TriageClass:         "actionable",
+		Actionable:          true,
+		Correlated:          true,
 		Priority:            72,
 		PriorityReason:      "test filename priority reason",
 		SharePriority:       60,
@@ -97,6 +103,42 @@ func sampleHeuristicFinding() scanner.Finding {
 			{SignalType: "path", Weight: 12, Reason: "path contains a desktop-style review location"},
 		},
 		Tags: []string{"credentials", "filenames", "review"},
+	}
+}
+
+func sampleConfigOnlyFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:              "filename.sensitive_config_names",
+		RuleName:            "Sensitive Config Names",
+		Severity:            "low",
+		Confidence:          "low",
+		RuleConfidence:      "high",
+		ConfidenceScore:     24,
+		ConfidenceReasons:   []string{"configuration artifact was identified without actionable evidence"},
+		Category:            "configuration",
+		TriageClass:         "config-only",
+		Actionable:          false,
+		Correlated:          false,
+		Priority:            48,
+		PriorityReason:      "config path",
+		FilePath:            "Apps/appsettings.json",
+		Share:               "Apps",
+		ShareType:           "disk",
+		Host:                "fs01",
+		Source:              "file",
+		SignalType:          "filename",
+		Match:               "appsettings.json",
+		MatchedText:         "appsettings.json",
+		MatchedTextRedacted: "appsettings.json",
+		MatchReason:         "filename matched a heuristic naming pattern covered by the rule.",
+		RuleExplanation:     "Common configuration names often deserve review, but this alone is not actionable.",
+		RuleRemediation:     "Review the file only if paired with stronger evidence such as embedded credentials or validated connection details.",
+		MatchedRuleIDs:      []string{"filename.sensitive_config_names"},
+		MatchedSignalTypes:  []string{"filename"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "filename", RuleID: "filename.sensitive_config_names", RuleName: "Sensitive Config Names", Match: "appsettings.json", Confidence: "high", Weight: 18, Reason: "filename rule matched \"appsettings.json\" for Detect common config filenames that frequently contain environment settings or embedded secrets."},
+		},
+		Tags: []string{"configuration", "filenames", "triage"},
 	}
 }
 
@@ -137,6 +179,9 @@ func TestJSONWriterGeneratesStructuredReport(t *testing.T) {
 	}
 	if report.Findings[0].ConfidenceScore == 0 || len(report.Findings[0].MatchedRuleIDs) != 2 || len(report.Findings[0].SupportingSignals) == 0 {
 		t.Fatalf("expected correlated signal metadata in JSON finding, got %#v", report.Findings[0])
+	}
+	if !report.Findings[0].Actionable || !report.Findings[0].Correlated || report.Findings[0].TriageClass != "actionable" {
+		t.Fatalf("expected triage metadata in JSON finding, got %#v", report.Findings[0])
 	}
 	if len(report.CategorySummaries) != 1 || report.CategorySummaries[0].Category != "credentials" {
 		t.Fatalf("unexpected category summaries: %#v", report.CategorySummaries)
@@ -233,12 +278,15 @@ func TestHTMLWriterRendersStandaloneTriageReport(t *testing.T) {
 	if err := writer.WriteFinding(sampleHeuristicFinding()); err != nil {
 		t.Fatalf("WriteFinding returned error: %v", err)
 	}
+	if err := writer.WriteFinding(sampleConfigOnlyFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
 	if err := writer.Close(); err != nil {
 		t.Fatalf("Close returned error: %v", err)
 	}
 
 	out := buf.String()
-	for _, want := range []string{"Snablr Scan Report", "Version", "quickFilter", "Severity Summary", "Category Summary", "Host Summary", "SYSVOL", "Signal Type", "Password Export Filename", "Show Evidence", "Visible Evidence", "Raw Supporting Signals", "password = ReplaceMe123!", "user = alice", "Line Number", "Heuristic file hit", "filename matched a heuristic naming pattern covered by the rule.", "Rule Explanation", "confidence high", "Supporting Signals", "Remediation"} {
+	for _, want := range []string{"Snablr Scan Report", "Version", "quickFilter", "severityFilter", "categoryFilter", "confidenceFilter", "sourceFilter", "signalFilter", "scopeFilter", "correlatedOnly", "hideConfigOnly", "hideLowConfidence", "hideNonActionable", "resetFilters", "filterStatus", "Severity Summary", "Category Summary", "Host Summary", "SYSVOL", "Signal Type", "Password Export Filename", "Show Evidence", "Visible Evidence", "Raw Supporting Signals", "password = ReplaceMe123!", "user = alice", "Line Number", "Heuristic file hit", "Config artifact only.", "filename matched a heuristic naming pattern covered by the rule.", "Rule Explanation", "confidence high", "Supporting Signals", "Remediation", "data-triage=\"config-only\"", "data-actionable=\"false\""} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected html output to contain %q", want)
 		}

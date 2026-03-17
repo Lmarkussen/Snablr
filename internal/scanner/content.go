@@ -73,6 +73,9 @@ func (s ContentScanner) Scan(ruleSet []rules.Rule, meta FileMetadata, content []
 		if !ok {
 			continue
 		}
+		if shouldSuppressWeakContentMatch(rule.ID, rule.Category, details.matchedText, details.context) {
+			continue
+		}
 
 		findings = append(findings, newFinding(rule, meta, findingEvidence{
 			SignalType:          signalTypeForRule(rule.Type),

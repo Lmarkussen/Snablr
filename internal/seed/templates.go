@@ -12,6 +12,17 @@ var (
 	enterpriseLabels = []string{"prod", "legacy", "finance", "hr", "payroll", "intranet", "ops", "customer", "archive", "deploy"}
 )
 
+const (
+	seedClassConfigOnly               = "config-only"
+	seedClassWeakReview               = "weak-review"
+	seedClassActionable               = "actionable"
+	seedClassCorrelatedHighConfidence = "correlated-high-confidence"
+
+	seedTriageActionable = "actionable"
+	seedTriageConfigOnly = "config-only"
+	seedTriageWeakReview = "weak-review"
+)
+
 func defaultTemplates() []templateSpec {
 	return []templateSpec{
 		newSpec("configs", []string{
@@ -65,6 +76,9 @@ func defaultTemplates() []templateSpec {
 			possible("sql-backup-readme.txt", "notes-service", "medium", []string{"filename"}, []string{"sql"}, []string{"backup-export-naming"}),
 			noise("inventory.csv", "inventory-csv", "low", []string{"noise"}, []string{"noise-review"}),
 		}, renderVariant),
+		newSpec("database", []string{
+			"SQL", "SQL/Backups", "Web/Configs", "Deploy", "IT/Scripts", "Archive/Legacy/App1/Config", "Backups/Daily",
+		}, dbTemplateVariants(), renderVariant),
 		newSpec("cloud", []string{
 			"IT/Admin", "Deploy", "Web/Configs", "Archive",
 		}, []templateVariant{
@@ -148,6 +162,32 @@ func newSpec(category string, dirs []string, variants []templateVariant, render 
 	}
 }
 
+func dbTemplateVariants() []templateVariant {
+	return []templateVariant{
+		classify(triage(likely("appsettings.json", "db-appsettings-json", "high", []string{"content", "filename", "extension"}, []string{"configuration", "database", "credentials"}, []string{"database-connection-strings", "hardcoded-secret-indicators"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
+		classify(triage(likely("web.config", "db-web-config", "high", []string{"content", "filename", "extension"}, []string{"configuration", "database", "credentials"}, []string{"database-connection-strings", "hardcoded-secret-indicators"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
+		classify(triage(likely(".env", "db-env", "high", []string{"content", "filename", "extension"}, []string{"configuration", "database", "credentials"}, []string{"database-connection-strings", "hardcoded-secret-indicators"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
+		classify(triage(likely("finance-prod.dsn", "db-dsn", "high", []string{"content", "filename", "extension"}, []string{"configuration", "database", "credentials"}, []string{"database-connection-strings"}), seedTriageActionable), seedClassActionable, "high", false),
+		classify(triage(likely("odbc.ini", "db-odbc-ini", "high", []string{"content", "filename", "extension"}, []string{"configuration", "database", "credentials"}, []string{"database-connection-strings"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
+		classify(triage(likely("tnsnames.ora", "db-tnsnames", "high", []string{"content", "filename", "extension"}, []string{"configuration", "database"}, []string{"database-connection-strings"}), seedTriageActionable), seedClassActionable, "high", false),
+		classify(triage(likely("db-deploy.ps1", "db-script-ps1", "high", []string{"content", "filename", "extension"}, []string{"scripts", "database", "credentials"}, []string{"script-credentials", "database-connection-strings"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
+		classify(triage(likely("docker-compose.yml", "db-docker-compose", "high", []string{"content", "filename", "extension"}, []string{"configuration", "database", "credentials"}, []string{"database-connection-strings", "hardcoded-secret-indicators"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
+		classify(triage(likely("db-prod.backup.bak", "db-backup-marker", "high", []string{"filename", "extension"}, []string{"backups", "database"}, []string{"backup-export-naming"}), seedTriageActionable), seedClassActionable, "high", false),
+		classify(triage(likely("billing-archive.dump", "db-backup-marker", "high", []string{"filename", "extension"}, []string{"backups", "database"}, []string{"backup-export-naming"}), seedTriageActionable), seedClassActionable, "high", false),
+		classify(triage(likely("oracle-finance-export.dmp", "db-backup-marker", "high", []string{"filename", "extension"}, []string{"backups", "database"}, []string{"backup-export-naming"}), seedTriageActionable), seedClassActionable, "high", false),
+		classify(triage(likely("customers-prod.sqlite", "db-local-artifact", "medium", []string{"filename", "extension"}, []string{"database", "artifacts"}, []string{"database-artifact-review"}), seedTriageActionable), seedClassActionable, "medium", false),
+		classify(triage(likely("finance-legacy.mdb", "db-local-artifact", "medium", []string{"filename", "extension"}, []string{"database", "artifacts"}, []string{"database-artifact-review"}), seedTriageActionable), seedClassActionable, "medium", false),
+		classify(triage(likely("schema-export.sql", "db-sql-dump", "high", []string{"content", "filename", "extension"}, []string{"database", "credentials"}, []string{"database-connection-strings"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
+		classify(triage(likely("database.yml", "db-yaml-config-only", "medium", []string{"filename", "extension"}, []string{"configuration", "database"}, []string{"config-file-review"}), seedTriageConfigOnly), seedClassConfigOnly, "low", false),
+		classify(triage(likely("application.properties", "db-properties-config-only", "medium", []string{"filename", "extension"}, []string{"configuration", "database"}, []string{"config-file-review"}), seedTriageConfigOnly), seedClassConfigOnly, "low", false),
+		classify(triage(likely("config.php", "db-config-php-config-only", "medium", []string{"filename", "extension"}, []string{"configuration", "database"}, []string{"config-file-review"}), seedTriageConfigOnly), seedClassConfigOnly, "low", false),
+		classify(triage(possible("db-admin-notes.txt", "db-admin-notes", "medium", []string{"content", "filename"}, []string{"database", "notes"}, []string{"database-connection-strings"}), seedTriageWeakReview), seedClassWeakReview, "medium", false),
+		classify(triage(possible("deploy-db.py", "db-script-python-placeholder", "medium", []string{"content", "filename", "extension"}, []string{"scripts", "database"}, []string{"script-credentials"}), seedTriageWeakReview), seedClassWeakReview, "medium", false),
+		classify(triage(likely("k8s-db-secret.yaml", "db-k8s-secret-placeholder", "medium", []string{"filename", "extension"}, []string{"configuration", "database"}, []string{"config-file-review"}), seedTriageConfigOnly), seedClassConfigOnly, "low", false),
+		classify(triage(noise("database-readme.md", "db-readme-noise", "low", []string{"noise"}, []string{"noise-review"}), seedTriageConfigOnly), seedClassConfigOnly, "low", false),
+	}
+}
+
 func likely(filename, style, severity string, signalTypes, tags, themes []string) templateVariant {
 	return templateVariant{
 		Filename:            filename,
@@ -159,6 +199,18 @@ func likely(filename, style, severity string, signalTypes, tags, themes []string
 		ExpectedSeverity:    severity,
 		ContentStyle:        style,
 	}
+}
+
+func triage(variant templateVariant, triageClass string) templateVariant {
+	variant.ExpectedTriageClass = strings.TrimSpace(triageClass)
+	return variant
+}
+
+func classify(variant templateVariant, expectedClass, confidence string, correlated bool) templateVariant {
+	variant.ExpectedClass = strings.TrimSpace(expectedClass)
+	variant.ExpectedConfidence = strings.TrimSpace(confidence)
+	variant.ExpectedCorrelated = correlated
+	return variant
 }
 
 func possible(filename, style, severity string, signalTypes, tags, themes []string) templateVariant {
@@ -227,6 +279,20 @@ func renderVariant(ctx renderContext, variant templateVariant) []byte {
 				"ClientSecret": clientSecretValue(ctx),
 			},
 		})
+	case "db-appsettings-json":
+		return mustJSON(map[string]any{
+			"ConnectionStrings": map[string]string{
+				"MainDatabase":      mssqlConnectionStringValue(ctx),
+				"ReportingDatabase": postgresConnectionURLValue(ctx),
+			},
+			"DatabaseAuth": map[string]string{
+				"UserName":         dbUserValue(ctx),
+				"Password":         dbPasswordValue(ctx),
+				"ClientSecret":     clientSecretValue(ctx),
+				"BackupPassphrase": backupPasswordValue(ctx),
+			},
+			"LabNote": "SYNTHETIC_ONLY_DO_NOT_USE",
+		})
 	case "xml-settings":
 		return text(
 			"<configuration>",
@@ -235,12 +301,36 @@ func renderVariant(ctx renderContext, variant templateVariant) []byte {
 			"  <token>"+tokenValue(ctx)+"</token>",
 			"</configuration>",
 		)
+	case "db-web-config":
+		return text(
+			"<configuration>",
+			"  <connectionStrings>",
+			"    <add name=\"PrimaryDb\" connectionString=\""+xmlEscape(mssqlConnectionStringValue(ctx))+"\" providerName=\"System.Data.SqlClient\" />",
+			"    <add name=\"AuditDb\" connectionString=\""+xmlEscape(mysqlConnectionStringValue(ctx))+"\" providerName=\"MySql.Data.MySqlClient\" />",
+			"  </connectionStrings>",
+			"  <appSettings>",
+			"    <add key=\"DbUser\" value=\""+xmlEscape(dbUserValue(ctx))+"\" />",
+			"    <add key=\"DbPassword\" value=\""+xmlEscape(dbPasswordValue(ctx))+"\" />",
+			"    <add key=\"BackupEncryptionPassword\" value=\""+xmlEscape(backupPasswordValue(ctx))+"\" />",
+			"  </appSettings>",
+			"</configuration>",
+		)
 	case "deploy-env":
 		return text(
 			"DEPLOY_USER="+serviceAccountValue(ctx),
 			"DEPLOY_PASSWORD="+passwordValue(ctx),
 			"DEPLOY_TOKEN="+tokenValue(ctx),
 			"DEPLOY_NOTE=LAB_ONLY_VALUE_DO_NOT_USE",
+		)
+	case "db-env":
+		return text(
+			"DB_CONNECTION="+postgresConnectionURLValue(ctx),
+			"DB_USERNAME="+dbUserValue(ctx),
+			"DB_PASSWORD="+dbPasswordValue(ctx),
+			"DB_CLIENT_SECRET="+clientSecretValue(ctx),
+			"DB_BACKUP_KEY="+backupPasswordValue(ctx),
+			"SQLITE_PATH="+sqliteReferenceValue(ctx),
+			"LAB_NOTE=SYNTHETIC_ONLY_DO_NOT_USE",
 		)
 	case "deploy-json":
 		return mustJSON(map[string]string{
@@ -364,6 +454,145 @@ func renderVariant(ctx renderContext, variant templateVariant) []byte {
 			"dsn="+connStringValue(ctx),
 			"legacy_note=LAB_ONLY_VALUE_DO_NOT_USE",
 		)
+	case "db-dsn":
+		return text(
+			"[ODBC]",
+			"DRIVER=ODBC Driver 18 for SQL Server",
+			"SERVER="+dbHostValue(ctx),
+			"DATABASE="+dbNameValue(ctx),
+			"UID="+dbUserValue(ctx),
+			"PWD="+dbPasswordValue(ctx),
+			"Description=SYNTHETIC_ONLY_DO_NOT_USE",
+		)
+	case "db-odbc-ini":
+		return text(
+			"[finance_reporting]",
+			"Driver=ODBC Driver 18 for SQL Server",
+			"Server="+dbHostValue(ctx),
+			"Database="+dbNameValue(ctx),
+			"UID="+dbUserValue(ctx),
+			"PWD="+dbPasswordValue(ctx),
+			"",
+			"[readonly_inventory]",
+			"Driver=PostgreSQL Unicode",
+			"Server="+dbHostValue(ctx),
+			"Database="+dbNameValue(ctx),
+			"Port=5432",
+		)
+	case "db-tnsnames":
+		return text(
+			"FINANCE_"+strings.ToUpper(ctx.Label)+" =",
+			"  (DESCRIPTION =",
+			"    (ADDRESS = (PROTOCOL = TCP)(HOST = "+dbHostValue(ctx)+")(PORT = 1521))",
+			"    (CONNECT_DATA =",
+			"      (SERVICE_NAME = "+oracleServiceValue(ctx)+")",
+			"    )",
+			"  )",
+		)
+	case "db-script-ps1":
+		return text(
+			"$DbConn = \""+mssqlConnectionStringValue(ctx)+"\"",
+			"$DbUser = \""+dbUserValue(ctx)+"\"",
+			"$DbPassword = \""+dbPasswordValue(ctx)+"\"",
+			"$BackupPassphrase = \""+backupPasswordValue(ctx)+"\"",
+			"$SqliteReference = \""+sqliteReferenceValue(ctx)+"\"",
+		)
+	case "db-docker-compose":
+		return text(
+			"version: '3.8'",
+			"services:",
+			"  app:",
+			"    image: snablr-lab/app:synthetic",
+			"    environment:",
+			"      APP_DB_URL: "+postgresConnectionURLValue(ctx),
+			"      APP_DB_PASSWORD: "+dbPasswordValue(ctx),
+			"      APP_CLIENT_SECRET: "+clientSecretValue(ctx),
+			"      APP_BACKUP_KEY: "+backupPasswordValue(ctx),
+		)
+	case "db-sql-dump":
+		return text(
+			"-- Synthetic schema export only",
+			"-- backup source="+dbHostValue(ctx)+" database="+dbNameValue(ctx),
+			"-- admin dsn="+odbcConnectionSummary(ctx),
+			"CREATE TABLE demo_accounts (id INT, username VARCHAR(64));",
+			"INSERT INTO demo_accounts VALUES (1, '"+dbUserValue(ctx)+"');",
+		)
+	case "db-yaml-config-only":
+		return text(
+			"default: &default",
+			"  adapter: sqlserver",
+			"  host: "+dbHostValue(ctx),
+			"  database: "+dbNameValue(ctx),
+			"  username: <set-me>",
+			"  password: <set-me>",
+			"  note: SYNTHETIC_CONFIG_ONLY",
+		)
+	case "db-properties-config-only":
+		return text(
+			"db.vendor=postgresql",
+			"db.host="+dbHostValue(ctx),
+			"db.name="+dbNameValue(ctx),
+			"db.user=placeholder_user",
+			"db.password=changeme",
+			"db.note=SYNTHETIC_CONFIG_ONLY",
+		)
+	case "db-config-php-config-only":
+		return text(
+			"<?php",
+			"$dbHost = '"+dbHostValue(ctx)+"';",
+			"$dbName = '"+dbNameValue(ctx)+"';",
+			"$dbUser = 'replace_me';",
+			"$dbPass = 'replace_me';",
+			"$dbDriver = 'sqlsrv';",
+		)
+	case "db-admin-notes":
+		return text(
+			"db cutover notes",
+			"- primary host: "+dbHostValue(ctx),
+			"- dsn profile: finance_reporting",
+			"- service account: "+dbUserValue(ctx),
+			"- update password in vault before go-live",
+			"- backup artifact: "+backupFilenameValue(ctx),
+		)
+	case "db-script-python-placeholder":
+		return text(
+			"DB_URL = \"postgresql://placeholder:changeme@"+dbHostValue(ctx)+"/"+dbNameValue(ctx)+"\"",
+			"DB_USER = \"placeholder\"",
+			"DB_PASSWORD = \"changeme\"",
+			"print(\"synthetic deploy helper\")",
+		)
+	case "db-k8s-secret-placeholder":
+		return text(
+			"apiVersion: v1",
+			"kind: Secret",
+			"metadata:",
+			"  name: db-bootstrap",
+			"stringData:",
+			"  DATABASE_URL: \"postgresql://placeholder:changeme@"+dbHostValue(ctx)+"/"+dbNameValue(ctx)+"\"",
+			"  DB_PASSWORD: \"changeme\"",
+			"  CLIENT_SECRET: \"<set-me>\"",
+		)
+	case "db-backup-marker":
+		return text(
+			"SYNTHETIC DATABASE BACKUP MARKER",
+			"source="+dbHostValue(ctx),
+			"database="+dbNameValue(ctx),
+			"backup_label="+backupFilenameValue(ctx),
+			"encryption_password_ref="+backupPasswordValue(ctx),
+		)
+	case "db-local-artifact":
+		return text(
+			"SYNTHETIC LOCAL DATABASE FILE",
+			"database="+dbNameValue(ctx),
+			"owner="+dbUserValue(ctx),
+			"note=SYNTHETIC_ONLY_DO_NOT_USE",
+		)
+	case "db-readme-noise":
+		return text(
+			"Synthetic database migration checklist.",
+			"Contains placeholders and operational notes only.",
+			"No real credentials or infrastructure details are present.",
+		)
 	case "meeting-notes":
 		return text(
 			"Project meeting notes",
@@ -449,6 +678,77 @@ func clientSecretValue(ctx renderContext) string {
 
 func connStringValue(ctx renderContext) string {
 	return "DEMO_CONN_STRING_" + strings.ReplaceAll(ctx.Token, "_", "")
+}
+
+func dbHostValue(ctx renderContext) string {
+	label := strings.ToLower(strings.TrimSpace(ctx.Label))
+	if label == "" {
+		label = "lab"
+	}
+	return "db-" + label + ".example.invalid"
+}
+
+func dbNameValue(ctx renderContext) string {
+	label := strings.ToLower(strings.TrimSpace(ctx.Label))
+	if label == "" {
+		label = "operations"
+	}
+	return "snablr_" + strings.ReplaceAll(label, "-", "_")
+}
+
+func dbUserValue(ctx renderContext) string {
+	return serviceAccountValue(ctx) + "_db"
+}
+
+func dbPasswordValue(ctx renderContext) string {
+	return "FAKE_DB_PASSWORD_" + strings.ReplaceAll(ctx.Token, "_", "")
+}
+
+func backupPasswordValue(ctx renderContext) string {
+	return "FAKE_BACKUP_KEY_" + strings.ReplaceAll(ctx.Token, "_", "")
+}
+
+func sqliteReferenceValue(ctx renderContext) string {
+	return "/srv/sqlite/" + dbNameValue(ctx) + ".sqlite"
+}
+
+func oracleServiceValue(ctx renderContext) string {
+	label := strings.ToUpper(strings.TrimSpace(ctx.Label))
+	if label == "" {
+		label = "LAB"
+	}
+	return "SNABLR_" + label
+}
+
+func mssqlConnectionStringValue(ctx renderContext) string {
+	return "Server=" + dbHostValue(ctx) + ";Database=" + dbNameValue(ctx) + ";User Id=" + dbUserValue(ctx) + ";Password=" + dbPasswordValue(ctx) + ";Encrypt=True;"
+}
+
+func mysqlConnectionStringValue(ctx renderContext) string {
+	return "Server=" + dbHostValue(ctx) + ";Database=" + dbNameValue(ctx) + ";Uid=" + dbUserValue(ctx) + ";Pwd=" + dbPasswordValue(ctx) + ";"
+}
+
+func postgresConnectionURLValue(ctx renderContext) string {
+	return "postgresql://" + dbUserValue(ctx) + ":" + dbPasswordValue(ctx) + "@" + dbHostValue(ctx) + "/" + dbNameValue(ctx) + "?sslmode=require"
+}
+
+func odbcConnectionSummary(ctx renderContext) string {
+	return "Driver={ODBC Driver 18 for SQL Server};Server=" + dbHostValue(ctx) + ";Database=" + dbNameValue(ctx) + ";Uid=" + dbUserValue(ctx) + ";Pwd=" + dbPasswordValue(ctx) + ";"
+}
+
+func backupFilenameValue(ctx renderContext) string {
+	return dbNameValue(ctx) + "_" + strings.ToLower(ctx.Label) + "_backup"
+}
+
+func xmlEscape(value string) string {
+	replacer := strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+		"\"", "&quot;",
+		"'", "&apos;",
+	)
+	return replacer.Replace(value)
 }
 
 func fakeReference(prefix string, ctx renderContext) string {

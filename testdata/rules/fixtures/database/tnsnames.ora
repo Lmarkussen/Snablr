@@ -1,0 +1,7 @@
+PAYDB =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = db01.corp.local)(PORT = 1521))
+    (CONNECT_DATA =
+      (SERVICE_NAME = PAYDBPRD)
+    )
+  )

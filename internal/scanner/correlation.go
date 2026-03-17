@@ -8,6 +8,7 @@ import (
 
 var signalWeightCaps = map[string]int{
 	"content":          40,
+	"validated":        42,
 	"filename":         24,
 	"extension":        14,
 	"path":             12,
@@ -118,23 +119,25 @@ func correlateGroup(meta FileMetadata, group []Finding) Finding {
 		}
 	}
 
-	if signal, ok := pathContextSignal(meta); ok {
-		signals = append(signals, signal)
-		signalTypes = append(signalTypes, signal.SignalType)
-		weightsByType[signal.SignalType] += signal.Weight
-		reasons = append(reasons, signal.Reason)
-	}
-	if signal, ok := sharePrioritySignal(meta); ok {
-		signals = append(signals, signal)
-		signalTypes = append(signalTypes, signal.SignalType)
-		weightsByType[signal.SignalType] += signal.Weight
-		reasons = append(reasons, signal.Reason)
-	}
-	if signal, ok := plannerPrioritySignal(meta); ok {
-		signals = append(signals, signal)
-		signalTypes = append(signalTypes, signal.SignalType)
-		weightsByType[signal.SignalType] += signal.Weight
-		reasons = append(reasons, signal.Reason)
+	if allowsContextBoosts(group) {
+		if signal, ok := pathContextSignal(meta); ok {
+			signals = append(signals, signal)
+			signalTypes = append(signalTypes, signal.SignalType)
+			weightsByType[signal.SignalType] += signal.Weight
+			reasons = append(reasons, signal.Reason)
+		}
+		if signal, ok := sharePrioritySignal(meta); ok {
+			signals = append(signals, signal)
+			signalTypes = append(signalTypes, signal.SignalType)
+			weightsByType[signal.SignalType] += signal.Weight
+			reasons = append(reasons, signal.Reason)
+		}
+		if signal, ok := plannerPrioritySignal(meta); ok {
+			signals = append(signals, signal)
+			signalTypes = append(signalTypes, signal.SignalType)
+			weightsByType[signal.SignalType] += signal.Weight
+			reasons = append(reasons, signal.Reason)
+		}
 	}
 
 	score := 0
@@ -176,7 +179,38 @@ func correlateGroup(meta FileMetadata, group []Finding) Finding {
 	correlated.ConfidenceReasons = uniqueSorted(reasons)
 	correlated.Tags = uniqueSorted(tags)
 	correlated.MatchReason = correlationReason(correlated)
-	return correlated
+	return applyTriageMetadata(correlated)
+}
+
+func allowsContextBoosts(group []Finding) bool {
+	if len(group) == 0 {
+		return true
+	}
+	category := strings.ToLower(strings.TrimSpace(group[0].Category))
+	if groupHasStrongEvidence(group) {
+		switch category {
+		case "database-artifacts":
+			return false
+		default:
+			return true
+		}
+	}
+	switch category {
+	case "configuration", "infrastructure", "scripts", "database-artifacts":
+		return false
+	default:
+		return true
+	}
+}
+
+func groupHasStrongEvidence(group []Finding) bool {
+	for _, finding := range group {
+		switch strings.ToLower(strings.TrimSpace(findingPrimarySignal(finding))) {
+		case "content", "validated":
+			return true
+		}
+	}
+	return false
 }
 
 func selectPrimaryFinding(group []Finding) Finding {
@@ -207,6 +241,8 @@ func signalPriority(f Finding) int {
 		return 0
 	}
 	switch f.SupportingSignals[0].SignalType {
+	case "validated":
+		return 4
 	case "content":
 		return 3
 	case "filename":
@@ -220,6 +256,8 @@ func signalPriority(f Finding) int {
 
 func baseSignalWeight(signalType string) int {
 	switch signalType {
+	case "validated":
+		return 40
 	case "content":
 		return 32
 	case "filename":
@@ -339,12 +377,13 @@ func correlationReason(f Finding) string {
 
 func orderedSignalTypes(values []string) []string {
 	order := map[string]int{
-		"content":          0,
-		"filename":         1,
-		"extension":        2,
-		"path":             3,
-		"share_priority":   4,
-		"planner_priority": 5,
+		"validated":        0,
+		"content":          1,
+		"filename":         2,
+		"extension":        3,
+		"path":             4,
+		"share_priority":   5,
+		"planner_priority": 6,
 	}
 	sort.Slice(values, func(i, j int) bool {
 		oi, okI := order[values[i]]

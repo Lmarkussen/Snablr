@@ -145,6 +145,70 @@
       gap: 12px;
       align-items: center;
     }
+    .filter-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      margin-top: 14px;
+    }
+    .filter-control {
+      display: grid;
+      gap: 6px;
+    }
+    .filter-control label,
+    .toggle-label {
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .filter-select,
+    .filter-text {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fbfdff;
+      color: var(--text);
+      font: inherit;
+    }
+    .toggle-grid {
+      display: flex;
+      gap: 10px 18px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+      align-items: center;
+    }
+    .toggle-option {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      color: var(--text);
+      font-size: 0.92rem;
+    }
+    .filter-actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+    .filter-status {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .filter-reset {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--text);
+      border-radius: 999px;
+      padding: 8px 12px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
     .filter-wrap {
       position: relative;
     }
@@ -251,6 +315,7 @@
     .badge.conf-unknown { background: var(--prio-low-bg); color: var(--prio-low); }
     .badge.good { background: var(--ok-bg); color: var(--ok); }
     .badge.signal-content { background: #e0f2fe; color: #0f766e; }
+    .badge.signal-validated { background: #dcfce7; color: #166534; }
     .badge.signal-filename { background: #fff7ed; color: #c2410c; }
     .badge.signal-extension { background: #f3e8ff; color: #7c3aed; }
     .badge.signal-path { background: #ecfccb; color: #4d7c0f; }
@@ -261,6 +326,10 @@
     .badge.diff-removed { background: var(--diff-removed-bg); color: var(--diff-removed); }
     .badge.diff-unchanged { background: var(--diff-unchanged-bg); color: var(--diff-unchanged); }
     .badge.diff-unknown { background: var(--generic-bg); color: var(--generic); }
+    .badge.triage-actionable { background: #dcfce7; color: #166534; }
+    .badge.triage-config { background: #e2e8f0; color: #475569; }
+    .badge.triage-weak { background: #fef3c7; color: #92400e; }
+    .badge.triage-unknown { background: var(--generic-bg); color: var(--generic); }
     .category-card .card-meta {
       line-height: 1.55;
     }
@@ -726,6 +795,73 @@
         </div>
         <div class="filter-help">Filter runs locally in the report. Search is case-insensitive and checks the full row text.</div>
       </div>
+      <div class="filter-grid">
+        <div class="filter-control">
+          <label for="severityFilter">Severity</label>
+          <select id="severityFilter" class="filter-select">
+            <option value="">All severities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+        <div class="filter-control">
+          <label for="categoryFilter">Category</label>
+          <select id="categoryFilter" class="filter-select">
+            <option value="">All categories</option>
+            {{- range .FilterOptions.Categories }}
+            <option value="{{ . }}">{{ . }}</option>
+            {{- end }}
+          </select>
+        </div>
+        <div class="filter-control">
+          <label for="confidenceFilter">Confidence</label>
+          <select id="confidenceFilter" class="filter-select">
+            <option value="">All confidence levels</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+        <div class="filter-control">
+          <label for="sourceFilter">Source</label>
+          <select id="sourceFilter" class="filter-select">
+            <option value="">All sources</option>
+            {{- range .FilterOptions.Sources }}
+            <option value="{{ . }}">{{ . }}</option>
+            {{- end }}
+          </select>
+        </div>
+        <div class="filter-control">
+          <label for="signalFilter">Signal Type</label>
+          <select id="signalFilter" class="filter-select">
+            <option value="">All signal types</option>
+            {{- range .FilterOptions.Signals }}
+            <option value="{{ . }}">{{ signalLabel . }}</option>
+            {{- end }}
+          </select>
+        </div>
+        <div class="filter-control">
+          <label for="scopeFilter">Host / Share</label>
+          <input id="scopeFilter" class="filter-text" type="search" list="scopeOptions" placeholder="Filter by host or share">
+          <datalist id="scopeOptions">
+            {{- range .FilterOptions.Scopes }}
+            <option value="{{ . }}"></option>
+            {{- end }}
+          </datalist>
+        </div>
+      </div>
+      <div class="toggle-grid">
+        <label class="toggle-option"><input id="correlatedOnly" type="checkbox"> Show only correlated findings</label>
+        <label class="toggle-option"><input id="hideConfigOnly" type="checkbox"> Hide config-only findings</label>
+        <label class="toggle-option"><input id="hideLowConfidence" type="checkbox"> Hide medium or lower confidence</label>
+        <label class="toggle-option"><input id="hideNonActionable" type="checkbox"> Hide findings without actionable evidence</label>
+      </div>
+      <div class="filter-actions">
+        <button id="resetFilters" class="filter-reset" type="button">Reset Filters</button>
+        <div id="filterStatus" class="filter-status">Showing all findings</div>
+      </div>
       <div class="print-note">Printable/exportable: collapse sections to focus before printing, or open all to export a fuller review pack.</div>
     </section>
 
@@ -997,7 +1133,7 @@
       </div>
 
       {{- range .CategoryGroups }}
-	      <details class="group finding-group" id="cat-{{ slug .Summary.Category }}" open>
+	      <details class="group finding-group" id="cat-{{ slug .Summary.Category }}" data-category="{{ .Summary.Category }}" data-total-findings="{{ .Summary.Findings }}" open>
         <summary class="group-summary">
           <div class="group-top">
             <div class="group-title">
@@ -1005,7 +1141,7 @@
               <span class="badge {{ severityClass .Summary.HighestSeverity }}">{{ .Summary.HighestSeverity }}</span>
             </div>
             <div class="group-stats">
-              <span>Findings: {{ .Summary.Findings }}</span>
+              <span>Visible: <span class="group-visible-count">{{ .Summary.Findings }}</span> / {{ .Summary.Findings }}</span>
               <span>Critical: {{ .Summary.Critical }}</span>
               <span>High: {{ .Summary.High }}</span>
               <span>Medium: {{ .Summary.Medium }}</span>
@@ -1017,7 +1153,17 @@
 
 	        <div class="finding-list">
 	          {{- range .Findings }}
-	          <article class="finding-card {{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" data-search="{{ .Finding.Category }} {{ .Finding.Severity }} {{ .Finding.Confidence }} {{ .Finding.RuleID }} {{ .Finding.RuleName }} {{ .Finding.Host }} {{ .Finding.Share }} {{ .Finding.ShareType }} {{ .Finding.ShareDescription }} {{ .Finding.FilePath }} {{ .Finding.Source }} {{ .Finding.DFSNamespacePath }} {{ .Finding.DFSLinkPath }} {{ joinTags .Finding.Tags " " }} {{ .Finding.MatchReason }} {{ .Finding.RuleExplanation }} {{ .Finding.RuleRemediation }} {{ .Finding.Snippet }} {{ .Finding.Context }} {{ .Finding.ContextRedacted }} {{ .Finding.MatchedText }} {{ .Finding.MatchedTextRedacted }} {{ .Finding.PotentialAccount }} {{ .DiffStatus }} {{ joinTags .ChangedFields " " }} {{ joinList .Finding.MatchedRuleIDs " " }} {{ joinList .Finding.MatchedSignalTypes " " }} {{ joinList .Finding.ConfidenceReasons " " }}">
+	          <article class="finding-card {{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" data-search="{{ .Finding.Category }} {{ .Finding.Severity }} {{ .Finding.Confidence }} {{ .Finding.RuleID }} {{ .Finding.RuleName }} {{ .Finding.Host }} {{ .Finding.Share }} {{ .Finding.ShareType }} {{ .Finding.ShareDescription }} {{ .Finding.FilePath }} {{ .Finding.Source }} {{ .Finding.DFSNamespacePath }} {{ .Finding.DFSLinkPath }} {{ joinTags .Finding.Tags " " }} {{ .Finding.MatchReason }} {{ .Finding.RuleExplanation }} {{ .Finding.RuleRemediation }} {{ .Finding.Snippet }} {{ .Finding.Context }} {{ .Finding.ContextRedacted }} {{ .Finding.MatchedText }} {{ .Finding.MatchedTextRedacted }} {{ .Finding.PotentialAccount }} {{ .DiffStatus }} {{ joinTags .ChangedFields " " }} {{ joinList .Finding.MatchedRuleIDs " " }} {{ joinList .Finding.MatchedSignalTypes " " }} {{ joinList .Finding.ConfidenceReasons " " }}"
+              data-severity="{{ .Finding.Severity }}"
+              data-category="{{ .Finding.Category }}"
+              data-confidence="{{ .Finding.Confidence }}"
+              data-source="{{ normalizedSource .Finding.Source }}"
+              data-host="{{ .Finding.Host }}"
+              data-share="{{ .Finding.Share }}"
+              data-signal="{{ primarySignal .Finding }}"
+              data-correlated="{{ if isCorrelated .Finding }}true{{ else }}false{{ end }}"
+              data-actionable="{{ if isActionable .Finding }}true{{ else }}false{{ end }}"
+              data-triage="{{ .Finding.TriageClass }}">
 	            <header class="finding-card-header">
 	              <div class="finding-title">
 	                <div class="badge-row" style="margin-top:0;">
@@ -1025,6 +1171,7 @@
 	                  <span class="badge {{ priorityClass .Finding.Priority }}" title="{{ .Finding.PriorityReason }}">{{ priorityLabel .Finding.Priority }}</span>
 	                  {{- if primarySignal .Finding }}<span class="badge {{ signalClass (primarySignal .Finding) }}">signal {{ signalLabel (primarySignal .Finding) }}</span>{{ end -}}
 	                  {{- if .Finding.Confidence }}<span class="badge {{ confidenceClass .Finding.Confidence }}" title="score {{ .Finding.ConfidenceScore }}">confidence {{ .Finding.Confidence }}</span>{{ end -}}
+	                  {{- if .Finding.TriageClass }}<span class="badge {{ triageClass .Finding.TriageClass }}">{{ triageLabel .Finding.TriageClass }}</span>{{ end -}}
 	                  {{- if .DiffStatus }}<span class="badge {{ diffClass .DiffStatus }}">{{ diffLabel .DiffStatus }}</span>{{ end -}}
 	                  {{- if .Finding.Source }}<span class="badge {{ sourceClass .Finding.Source }}">source {{ .Finding.Source }}</span>{{ end -}}
 	                  {{- if .Finding.FromSYSVOL }}<span class="badge ad-share">SYSVOL</span>{{ end -}}
@@ -1090,10 +1237,16 @@
 	                    <div class="finding-text">{{ .Finding.DFSLinkPath }}</div>
 	                  </div>
 	                  {{- end }}
-	                  {{- if isHeuristicHit .Finding }}
+	                  {{- if eq .Finding.TriageClass "config-only" }}
+	                  <div class="finding-note heuristic">Config artifact only. This item identifies a configuration-related file without actionable evidence such as real secrets, validated connection details, or crypto material.</div>
+	                  {{- else if eq .Finding.TriageClass "weak-review" }}
+	                  <div class="finding-note heuristic">Weak review signal. The file may warrant targeted review, but the evidence is not actionable on its own.</div>
+	                  {{- else if isHeuristicHit .Finding }}
 	                  <div class="finding-note heuristic">Heuristic file hit. The filename, path, or extension matched a rule. File content was not necessarily matched.</div>
 	                  {{- else if eq (primarySignal .Finding) "content" }}
 	                  <div class="finding-note">Content evidence was captured from the file body{{ if .Finding.LineNumber }} at line {{ .Finding.LineNumber }}{{ end }}.</div>
+	                  {{- else if eq (primarySignal .Finding) "validated" }}
+	                  <div class="finding-note">Validated evidence was derived from structured content or artifact parsing.</div>
 	                  {{- end }}
 	                </div>
 	              </section>
@@ -1246,30 +1399,112 @@
     (function () {
       var input = document.getElementById("quickFilter");
       if (!input) return;
+      var severityFilter = document.getElementById("severityFilter");
+      var categoryFilter = document.getElementById("categoryFilter");
+      var confidenceFilter = document.getElementById("confidenceFilter");
+      var sourceFilter = document.getElementById("sourceFilter");
+      var signalFilter = document.getElementById("signalFilter");
+      var scopeFilter = document.getElementById("scopeFilter");
+      var correlatedOnly = document.getElementById("correlatedOnly");
+      var hideConfigOnly = document.getElementById("hideConfigOnly");
+      var hideLowConfidence = document.getElementById("hideLowConfidence");
+      var hideNonActionable = document.getElementById("hideNonActionable");
+      var resetFilters = document.getElementById("resetFilters");
+      var status = document.getElementById("filterStatus");
+
+      function normalize(value) {
+        return (value || "").trim().toLowerCase();
+      }
 
       function applyFilter() {
         var query = input.value.trim().toLowerCase();
-	        var groups = document.querySelectorAll("details.finding-group");
+        var severity = normalize(severityFilter && severityFilter.value);
+        var category = normalize(categoryFilter && categoryFilter.value);
+        var confidence = normalize(confidenceFilter && confidenceFilter.value);
+        var source = normalize(sourceFilter && sourceFilter.value);
+        var signal = normalize(signalFilter && signalFilter.value);
+        var scope = normalize(scopeFilter && scopeFilter.value);
+        var onlyCorrelated = correlatedOnly && correlatedOnly.checked;
+        var shouldHideConfigOnly = hideConfigOnly && hideConfigOnly.checked;
+        var shouldHideLowConfidence = hideLowConfidence && hideLowConfidence.checked;
+        var shouldHideNonActionable = hideNonActionable && hideNonActionable.checked;
+        var groups = document.querySelectorAll("details.finding-group");
+        var visibleGroups = 0;
+        var visibleCards = 0;
+        var activeFilter = query || severity || category || confidence || source || signal || scope || onlyCorrelated || shouldHideConfigOnly || shouldHideLowConfidence || shouldHideNonActionable;
 
-	        groups.forEach(function (group) {
-	          var cards = group.querySelectorAll(".finding-card");
-	          var visible = 0;
+        groups.forEach(function (group) {
+          var cards = group.querySelectorAll(".finding-card");
+          var visible = 0;
 
-	          cards.forEach(function (card) {
-	            var haystack = (card.getAttribute("data-search") || "").toLowerCase();
-	            var match = query === "" || haystack.indexOf(query) !== -1;
-	            card.classList.toggle("is-hidden", !match);
-	            if (match) visible++;
-	          });
+          cards.forEach(function (card) {
+            var haystack = normalize(card.getAttribute("data-search"));
+            var matchesText = query === "" || haystack.indexOf(query) !== -1;
+            var matchesSeverity = severity === "" || normalize(card.getAttribute("data-severity")) === severity;
+            var matchesCategory = category === "" || normalize(card.getAttribute("data-category")) === category;
+            var matchesConfidence = confidence === "" || normalize(card.getAttribute("data-confidence")) === confidence;
+            var matchesSource = source === "" || normalize(card.getAttribute("data-source")) === source;
+            var matchesSignal = signal === "" || normalize(card.getAttribute("data-signal")) === signal;
+            var scopeText = normalize((card.getAttribute("data-host") || "") + " " + (card.getAttribute("data-share") || ""));
+            var matchesScope = scope === "" || scopeText.indexOf(scope) !== -1;
+            var matchesCorrelated = !onlyCorrelated || card.getAttribute("data-correlated") === "true";
+            var matchesConfigOnly = !shouldHideConfigOnly || normalize(card.getAttribute("data-triage")) !== "config-only";
+            var matchesLowConfidence = !shouldHideLowConfidence || normalize(card.getAttribute("data-confidence")) === "high";
+            var matchesActionable = !shouldHideNonActionable || card.getAttribute("data-actionable") === "true";
+            var match = matchesText && matchesSeverity && matchesCategory && matchesConfidence && matchesSource && matchesSignal && matchesScope && matchesCorrelated && matchesConfigOnly && matchesLowConfidence && matchesActionable;
+
+            card.classList.toggle("is-hidden", !match);
+            if (match) visible++;
+          });
+
+          var visibleCount = group.querySelector(".group-visible-count");
+          if (visibleCount) {
+            visibleCount.textContent = String(visible);
+          }
 
           group.classList.toggle("is-hidden", visible === 0);
-          if (query !== "" && visible > 0) {
+          if (visible > 0) {
+            visibleGroups++;
+            visibleCards += visible;
+          }
+          if (activeFilter && visible > 0) {
             group.open = true;
           }
         });
+
+        if (status) {
+          if (!activeFilter) {
+            status.textContent = "Showing all findings";
+          } else {
+            status.textContent = "Showing " + visibleCards + " findings across " + visibleGroups + " visible groups";
+          }
+        }
       }
 
       input.addEventListener("input", applyFilter);
+      [severityFilter, categoryFilter, confidenceFilter, sourceFilter, signalFilter].forEach(function (el) {
+        if (el) el.addEventListener("change", applyFilter);
+      });
+      if (scopeFilter) scopeFilter.addEventListener("input", applyFilter);
+      [correlatedOnly, hideConfigOnly, hideLowConfidence, hideNonActionable].forEach(function (el) {
+        if (el) el.addEventListener("change", applyFilter);
+      });
+      if (resetFilters) {
+        resetFilters.addEventListener("click", function () {
+          input.value = "";
+          if (severityFilter) severityFilter.value = "";
+          if (categoryFilter) categoryFilter.value = "";
+          if (confidenceFilter) confidenceFilter.value = "";
+          if (sourceFilter) sourceFilter.value = "";
+          if (signalFilter) signalFilter.value = "";
+          if (scopeFilter) scopeFilter.value = "";
+          if (correlatedOnly) correlatedOnly.checked = false;
+          if (hideConfigOnly) hideConfigOnly.checked = false;
+          if (hideLowConfidence) hideLowConfidence.checked = false;
+          if (hideNonActionable) hideNonActionable.checked = false;
+          applyFilter();
+        });
+      }
     }());
   </script>
 </body>

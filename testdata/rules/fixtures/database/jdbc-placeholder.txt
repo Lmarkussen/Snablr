@@ -1,0 +1,1 @@
+jdbc:sqlserver://<server>;database=<database>;user=<username>;password=<password>

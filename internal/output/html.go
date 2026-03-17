@@ -59,6 +59,13 @@ type severitySummary struct {
 	Count    int
 }
 
+type reportFilterOptions struct {
+	Categories []string
+	Sources    []string
+	Signals    []string
+	Scopes     []string
+}
+
 func NewHTMLWriter(w io.Writer, closer io.Closer) (*HTMLWriter, error) {
 	tmpl, err := template.New("report.html.tmpl").Funcs(template.FuncMap{
 		"joinTags":          strings.Join,
@@ -84,6 +91,11 @@ func NewHTMLWriter(w io.Writer, closer io.Closer) (*HTMLWriter, error) {
 		"isHeuristicHit":    isHeuristicHit,
 		"formatScanTime":    formatScanTime,
 		"formatDuration":    formatDuration,
+		"triageClass":       triageClass,
+		"triageLabel":       triageLabel,
+		"isActionable":      isActionable,
+		"isCorrelated":      isCorrelated,
+		"normalizedSource":  normalizedSourceLabel,
 		"slug":              slug,
 	}).ParseFS(reportTemplates, "templates/report.html.tmpl")
 	if err != nil {
@@ -154,6 +166,7 @@ func (h *HTMLWriter) Close() error {
 	categoryGroups := groupFindingsByCategory(h.findings, categorySummaries, statuses)
 	hostSummaries := buildHostSummaries(h.findings)
 	severitySummaries := buildSeveritySummaries(h.findings)
+	filterOptions := buildFilterOptions(h.findings)
 	summary := h.summary.Snapshot()
 
 	data := struct {
@@ -167,6 +180,7 @@ func (h *HTMLWriter) Close() error {
 		ChangedFindings   []diff.ChangedFinding
 		RemovedFindings   []scanner.Finding
 		CategoryGroups    []htmlCategoryGroup
+		FilterOptions     reportFilterOptions
 	}{
 		Version:           version.Short(),
 		Summary:           summary,
@@ -178,6 +192,7 @@ func (h *HTMLWriter) Close() error {
 		ChangedFindings:   changedFindings(diffResult),
 		RemovedFindings:   removedFindings(diffResult),
 		CategoryGroups:    categoryGroups,
+		FilterOptions:     filterOptions,
 	}
 
 	if err := h.template.ExecuteTemplate(h.w, "report.html.tmpl", data); err != nil {
@@ -237,6 +252,8 @@ func confidenceClass(value string) string {
 
 func signalLabel(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "validated":
+		return "validated"
 	case "content":
 		return "content"
 	case "filename":
@@ -256,6 +273,8 @@ func signalLabel(value string) string {
 
 func signalClass(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "validated":
+		return "signal-validated"
 	case "content":
 		return "signal-content"
 	case "filename":
@@ -341,6 +360,48 @@ func isHeuristicHit(f scanner.Finding) bool {
 	}
 }
 
+func triageClass(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "actionable":
+		return "triage-actionable"
+	case "config-only":
+		return "triage-config"
+	case "weak-review":
+		return "triage-weak"
+	default:
+		return "triage-unknown"
+	}
+}
+
+func triageLabel(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "actionable":
+		return "actionable"
+	case "config-only":
+		return "config only"
+	case "weak-review":
+		return "weak review"
+	default:
+		return valueOrDash(value)
+	}
+}
+
+func isActionable(f scanner.Finding) bool {
+	return f.Actionable
+}
+
+func isCorrelated(f scanner.Finding) bool {
+	return f.Correlated
+}
+
+func normalizedSourceLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown"
+	}
+	return strings.ToLower(value)
+}
+
 func truncatePath(value string) string {
 	if len(value) <= 72 {
 		return value
@@ -383,6 +444,50 @@ func formatDuration(start, end time.Time) string {
 	}
 
 	return strings.Join(parts, " ")
+}
+
+func buildFilterOptions(findings []scanner.Finding) reportFilterOptions {
+	categories := make(map[string]struct{})
+	sources := make(map[string]struct{})
+	signals := make(map[string]struct{})
+	scopes := make(map[string]struct{})
+
+	for _, finding := range findings {
+		if value := strings.TrimSpace(finding.Category); value != "" {
+			categories[value] = struct{}{}
+		}
+		sources[normalizedSourceLabel(finding.Source)] = struct{}{}
+		if value := strings.TrimSpace(primarySignal(finding)); value != "" {
+			signals[strings.ToLower(value)] = struct{}{}
+		}
+		if value := strings.TrimSpace(finding.Host); value != "" {
+			scopes[value] = struct{}{}
+		}
+		if value := strings.TrimSpace(finding.Share); value != "" {
+			scopes[value] = struct{}{}
+		}
+	}
+
+	return reportFilterOptions{
+		Categories: sortedMapKeys(categories),
+		Sources:    sortedMapKeys(sources),
+		Signals:    sortedMapKeys(signals),
+		Scopes:     sortedMapKeys(scopes),
+	}
+}
+
+func sortedMapKeys(values map[string]struct{}) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i]) < strings.ToLower(out[j])
+	})
+	return out
 }
 
 func buildSeveritySummaries(findings []scanner.Finding) []severitySummary {

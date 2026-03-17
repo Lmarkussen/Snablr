@@ -441,6 +441,12 @@ func remediationGuidanceForCategory(category string) string {
 		return "Remove unnecessary sensitive exports from shared locations, apply retention controls, and restrict share permissions to only required users."
 	case "infrastructure":
 		return "Move infrastructure secrets into managed storage, review exposed pipeline or cloud configuration files, and restrict access to operational shares."
+	case "database-access":
+		return "Remove embedded database credentials from shared files, rotate exposed accounts or passwords, and store connection material in approved secret-management paths."
+	case "database-artifacts":
+		return "Review whether database artifacts belong on the share, relocate or remove unnecessary copies, and restrict access to retained database files."
+	case "database-infrastructure":
+		return "Review database client and network configuration artifacts, confirm they are expected, and restrict access to files that expose server or DSN details."
 	case "active-directory":
 		return "Review AD policy and administration files for embedded secrets, remove exposed sensitive values, and tighten share permissions."
 	case "scripts":

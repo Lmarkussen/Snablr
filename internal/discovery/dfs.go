@@ -28,23 +28,15 @@ func DiscoverDFS(ctx context.Context, opts LDAPOptions, logger Logger) ([]DFSTar
 		return nil, fmt.Errorf("unable to determine a domain controller for dfs discovery")
 	}
 
-	conn, err := dialLDAP(domainContext.DomainController, opts.Timeout)
+	session, err := connectLDAPSession(opts, &domainContext, logger)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer session.Conn.Close()
 
-	rootDSE, err := preBindRootDSE(conn, &domainContext, logger)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := bindLDAP(conn, opts, domainContext.DomainName, logger); err != nil {
-		return nil, err
-	}
-
+	rootDSE := session.RootDSE
 	if rootDSE.DefaultNamingContext == "" && rootDSE.RootNamingContext == "" {
-		rootDSE, err = queryRootDSE(conn)
+		rootDSE, err = queryRootDSE(session.Conn)
 		if err != nil {
 			return nil, err
 		}
@@ -62,10 +54,10 @@ func DiscoverDFS(ctx context.Context, opts LDAPOptions, logger Logger) ([]DFSTar
 	}
 
 	if logger != nil {
-		logger.Infof("dfs discovery: searching base DN %s", baseDN)
+		logger.Infof("dfs discovery: searching base DN %s using %s", baseDN, session.AuthMethod)
 	}
 
-	return queryDFSTargets(conn, baseDN, opts.PageSize, logger)
+	return queryDFSTargets(session.Conn, baseDN, opts.PageSize, logger)
 }
 
 func queryDFSTargets(conn *ldap.Conn, baseDN string, pageSize uint32, logger Logger) ([]DFSTarget, error) {

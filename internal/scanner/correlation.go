@@ -209,7 +209,7 @@ func allowsContextBoosts(group []Finding) bool {
 	if groupHasStrongEvidence(group) {
 		switch category {
 		case "database-artifacts":
-			return false
+			return groupHasTag(group, "db:type:dump-export")
 		default:
 			return true
 		}
@@ -220,6 +220,21 @@ func allowsContextBoosts(group []Finding) bool {
 	default:
 		return true
 	}
+}
+
+func groupHasTag(group []Finding, tag string) bool {
+	tag = strings.TrimSpace(strings.ToLower(tag))
+	if tag == "" {
+		return false
+	}
+	for _, finding := range group {
+		for _, candidate := range finding.Tags {
+			if strings.EqualFold(strings.TrimSpace(candidate), tag) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func groupHasStrongEvidence(group []Finding) bool {

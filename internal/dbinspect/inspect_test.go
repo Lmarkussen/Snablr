@@ -40,6 +40,11 @@ func TestInspectorFixtures(t *testing.T) {
 			expectIDs: []string{"dbinspect.artifact.database_backup"},
 		},
 		{
+			name:      "validated sql dump structure",
+			fixture:   "mysql-dump.sql",
+			expectIDs: []string{"dbinspect.artifact.sql_dump_header", "dbinspect.artifact.sql_dump_structure"},
+		},
+		{
 			name:      "benign database notes stay quiet",
 			fixture:   "benign-database-notes.txt",
 			expectIDs: nil,
@@ -52,6 +57,11 @@ func TestInspectorFixtures(t *testing.T) {
 		{
 			name:      "generic bak file stays quiet",
 			fixture:   "meeting-notes.bak",
+			expectIDs: nil,
+		},
+		{
+			name:      "migration sql stays quiet",
+			fixture:   "migration-script.sql",
 			expectIDs: nil,
 		},
 	}

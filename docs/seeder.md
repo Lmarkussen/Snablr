@@ -236,6 +236,9 @@ Each manifest entry includes:
 - category
 - format
 - intended-as classification
+- expected triage class
+- expected confidence
+- expected correlated state
 - expected signal types
 - expected tags
 - expected rule themes
@@ -265,6 +268,18 @@ Verification summarizes:
 - unexpected findings
 - coverage by category
 - coverage by signal type
+- seeded class behavior across:
+  - informational / config-only
+  - weak review
+  - actionable
+  - correlated / high-confidence
+
+It also calls out:
+
+- config-only items that were safely suppressed or downgraded
+- actionable items that were promoted correctly
+- correlated high-confidence items that surfaced as intended
+- class mismatches where a seeded item was missed, under-promoted, or surfaced too weakly
 
 Signal-type coverage uses the manifest’s expected signal types and checks whether the findings for that seeded path actually hit those surfaces.
 
@@ -387,9 +402,26 @@ That keeps cleanup safe even when seeding multiple hosts and shares.
 
 1. Generate a deterministic dataset with `snablr-seed`
 2. Run `snablr scan` against the same targets and shares
-3. Review the HTML and JSON reports for triage quality
-4. Run `snablr-seed verify` against the scan results
-5. Tune rules, planning, and reporting based on misses or unexpected findings
+3. Pass `--seed-manifest` during the scan so the HTML and JSON reports include the seeded validation summary directly
+4. Review the HTML and JSON reports for triage quality
+5. Run `snablr-seed verify` against the scan results for the full console-oriented verifier output
+6. Tune rules, planning, and reporting based on misses or unexpected findings
+
+Recommended scan pattern:
+
+```bash
+snablr scan \
+  --targets 172.16.0.90 \
+  --user 'DOMAIN\\user' \
+  --pass 'PLACEHOLDER' \
+  --path SnablrLab \
+  --seed-manifest seed-large.json \
+  --output-format all \
+  --json-out results.json \
+  --html-out report.html
+```
+
+Using `--path` with the seed prefix keeps seeded regression runs isolated from older lab content on the same server.
 
 ## Notes
 

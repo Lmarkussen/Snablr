@@ -78,7 +78,7 @@ rules:
     name: Database And Backup Extensions
     description: Prioritize database export, backup, and lightweight database files for remediation review.
     type: extension
-    pattern: '^(\.accdb|\.bak|\.db|\.dmp|\.dump|\.mdb|\.sql|\.sqlite|\.sqlite3)$'
+    pattern: '^(\.accdb|\.bak|\.db|\.dmp|\.dump|\.mdb|\.sqlite|\.sqlite3)$'
     case_sensitive: false
     severity: high
     tags: [database, backups, extensions]

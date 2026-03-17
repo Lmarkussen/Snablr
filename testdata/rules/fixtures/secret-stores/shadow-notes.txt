@@ -1,0 +1,2 @@
+Shadow migration notes for the synthetic lab only.
+No credential store artifact is present here.

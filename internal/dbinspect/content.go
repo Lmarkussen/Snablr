@@ -358,12 +358,16 @@ func inspectDBURL(candidate string, lineNumber int) (stringObservation, bool) {
 
 func matchFromObservation(observation stringObservation, raw string) Match {
 	raw = strings.TrimSpace(raw)
+	signalType := strings.TrimSpace(observation.signalType)
+	if signalType == "" {
+		signalType = "validated"
+	}
 	return Match{
 		ID:                  observation.id,
 		Name:                observation.name,
 		Description:         observation.description,
 		RuleType:            "content",
-		SignalType:          "validated",
+		SignalType:          signalType,
 		Severity:            observation.severity,
 		Confidence:          observation.confidence,
 		Category:            observation.category,

@@ -42,6 +42,7 @@ type stringObservation struct {
 	category    string
 	severity    string
 	confidence  string
+	signalType  string
 	id          string
 	name        string
 	description string

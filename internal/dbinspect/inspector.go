@@ -13,7 +13,7 @@ func (Inspector) NeedsContent(candidate Candidate) bool {
 		return true
 	}
 	switch ext {
-	case ".dsn", ".udl", ".ora":
+	case ".dsn", ".sql", ".udl", ".ora":
 		return true
 	}
 	if _, ok := textLikeExtensions[ext]; !ok {
@@ -65,6 +65,7 @@ func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
 
 	matches = append(matches, inspectOracleTNS(candidate, text, seen)...)
 	matches = append(matches, inspectINISections(text, seen)...)
+	matches = append(matches, inspectSQLDump(candidate, text, seen)...)
 
 	lines := strings.Split(text, "\n")
 	for idx, rawLine := range lines {

@@ -11,13 +11,16 @@ Snablr is intended for authorized defensive security work only. Run it only agai
 ## Feature Overview
 
 - Domain-aware target discovery with LDAP and optional DFS discovery
+- Automatic LDAP-to-LDAPS fallback when simple bind hits common signing requirements
 - SMB share enumeration, metadata collection, and recursive file walking
 - YAML rule packs for filename, extension, and content matching
+- Built-in database artifact and connection-material inspection for common enterprise formats
 - Rule validation, fixture-based testing, and custom rule overlays
 - Prioritized scan planning for high-value targets, shares, and paths
 - Concurrent file scanning with adaptive worker scaling
 - Checkpoint and resume support for longer scans
 - Console, JSON, HTML, CSV, and Markdown output formats
+- Structured HTML report filtering, confidence breakdowns, and seeded validation summaries
 - Baseline and diff mode for repeated scans and change tracking
 - Synthetic lab seeding and manifest-based verification with `snablr-seed`
 
@@ -340,6 +343,31 @@ Or compare two existing JSON reports directly:
 snablr diff --old previous-results.json --new results.json
 ```
 
+### Seed, Scan, And Verify
+
+Use this when you want an end-to-end lab validation loop with synthetic content.
+
+```bash
+snablr-seed \
+  --targets 172.16.0.90 \
+  --user USER \
+  --pass PASS \
+  --seed-prefix SnablrLab \
+  --manifest-out seed-manifest.json
+
+snablr scan \
+  --targets 172.16.0.90 \
+  --user USER \
+  --pass PASS \
+  --path SnablrLab \
+  --seed-manifest seed-manifest.json \
+  --output-format all \
+  --json-out results.json \
+  --html-out report.html
+
+snablr-seed verify --manifest seed-manifest.json --results results.json
+```
+
 ## How LDAP Discovery Works
 
 When no manual targets are supplied, Snablr can:
@@ -347,8 +375,10 @@ When no manual targets are supplied, Snablr can:
 1. detect the domain from environment variables, hostname data, or resolver configuration
 2. find a domain controller through DNS SRV lookups
 3. query LDAP RootDSE for the default naming context
-4. enumerate computer objects from that base DN
-5. merge and deduplicate those discovered hosts into the normal target pipeline
+4. attempt LDAP simple bind with the configured credentials
+5. automatically retry over LDAPS if the server requires stronger authentication or signing
+6. enumerate computer objects from that base DN
+7. merge and deduplicate those discovered hosts into the normal target pipeline
 
 You can override discovery with:
 
@@ -421,15 +451,20 @@ What to look at first:
    Shows where the bulk of findings live
 4. grouped findings
    Findings are grouped by category, then ordered by severity for practical review
+5. seeded validation summary, when `--seed-manifest` is provided
+   Shows expected versus observed behavior for seeded lab content
 
 How to interpret a finding row:
 
 - severity and confidence badges show urgency and likely signal quality
 - host/share/file path identify where the finding came from
 - source badges highlight LDAP, DFS, SYSVOL, NETLOGON, and planner priority context
+- confidence breakdown explains content strength, value quality, correlation, and path/context contribution
 - match snippet shows the evidence that triggered the rule
 - rule explanation tells you why the rule exists
 - remediation guidance helps you turn the finding into defensive follow-up
+
+The HTML report also includes structured client-side filters that work together with the quick text search. Operators can filter by severity, category, confidence, source, host/share, signal type, correlated findings, actionable evidence, and low-value config-only findings.
 
 There is no screenshot committed yet, so the report sections above are described directly in the docs.
 

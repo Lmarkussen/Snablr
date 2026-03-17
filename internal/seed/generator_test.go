@@ -218,3 +218,135 @@ func TestGenerateDatabaseSeedPackIncludesMixedExpectedClasses(t *testing.T) {
 		t.Fatalf("expected correlated high-confidence database samples, got %+v / %+v", detectionClasses, triageClasses)
 	}
 }
+
+func TestGenerateSecretStoreSeedPackIncludesActionableArtifacts(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 12,
+		MaxFiles:         240,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260316,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	foundNTDS := false
+	foundShadow := false
+	foundSystem := false
+	foundSecurity := false
+	foundNTDSBackup := false
+	foundHiveBackup := false
+	foundDecoy := false
+
+	for _, file := range files {
+		if file.Category != "secret-stores" {
+			continue
+		}
+		name := strings.ToLower(file.Filename)
+		switch name {
+		case "ntds.dit":
+			if file.ExpectedClass == seedClassActionable && file.ExpectedTriageClass == seedTriageActionable {
+				foundNTDS = true
+			}
+		case "ntds.dit.bak":
+			if file.ExpectedClass == seedClassActionable && file.ExpectedTriageClass == seedTriageActionable {
+				foundNTDSBackup = true
+			}
+		case "shadow":
+			if file.ExpectedClass == seedClassActionable && file.ExpectedTriageClass == seedTriageActionable {
+				foundShadow = true
+			}
+		case "system":
+			if file.ExpectedClass == seedClassActionable && file.ExpectedTriageClass == seedTriageActionable {
+				foundSystem = true
+			}
+		case "security":
+			if file.ExpectedClass == seedClassActionable && file.ExpectedTriageClass == seedTriageActionable {
+				foundSecurity = true
+			}
+		case "system.bak":
+			if file.ExpectedClass == seedClassActionable && file.ExpectedTriageClass == seedTriageActionable {
+				foundHiveBackup = true
+			}
+			if file.IntendedAs == "filler/noise" {
+				foundDecoy = true
+			}
+		case "security.old":
+			if file.ExpectedClass == seedClassActionable && file.ExpectedTriageClass == seedTriageActionable {
+				foundHiveBackup = true
+			}
+		case "shadow-notes.txt":
+			if file.IntendedAs == "filler/noise" {
+				foundDecoy = true
+			}
+		case "system.txt":
+			if file.IntendedAs == "filler/noise" {
+				foundDecoy = true
+			}
+		}
+	}
+
+	if !foundNTDS {
+		t.Fatal("expected secret-store seed pack to include actionable NTDS.DIT artifact")
+	}
+	if !foundShadow {
+		t.Fatal("expected secret-store seed pack to include actionable shadow artifact")
+	}
+	if !foundSystem {
+		t.Fatal("expected secret-store seed pack to include actionable SYSTEM hive artifact")
+	}
+	if !foundSecurity {
+		t.Fatal("expected secret-store seed pack to include actionable SECURITY hive artifact")
+	}
+	if !foundNTDSBackup {
+		t.Fatal("expected secret-store seed pack to include actionable NTDS.DIT.bak artifact")
+	}
+	if !foundHiveBackup {
+		t.Fatal("expected secret-store seed pack to include actionable hive backup artifact")
+	}
+	if !foundDecoy {
+		t.Fatal("expected secret-store seed pack to include benign decoys")
+	}
+}
+
+func TestGenerateADCorrelationSeedPackIncludesCorrelatedAnchor(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 12,
+		MaxFiles:         320,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260316,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	foundCorrelatedNTDS := false
+	foundSupportingSystem := false
+
+	for _, file := range files {
+		if file.Category != "ad-correlation" {
+			continue
+		}
+		switch strings.ToLower(file.Filename) {
+		case "ntds.dit":
+			if file.ExpectedClass == seedClassCorrelatedHighConfidence && file.ExpectedCorrelated && file.ExpectedConfidence == "high" {
+				foundCorrelatedNTDS = true
+			}
+		case "system":
+			if file.ExpectedClass == seedClassActionable && file.ExpectedTriageClass == seedTriageActionable {
+				foundSupportingSystem = true
+			}
+		}
+	}
+
+	if !foundCorrelatedNTDS {
+		t.Fatal("expected ad-correlation seed pack to include correlated NTDS.DIT anchor")
+	}
+	if !foundSupportingSystem {
+		t.Fatal("expected ad-correlation seed pack to include supporting SYSTEM artifact")
+	}
+}

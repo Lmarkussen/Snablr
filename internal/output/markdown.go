@@ -67,19 +67,20 @@ func (m *MarkdownWriter) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	summary := m.summary.Snapshot()
-	categorySummaries := buildCategorySummaries(m.findings)
-	sort.Slice(m.findings, func(i, j int) bool {
-		left := severityRank(m.findings[i].Severity)
-		right := severityRank(m.findings[j].Severity)
+	augmented := augmentFindingsForReporting(m.findings)
+	summary := adjustedSummarySnapshot(m.summary.Snapshot(), m.findings, augmented)
+	categorySummaries := buildCategorySummaries(augmented)
+	sort.Slice(augmented, func(i, j int) bool {
+		left := severityRank(augmented[i].Severity)
+		right := severityRank(augmented[j].Severity)
 		if left == right {
-			if m.findings[i].Host == m.findings[j].Host {
-				if m.findings[i].Share == m.findings[j].Share {
-					return m.findings[i].FilePath < m.findings[j].FilePath
+			if augmented[i].Host == augmented[j].Host {
+				if augmented[i].Share == augmented[j].Share {
+					return augmented[i].FilePath < augmented[j].FilePath
 				}
-				return m.findings[i].Share < m.findings[j].Share
+				return augmented[i].Share < augmented[j].Share
 			}
-			return m.findings[i].Host < m.findings[j].Host
+			return augmented[i].Host < augmented[j].Host
 		}
 		return left > right
 	})
@@ -129,7 +130,7 @@ func (m *MarkdownWriter) Close() error {
 		}
 	}
 
-	if len(m.findings) > 0 {
+	if len(augmented) > 0 {
 		if _, err := fmt.Fprintln(m.w, "\n## Findings"); err != nil {
 			return err
 		}
@@ -139,7 +140,7 @@ func (m *MarkdownWriter) Close() error {
 		if _, err := fmt.Fprintln(m.w, "| --- | --- | --- | --- | --- | --- |"); err != nil {
 			return err
 		}
-		for _, finding := range m.findings {
+		for _, finding := range augmented {
 			snippet := firstNonEmpty(finding.Context, finding.Snippet)
 			if snippet == "" {
 				snippet = firstNonEmpty(finding.MatchedText, finding.Match, finding.MatchedTextRedacted)

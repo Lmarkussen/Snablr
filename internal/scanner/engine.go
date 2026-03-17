@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"snablr/internal/dbinspect"
 	"snablr/internal/metrics"
 	"snablr/internal/rules"
 	"snablr/pkg/logx"
@@ -37,6 +38,7 @@ type Engine struct {
 	contentRules     []rules.Rule
 	contentExtHints  map[string]struct{}
 	hasGenericText   bool
+	dbInspector      dbinspect.Inspector
 }
 
 func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx.Logger) *Engine {
@@ -66,6 +68,7 @@ func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx
 		contentRules:     contentRules,
 		contentExtHints:  contentExtHints,
 		hasGenericText:   hasGenericText,
+		dbInspector:      dbinspect.New(),
 	}
 }
 
@@ -93,8 +96,9 @@ func (e *Engine) Evaluate(meta FileMetadata, content []byte) Evaluation {
 
 	evaluation.Findings = append(evaluation.Findings, e.filenameScanner.Scan(e.filenameRules, meta)...)
 	evaluation.Findings = append(evaluation.Findings, e.extensionScanner.Scan(e.extensionRules, meta)...)
+	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, e.dbInspector.InspectMetadata(dbCandidate(meta)))...)
 
-	evaluation.NeedContent = e.shouldReadContent(meta, e.contentRules)
+	evaluation.NeedContent = e.shouldReadContent(meta, e.contentRules) || e.dbInspector.NeedsContent(dbCandidate(meta))
 	if !evaluation.NeedContent || len(content) == 0 {
 		evaluation.Findings = correlateFindings(meta, evaluation.Findings)
 		return evaluation
@@ -106,6 +110,7 @@ func (e *Engine) Evaluate(meta FileMetadata, content []byte) Evaluation {
 	}
 
 	evaluation.Findings = append(evaluation.Findings, e.contentScanner.Scan(e.contentRules, meta, content)...)
+	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, e.dbInspector.InspectContent(dbCandidate(meta), content))...)
 	evaluation.Findings = correlateFindings(meta, evaluation.Findings)
 	return evaluation
 }
@@ -118,7 +123,7 @@ func (e *Engine) NeedsContent(meta FileMetadata) bool {
 	if e.opts.MaxFileSizeBytes > 0 && meta.Size > e.opts.MaxFileSizeBytes {
 		return false
 	}
-	return e.shouldReadContent(meta, e.contentRules)
+	return e.shouldReadContent(meta, e.contentRules) || e.dbInspector.NeedsContent(dbCandidate(meta))
 }
 
 func (e *Engine) shouldReadContent(meta FileMetadata, contentRules []rules.Rule) bool {

@@ -1,0 +1,4 @@
+Database migration notes:
+- review connection handling before deployment
+- do not store passwords in shared files
+- ask the DBA team for the production DSN name if needed

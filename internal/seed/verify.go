@@ -11,12 +11,16 @@ import (
 )
 
 type VerificationFindingSummary struct {
-	RuleID     string
-	RuleName   string
-	Severity   string
-	Category   string
-	SignalType string
-	Tags       []string
+	RuleID      string
+	RuleName    string
+	Severity    string
+	Confidence  string
+	Category    string
+	SignalType  string
+	TriageClass string
+	Actionable  bool
+	Correlated  bool
+	Tags        []string
 }
 
 type VerifiedSeedItem struct {
@@ -38,21 +42,49 @@ type SignalCoverageSummary struct {
 	Missed     int
 }
 
+type ExpectedClassSummary struct {
+	ExpectedClass string `json:"expected_class"`
+	Planted       int    `json:"planted"`
+	Detected      int    `json:"detected"`
+	Missed        int    `json:"missed"`
+	Matched       int    `json:"matched"`
+	Suppressed    int    `json:"suppressed"`
+	Downgraded    int    `json:"downgraded"`
+	Promoted      int    `json:"promoted"`
+	Mismatched    int    `json:"mismatched"`
+}
+
+type ClassVerificationItem struct {
+	Entry               SeedManifestEntry            `json:"entry"`
+	Status              string                       `json:"status"`
+	Reason              string                       `json:"reason,omitempty"`
+	ObservedTriageClass string                       `json:"observed_triage_class,omitempty"`
+	ObservedConfidence  string                       `json:"observed_confidence,omitempty"`
+	ObservedActionable  bool                         `json:"observed_actionable,omitempty"`
+	ObservedCorrelated  bool                         `json:"observed_correlated,omitempty"`
+	Findings            []VerificationFindingSummary `json:"findings,omitempty"`
+}
+
 type VerificationReport struct {
-	ManifestPath       string
-	ResultsPath        string
-	ExpectedItems      int
-	FoundItems         int
-	MissedItems        int
-	FillerItems        int
-	FillerMatchedItems int
-	FillerMissedItems  int
-	UnexpectedFindings int
-	Found              []VerifiedSeedItem
-	Missed             []SeedManifestEntry
-	Unexpected         []scanner.Finding
-	Coverage           []CoverageSummary
-	SignalCoverage     []SignalCoverageSummary
+	ManifestPath         string
+	ResultsPath          string
+	ExpectedItems        int
+	FoundItems           int
+	MissedItems          int
+	FillerItems          int
+	FillerMatchedItems   int
+	FillerMissedItems    int
+	UnexpectedFindings   int
+	Found                []VerifiedSeedItem
+	Missed               []SeedManifestEntry
+	Unexpected           []scanner.Finding
+	Coverage             []CoverageSummary
+	SignalCoverage       []SignalCoverageSummary
+	ClassCoverage        []ExpectedClassSummary  `json:"class_coverage,omitempty"`
+	SuppressedConfigOnly []ClassVerificationItem `json:"suppressed_config_only,omitempty"`
+	PromotedActionable   []ClassVerificationItem `json:"promoted_actionable,omitempty"`
+	PromotedCorrelated   []ClassVerificationItem `json:"promoted_correlated,omitempty"`
+	ClassMismatches      []ClassVerificationItem `json:"class_mismatches,omitempty"`
 }
 
 func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
@@ -66,18 +98,24 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 	}
 
 	result := VerificationReport{
-		ManifestPath:   manifestPath,
-		ResultsPath:    resultsPath,
-		Found:          make([]VerifiedSeedItem, 0),
-		Missed:         make([]SeedManifestEntry, 0),
-		Unexpected:     make([]scanner.Finding, 0),
-		Coverage:       make([]CoverageSummary, 0),
-		SignalCoverage: make([]SignalCoverageSummary, 0),
+		ManifestPath:         manifestPath,
+		ResultsPath:          resultsPath,
+		Found:                make([]VerifiedSeedItem, 0),
+		Missed:               make([]SeedManifestEntry, 0),
+		Unexpected:           make([]scanner.Finding, 0),
+		Coverage:             make([]CoverageSummary, 0),
+		SignalCoverage:       make([]SignalCoverageSummary, 0),
+		ClassCoverage:        make([]ExpectedClassSummary, 0),
+		SuppressedConfigOnly: make([]ClassVerificationItem, 0),
+		PromotedActionable:   make([]ClassVerificationItem, 0),
+		PromotedCorrelated:   make([]ClassVerificationItem, 0),
+		ClassMismatches:      make([]ClassVerificationItem, 0),
 	}
 
 	manifestByKey := make(map[string]SeedManifestEntry, len(manifest.Entries))
 	coverage := make(map[string]*CoverageSummary)
 	signalCoverage := make(map[string]*SignalCoverageSummary)
+	classCoverage := make(map[string]*ExpectedClassSummary)
 	for _, entry := range manifest.Entries {
 		key := manifestKey(entry)
 		if key == "" {
@@ -93,6 +131,12 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 			coverage[category] = &CoverageSummary{Category: category}
 		}
 		coverage[category].Expected++
+		if expectedClass := normalizeExpectedClass(entry.ExpectedClass); expectedClass != "" {
+			if _, ok := classCoverage[expectedClass]; !ok {
+				classCoverage[expectedClass] = &ExpectedClassSummary{ExpectedClass: expectedClass}
+			}
+			classCoverage[expectedClass].Planted++
+		}
 		for _, signalType := range entry.ExpectedSignalTypes {
 			normalized := normalizeSignalType(signalType)
 			if normalized == "" {
@@ -124,6 +168,43 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 			}
 			continue
 		}
+		if expectedClass := normalizeExpectedClass(entry.ExpectedClass); expectedClass != "" {
+			item := evaluateExpectedClass(entry, matches)
+			summary := classCoverage[expectedClass]
+			if summary != nil {
+				if len(matches) > 0 {
+					summary.Detected++
+				} else {
+					summary.Missed++
+				}
+				switch item.Status {
+				case "suppressed":
+					summary.Matched++
+					summary.Suppressed++
+					if expectedClass == seedClassConfigOnly {
+						result.SuppressedConfigOnly = append(result.SuppressedConfigOnly, item)
+					}
+				case "downgraded":
+					summary.Matched++
+					summary.Downgraded++
+					if expectedClass == seedClassConfigOnly {
+						result.SuppressedConfigOnly = append(result.SuppressedConfigOnly, item)
+					}
+				case "promoted":
+					summary.Matched++
+					summary.Promoted++
+					switch expectedClass {
+					case seedClassActionable:
+						result.PromotedActionable = append(result.PromotedActionable, item)
+					case seedClassCorrelatedHighConfidence:
+						result.PromotedCorrelated = append(result.PromotedCorrelated, item)
+					}
+				case "mismatched":
+					summary.Mismatched++
+					result.ClassMismatches = append(result.ClassMismatches, item)
+				}
+			}
+		}
 		if len(matches) == 0 {
 			result.Missed = append(result.Missed, entry)
 			coverage[normalizedCategory(entry.Category)].Missed++
@@ -143,12 +224,16 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 		}
 		for _, finding := range matches {
 			item.Findings = append(item.Findings, VerificationFindingSummary{
-				RuleID:     finding.RuleID,
-				RuleName:   finding.RuleName,
-				Severity:   finding.Severity,
-				Category:   finding.Category,
-				SignalType: primaryVerificationSignalType(finding),
-				Tags:       append([]string{}, finding.Tags...),
+				RuleID:      finding.RuleID,
+				RuleName:    finding.RuleName,
+				Severity:    finding.Severity,
+				Confidence:  finding.Confidence,
+				Category:    finding.Category,
+				SignalType:  primaryVerificationSignalType(finding),
+				TriageClass: finding.TriageClass,
+				Actionable:  finding.Actionable,
+				Correlated:  finding.Correlated,
+				Tags:        append([]string{}, finding.Tags...),
 			})
 		}
 		sort.Slice(item.Findings, func(i, j int) bool {
@@ -191,6 +276,9 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 	for _, summary := range signalCoverage {
 		result.SignalCoverage = append(result.SignalCoverage, *summary)
 	}
+	for _, summary := range classCoverage {
+		result.ClassCoverage = append(result.ClassCoverage, *summary)
+	}
 
 	sort.Slice(result.Found, func(i, j int) bool {
 		if result.Found[i].Entry.Category == result.Found[j].Entry.Category {
@@ -227,6 +315,13 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 	sort.Slice(result.SignalCoverage, func(i, j int) bool {
 		return result.SignalCoverage[i].SignalType < result.SignalCoverage[j].SignalType
 	})
+	sort.Slice(result.ClassCoverage, func(i, j int) bool {
+		return result.ClassCoverage[i].ExpectedClass < result.ClassCoverage[j].ExpectedClass
+	})
+	sortClassVerificationItems(result.SuppressedConfigOnly)
+	sortClassVerificationItems(result.PromotedActionable)
+	sortClassVerificationItems(result.PromotedCorrelated)
+	sortClassVerificationItems(result.ClassMismatches)
 
 	result.FoundItems = len(result.Found)
 	result.MissedItems = len(result.Missed)
@@ -255,6 +350,48 @@ func PrintVerificationReport(report VerificationReport) {
 		fmt.Println("\nCoverage by signal type:")
 		for _, signal := range report.SignalCoverage {
 			fmt.Printf("- %s: found %d/%d missed %d\n", signal.SignalType, signal.Found, signal.Expected, signal.Missed)
+		}
+	}
+	if len(report.ClassCoverage) > 0 {
+		fmt.Println("\nSeeded class behavior:")
+		for _, summary := range report.ClassCoverage {
+			fmt.Printf("- %s: planted %d detected %d missed %d matched %d suppressed %d downgraded %d promoted %d mismatched %d\n",
+				summary.ExpectedClass, summary.Planted, summary.Detected, summary.Missed, summary.Matched, summary.Suppressed, summary.Downgraded, summary.Promoted, summary.Mismatched)
+		}
+	}
+	if len(report.SuppressedConfigOnly) > 0 {
+		fmt.Println("\nConfig-only handled safely:")
+		for _, item := range report.SuppressedConfigOnly {
+			fmt.Printf("- [%s] %s/%s/%s", item.Status, item.Entry.Host, item.Entry.Share, item.Entry.Path)
+			if item.ObservedTriageClass != "" || item.ObservedConfidence != "" {
+				fmt.Printf(" observed=%s confidence=%s correlated=%t", valueOrDash(item.ObservedTriageClass), valueOrDash(item.ObservedConfidence), item.ObservedCorrelated)
+			}
+			if item.Reason != "" {
+				fmt.Printf(" reason=%s", item.Reason)
+			}
+			fmt.Println()
+		}
+	}
+	if len(report.PromotedActionable) > 0 {
+		fmt.Println("\nActionable findings promoted:")
+		for _, item := range report.PromotedActionable {
+			fmt.Printf("- %s/%s/%s observed=%s confidence=%s correlated=%t\n",
+				item.Entry.Host, item.Entry.Share, item.Entry.Path, valueOrDash(item.ObservedTriageClass), valueOrDash(item.ObservedConfidence), item.ObservedCorrelated)
+		}
+	}
+	if len(report.PromotedCorrelated) > 0 {
+		fmt.Println("\nCorrelated high-confidence findings promoted:")
+		for _, item := range report.PromotedCorrelated {
+			fmt.Printf("- %s/%s/%s observed=%s confidence=%s correlated=%t\n",
+				item.Entry.Host, item.Entry.Share, item.Entry.Path, valueOrDash(item.ObservedTriageClass), valueOrDash(item.ObservedConfidence), item.ObservedCorrelated)
+		}
+	}
+	if len(report.ClassMismatches) > 0 {
+		fmt.Println("\nClass mismatches:")
+		for _, item := range report.ClassMismatches {
+			fmt.Printf("- [%s] %s/%s/%s observed=%s confidence=%s correlated=%t reason=%s\n",
+				valueOrDash(item.Entry.ExpectedClass), item.Entry.Host, item.Entry.Share, item.Entry.Path,
+				valueOrDash(item.ObservedTriageClass), valueOrDash(item.ObservedConfidence), item.ObservedCorrelated, item.Reason)
 		}
 	}
 
@@ -378,10 +515,224 @@ func isExpectedVerificationEntry(entry SeedManifestEntry) bool {
 	return intendedAs == "" || intendedAs != "filler/noise"
 }
 
+type observedFinding struct {
+	TriageClass string
+	Confidence  string
+	Actionable  bool
+	Correlated  bool
+	Findings    []VerificationFindingSummary
+}
+
+func evaluateExpectedClass(entry SeedManifestEntry, matches []scanner.Finding) ClassVerificationItem {
+	item := ClassVerificationItem{
+		Entry: entry,
+	}
+	expectedClass := normalizeExpectedClass(entry.ExpectedClass)
+	if expectedClass == "" {
+		return item
+	}
+	if len(matches) == 0 {
+		switch expectedClass {
+		case seedClassConfigOnly:
+			item.Status = "suppressed"
+			item.Reason = "no finding surfaced for a config-only seeded artifact"
+		default:
+			item.Status = "mismatched"
+			item.Reason = "no finding surfaced for this seeded artifact"
+		}
+		return item
+	}
+
+	observed := summarizeObservedFindings(matches)
+	item.ObservedTriageClass = observed.TriageClass
+	item.ObservedConfidence = observed.Confidence
+	item.ObservedActionable = observed.Actionable
+	item.ObservedCorrelated = observed.Correlated
+	item.Findings = observed.Findings
+
+	switch expectedClass {
+	case seedClassConfigOnly:
+		if isLowValueObserved(observed) {
+			item.Status = "downgraded"
+			item.Reason = "generic configuration stayed low-visibility"
+			return item
+		}
+		item.Status = "mismatched"
+		item.Reason = "config-only artifact was promoted more strongly than expected"
+	case seedClassWeakReview:
+		if isLowValueObserved(observed) {
+			item.Status = "downgraded"
+			item.Reason = "weak review candidate remained low-visibility"
+			return item
+		}
+		item.Status = "mismatched"
+		item.Reason = "weak review candidate was promoted too aggressively"
+	case seedClassActionable:
+		if matchesExpectedPromotion(observed, entry, false) {
+			item.Status = "promoted"
+			item.Reason = "actionable artifact surfaced clearly"
+			return item
+		}
+		item.Status = "mismatched"
+		item.Reason = "actionable artifact did not surface strongly enough"
+	case seedClassCorrelatedHighConfidence:
+		if matchesExpectedPromotion(observed, entry, true) {
+			item.Status = "promoted"
+			item.Reason = "correlated multi-signal artifact surfaced as intended"
+			return item
+		}
+		item.Status = "mismatched"
+		item.Reason = "correlated high-confidence artifact did not surface strongly enough"
+	default:
+		item.Status = "mismatched"
+		item.Reason = "unsupported expected class"
+	}
+
+	return item
+}
+
+func summarizeObservedFindings(matches []scanner.Finding) observedFinding {
+	bestIdx := 0
+	bestScore := -1
+	summaries := make([]VerificationFindingSummary, 0, len(matches))
+	for idx, finding := range matches {
+		summaries = append(summaries, VerificationFindingSummary{
+			RuleID:      finding.RuleID,
+			RuleName:    finding.RuleName,
+			Severity:    finding.Severity,
+			Confidence:  finding.Confidence,
+			Category:    finding.Category,
+			SignalType:  primaryVerificationSignalType(finding),
+			TriageClass: finding.TriageClass,
+			Actionable:  finding.Actionable,
+			Correlated:  finding.Correlated,
+			Tags:        append([]string{}, finding.Tags...),
+		})
+		score := observedFindingScore(finding)
+		if score > bestScore {
+			bestScore = score
+			bestIdx = idx
+		}
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		if summaries[i].Correlated != summaries[j].Correlated {
+			return summaries[i].Correlated
+		}
+		if confidenceRank(summaries[i].Confidence) != confidenceRank(summaries[j].Confidence) {
+			return confidenceRank(summaries[i].Confidence) > confidenceRank(summaries[j].Confidence)
+		}
+		if severityRank(summaries[i].Severity) != severityRank(summaries[j].Severity) {
+			return severityRank(summaries[i].Severity) > severityRank(summaries[j].Severity)
+		}
+		return summaries[i].RuleID < summaries[j].RuleID
+	})
+
+	best := matches[bestIdx]
+	return observedFinding{
+		TriageClass: strings.TrimSpace(best.TriageClass),
+		Confidence:  strings.TrimSpace(best.Confidence),
+		Actionable:  best.Actionable,
+		Correlated:  best.Correlated,
+		Findings:    summaries,
+	}
+}
+
+func observedFindingScore(finding scanner.Finding) int {
+	score := 0
+	if finding.Correlated {
+		score += 200
+	}
+	if finding.Actionable {
+		score += 100
+	}
+	switch strings.ToLower(strings.TrimSpace(finding.TriageClass)) {
+	case seedTriageActionable:
+		score += 80
+	case seedTriageWeakReview:
+		score += 40
+	case seedTriageConfigOnly:
+		score += 10
+	}
+	score += confidenceRank(finding.Confidence) * 10
+	score += severityRank(finding.Severity)
+	score += len(finding.MatchedRuleIDs)
+	return score
+}
+
+func matchesExpectedPromotion(observed observedFinding, entry SeedManifestEntry, requireCorrelated bool) bool {
+	if !observed.Actionable && !strings.EqualFold(observed.TriageClass, seedTriageActionable) {
+		return false
+	}
+	minConfidence := confidenceRank(entry.ExpectedConfidence)
+	if minConfidence == 0 {
+		minConfidence = confidenceRank("medium")
+	}
+	if confidenceRank(observed.Confidence) < minConfidence {
+		return false
+	}
+	if requireCorrelated || entry.ExpectedCorrelated {
+		return observed.Correlated
+	}
+	return true
+}
+
+func isLowValueObserved(observed observedFinding) bool {
+	switch strings.ToLower(strings.TrimSpace(observed.TriageClass)) {
+	case seedTriageConfigOnly, seedTriageWeakReview:
+		return true
+	}
+	return !observed.Actionable && !observed.Correlated && confidenceRank(observed.Confidence) <= confidenceRank("medium")
+}
+
+func normalizeExpectedClass(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func sortClassVerificationItems(items []ClassVerificationItem) {
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Entry.Category == items[j].Entry.Category {
+			if items[i].Entry.Host == items[j].Entry.Host {
+				if items[i].Entry.Share == items[j].Entry.Share {
+					return items[i].Entry.Path < items[j].Entry.Path
+				}
+				return items[i].Entry.Share < items[j].Entry.Share
+			}
+			return items[i].Entry.Host < items[j].Entry.Host
+		}
+		return items[i].Entry.Category < items[j].Entry.Category
+	})
+}
+
 func valueOrDash(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "-"
 	}
 	return value
+}
+
+func severityRank(value string) int {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func confidenceRank(value string) int {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
 }

@@ -29,6 +29,9 @@ type scanResultFinding struct {
 	ConfidenceScore     int                        `json:"confidence_score,omitempty"`
 	ConfidenceReasons   []string                   `json:"confidence_reasons,omitempty"`
 	Category            string                     `json:"category"`
+	TriageClass         string                     `json:"triage_class,omitempty"`
+	Actionable          bool                       `json:"actionable,omitempty"`
+	Correlated          bool                       `json:"correlated,omitempty"`
 	SignalType          string                     `json:"signal_type,omitempty"`
 	MatchedText         string                     `json:"matched_text,omitempty"`
 	MatchedTextRedacted string                     `json:"matched_text_redacted,omitempty"`
@@ -81,6 +84,9 @@ func LoadJSON(path string) (Report, error) {
 			ConfidenceScore:     finding.ConfidenceScore,
 			ConfidenceReasons:   append([]string{}, finding.ConfidenceReasons...),
 			Category:            finding.Category,
+			TriageClass:         finding.TriageClass,
+			Actionable:          finding.Actionable,
+			Correlated:          finding.Correlated,
 			SignalType:          finding.SignalType,
 			MatchedText:         finding.MatchedText,
 			MatchedTextRedacted: finding.MatchedTextRedacted,

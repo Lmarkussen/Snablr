@@ -150,6 +150,9 @@ type jsonFinding struct {
 	ConfidenceScore     int                        `json:"confidence_score,omitempty"`
 	ConfidenceReasons   []string                   `json:"confidence_reasons,omitempty"`
 	Category            string                     `json:"category"`
+	TriageClass         string                     `json:"triage_class,omitempty"`
+	Actionable          bool                       `json:"actionable,omitempty"`
+	Correlated          bool                       `json:"correlated,omitempty"`
 	SharePriority       int                        `json:"share_priority,omitempty"`
 	SharePriorityReason string                     `json:"share_priority_reason,omitempty"`
 	FromSYSVOL          bool                       `json:"from_sysvol,omitempty"`
@@ -194,6 +197,9 @@ func toJSONFinding(f scanner.Finding, delta diff.FindingDelta) jsonFinding {
 		ConfidenceScore:     f.ConfidenceScore,
 		ConfidenceReasons:   append([]string{}, f.ConfidenceReasons...),
 		Category:            f.Category,
+		TriageClass:         f.TriageClass,
+		Actionable:          f.Actionable,
+		Correlated:          f.Correlated,
 		SharePriority:       f.SharePriority,
 		SharePriorityReason: f.SharePriorityReason,
 		FromSYSVOL:          f.FromSYSVOL,

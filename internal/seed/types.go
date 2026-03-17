@@ -9,6 +9,10 @@ type SeedFile struct {
 	Filename            string
 	Content             []byte
 	IntendedAs          string
+	ExpectedClass       string
+	ExpectedTriageClass string
+	ExpectedConfidence  string
+	ExpectedCorrelated  bool
 	ExpectedSignalTypes []string
 	ExpectedTags        []string
 	ExpectedRuleThemes  []string
@@ -22,6 +26,10 @@ type SeedManifestEntry struct {
 	Category            string   `json:"category"`
 	Format              string   `json:"format"`
 	IntendedAs          string   `json:"intended_as,omitempty"`
+	ExpectedClass       string   `json:"expected_class,omitempty"`
+	ExpectedTriageClass string   `json:"expected_triage_class,omitempty"`
+	ExpectedConfidence  string   `json:"expected_confidence,omitempty"`
+	ExpectedCorrelated  bool     `json:"expected_correlated,omitempty"`
 	ExpectedSignalTypes []string `json:"expected_signal_types,omitempty"`
 	ExpectedTags        []string `json:"expected_tags,omitempty"`
 	ExpectedRuleThemes  []string `json:"expected_rule_themes,omitempty"`
@@ -89,6 +97,10 @@ type templateVariant struct {
 	Filename            string
 	Format              string
 	IntendedAs          string
+	ExpectedClass       string
+	ExpectedTriageClass string
+	ExpectedConfidence  string
+	ExpectedCorrelated  bool
 	ExpectedSignalTypes []string
 	ExpectedTags        []string
 	ExpectedRuleThemes  []string

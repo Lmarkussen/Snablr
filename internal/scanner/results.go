@@ -39,6 +39,9 @@ type Finding struct {
 	ConfidenceScore     int                `json:"confidence_score,omitempty"`
 	ConfidenceReasons   []string           `json:"confidence_reasons,omitempty"`
 	Category            string             `json:"category"`
+	TriageClass         string             `json:"triage_class,omitempty"`
+	Actionable          bool               `json:"actionable,omitempty"`
+	Correlated          bool               `json:"correlated,omitempty"`
 	Priority            int                `json:"priority,omitempty"`
 	PriorityReason      string             `json:"priority_reason,omitempty"`
 	SharePriority       int                `json:"share_priority,omitempty"`
@@ -138,6 +141,9 @@ func newFinding(rule rules.Rule, meta FileMetadata, evidence findingEvidence) Fi
 	}
 
 	signalType := signalTypeForRule(rule.Type)
+	if strings.TrimSpace(evidence.SignalType) != "" {
+		signalType = strings.TrimSpace(evidence.SignalType)
+	}
 	signal := SupportingSignal{
 		SignalType: signalType,
 		RuleID:     rule.ID,
@@ -148,7 +154,7 @@ func newFinding(rule rules.Rule, meta FileMetadata, evidence findingEvidence) Fi
 		Reason:     signalReasonForRule(rule, evidence.Match),
 	}
 
-	return Finding{
+	finding := Finding{
 		RuleID:              rule.ID,
 		RuleName:            rule.Name,
 		Severity:            string(rule.Severity),
@@ -186,6 +192,7 @@ func newFinding(rule rules.Rule, meta FileMetadata, evidence findingEvidence) Fi
 		SupportingSignals:   []SupportingSignal{signal},
 		Tags:                tags,
 	}
+	return applyTriageMetadata(finding)
 }
 
 func matchReason(rule rules.Rule, match string, meta FileMetadata) string {

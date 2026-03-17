@@ -7,6 +7,7 @@
 /report.html
 /findings.csv
 /summary.md
+/test.html
 /output/
 /results/
 /state/
@@ -24,6 +25,19 @@
 *.out
 coverage.txt
 .cache/
+/snablr
+/snablr-seed
+
+# Local evidence and lab logs
+/notes/
+/recon/
+/scans/
+/web/
+/creds/
+/exploit/
+/privesc/
+/loot/
+/screenshots/
 
 # Editor and OS noise
 .DS_Store

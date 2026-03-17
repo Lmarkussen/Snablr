@@ -227,7 +227,7 @@ func (c *ConsoleWriter) Close() error {
 func consoleEvidenceLines(f scanner.Finding) []string {
 	signalType := primarySignalType(f)
 	switch signalType {
-	case "content":
+	case "validated", "content":
 		lines := make([]string, 0, 5)
 		if f.LineNumber > 0 {
 			lines = append(lines, fmt.Sprintf("Line: %d", f.LineNumber))
@@ -236,7 +236,11 @@ func consoleEvidenceLines(f scanner.Finding) []string {
 			lines = append(lines, fmt.Sprintf("Potential account context: %s", f.PotentialAccount))
 		}
 		if value := firstNonEmpty(f.MatchedText, f.MatchedTextRedacted, f.Match); value != "" {
-			lines = append(lines, fmt.Sprintf("Matched text: %s", value))
+			label := "Matched text"
+			if signalType == "validated" {
+				label = "Validated detail"
+			}
+			lines = append(lines, fmt.Sprintf("%s: %s", label, value))
 		}
 		if value := firstNonEmpty(f.Context, f.ContextRedacted, f.Snippet); value != "" {
 			lines = append(lines, "Context:")

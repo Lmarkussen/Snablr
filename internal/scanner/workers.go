@@ -19,6 +19,7 @@ type Evaluator interface {
 }
 
 type Logger interface {
+	Infof(string, ...any)
 	Debugf(string, ...any)
 	Warnf(string, ...any)
 }
@@ -36,11 +37,12 @@ type Result struct {
 }
 
 type WorkerPool struct {
-	processor Evaluator
-	sink      FindingSink
-	logger    Logger
-	recorder  metrics.Recorder
-	workers   int
+	processor      Evaluator
+	sink           FindingSink
+	logger         Logger
+	recorder       metrics.Recorder
+	workers        int
+	validationMode bool
 }
 
 func ResolveWorkerCount(requested int) int {
@@ -62,11 +64,12 @@ func NewWorkerPool(processor Evaluator, sink FindingSink, logger Logger, recorde
 	workers = ResolveWorkerCount(workers)
 
 	return &WorkerPool{
-		processor: processor,
-		sink:      sink,
-		logger:    logger,
-		recorder:  recorder,
-		workers:   workers,
+		processor:      processor,
+		sink:           sink,
+		logger:         logger,
+		recorder:       recorder,
+		workers:        workers,
+		validationMode: evaluatorValidationMode(processor),
 	}
 }
 
@@ -226,11 +229,30 @@ func (p *WorkerPool) logSkip(meta FileMetadata, reason string) {
 	if p.logger == nil {
 		return
 	}
+	if p.validationMode {
+		if reason == "" {
+			p.logger.Infof("validation: skipped %s", meta.FilePath)
+			return
+		}
+		p.logger.Infof("validation: skipped %s reason=%s", meta.FilePath, reason)
+		return
+	}
 	if reason == "" {
 		p.logger.Debugf("skipped %s", meta.FilePath)
 		return
 	}
 	p.logger.Debugf("skipped %s: %s", meta.FilePath, reason)
+}
+
+func evaluatorValidationMode(processor Evaluator) bool {
+	if processor == nil {
+		return false
+	}
+	type validationModeProvider interface {
+		ValidationMode() bool
+	}
+	provider, ok := processor.(validationModeProvider)
+	return ok && provider.ValidationMode()
 }
 
 func (p *WorkerPool) logError(format string, args ...any) {

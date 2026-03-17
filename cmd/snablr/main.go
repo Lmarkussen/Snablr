@@ -96,6 +96,8 @@ func runScan(args []string) error {
 	prioritizeADShares := fs.Bool("prioritize-ad-shares", false, "Prioritize SYSVOL and NETLOGON shares during scan planning")
 	onlyADShares := fs.Bool("only-ad-shares", false, "Only scan SYSVOL and NETLOGON shares")
 	baseline := fs.String("baseline", "", "Path to a previous JSON scan result to compare against")
+	seedManifest := fs.String("seed-manifest", "", "Path to a seeder manifest JSON file for in-report validation summary")
+	validationMode := fs.Bool("validation-mode", false, "Enable diagnostic validation logging and summary output")
 	maxScanTime := fs.String("max-scan-time", "", "Maximum total scan time, for example 30m or 2h")
 	checkpointFile := fs.String("checkpoint-file", "", "Path to the checkpoint JSON file")
 	resume := fs.Bool("resume", false, "Resume from an existing checkpoint file")
@@ -137,6 +139,8 @@ func runScan(args []string) error {
 		PrioritizeADShares:         *prioritizeADShares,
 		OnlyADShares:               *onlyADShares,
 		Baseline:                   *baseline,
+		SeedManifest:               *seedManifest,
+		ValidationMode:             *validationMode,
 		MaxScanTime:                *maxScanTime,
 		CheckpointFile:             *checkpointFile,
 		Resume:                     *resume,

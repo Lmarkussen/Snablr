@@ -9,7 +9,14 @@ import (
 )
 
 type ContentScanner struct {
-	snippetBytes int
+	snippetBytes   int
+	validationMode bool
+	observer       ValidationObserver
+	log            validationLogger
+}
+
+type validationLogger interface {
+	Infof(string, ...any)
 }
 
 type contentMatchDetails struct {
@@ -30,11 +37,16 @@ var (
 	genericPairRegex      = regexp.MustCompile(`(?im)^\s*([A-Za-z][A-Za-z0-9._@-]{1,32})(\s*[:=]\s*)([^\s"';]{4,64})\s*$`)
 )
 
-func NewContentScanner(snippetBytes int) ContentScanner {
+func NewContentScanner(snippetBytes int, validationMode bool, observer ValidationObserver, log validationLogger) ContentScanner {
 	if snippetBytes <= 0 {
 		snippetBytes = 120
 	}
-	return ContentScanner{snippetBytes: snippetBytes}
+	return ContentScanner{
+		snippetBytes:   snippetBytes,
+		validationMode: validationMode,
+		observer:       observer,
+		log:            log,
+	}
 }
 
 func (s ContentScanner) NeedsContent(ruleSet []rules.Rule, meta FileMetadata) bool {
@@ -73,7 +85,20 @@ func (s ContentScanner) Scan(ruleSet []rules.Rule, meta FileMetadata, content []
 		if !ok {
 			continue
 		}
-		if shouldSuppressWeakContentMatch(rule.ID, rule.Category, details.matchedText, details.context) {
+		if suppress, reason := weakContentSuppression(rule.ID, rule.Category, details.matchedText, details.context); suppress {
+			if s.observer != nil {
+				s.observer.RecordSuppressedFinding(SuppressedFinding{
+					Host:     meta.Host,
+					Share:    meta.Share,
+					FilePath: meta.FilePath,
+					RuleID:   rule.ID,
+					Category: rule.Category,
+					Reason:   reason,
+				})
+			}
+			if s.validationMode && s.log != nil {
+				s.log.Infof("validation: suppressed finding for %s rule=%s reason=%s", meta.FilePath, rule.ID, reason)
+			}
 			continue
 		}
 

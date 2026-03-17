@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"snablr/internal/config"
+	"snablr/internal/diff"
 	"snablr/internal/metrics"
 	"snablr/internal/scanner"
 )
@@ -27,6 +28,10 @@ type MetricsAware interface {
 
 type BaselineAware interface {
 	SetBaselineFindings([]scanner.Finding)
+}
+
+type validationManifestAware interface {
+	SetValidationManifest(string)
 }
 
 type summaryCollector struct {
@@ -255,6 +260,30 @@ func (m *MultiWriter) SetBaselineFindings(findings []scanner.Finding) {
 	m.broadcastBaseline(func(aware BaselineAware) { aware.SetBaselineFindings(findings) })
 }
 
+func (m *MultiWriter) SetBaselinePerformance(summary *diff.PerformanceSummary) {
+	m.broadcastBaselinePerformance(func(aware BaselinePerformanceAware) { aware.SetBaselinePerformance(summary) })
+}
+
+func (m *MultiWriter) SetValidationManifest(path string) {
+	m.broadcastValidation(func(aware validationManifestAware) { aware.SetValidationManifest(path) })
+}
+
+func (m *MultiWriter) SetValidationMode(enabled bool) {
+	m.broadcastValidationMode(func(aware ValidationModeAware) { aware.SetValidationMode(enabled) })
+}
+
+func (m *MultiWriter) RecordSuppressedFinding(event scanner.SuppressedFinding) {
+	m.broadcastValidationObserver(func(observer scanner.ValidationObserver) { observer.RecordSuppressedFinding(event) })
+}
+
+func (m *MultiWriter) RecordVisibleFinding(finding scanner.Finding) {
+	m.broadcastValidationObserver(func(observer scanner.ValidationObserver) { observer.RecordVisibleFinding(finding) })
+}
+
+func (m *MultiWriter) RecordDowngradedFinding(finding scanner.Finding) {
+	m.broadcastValidationObserver(func(observer scanner.ValidationObserver) { observer.RecordDowngradedFinding(finding) })
+}
+
 func (m *MultiWriter) broadcast(fn func(scanner.ScanObserver)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -288,6 +317,54 @@ func (m *MultiWriter) broadcastBaseline(fn func(BaselineAware)) {
 			continue
 		}
 		fn(aware)
+	}
+}
+
+func (m *MultiWriter) broadcastBaselinePerformance(fn func(BaselinePerformanceAware)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sink := range m.sinks {
+		aware, ok := sink.(BaselinePerformanceAware)
+		if !ok {
+			continue
+		}
+		fn(aware)
+	}
+}
+
+func (m *MultiWriter) broadcastValidation(fn func(validationManifestAware)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sink := range m.sinks {
+		aware, ok := sink.(validationManifestAware)
+		if !ok {
+			continue
+		}
+		fn(aware)
+	}
+}
+
+func (m *MultiWriter) broadcastValidationMode(fn func(ValidationModeAware)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sink := range m.sinks {
+		aware, ok := sink.(ValidationModeAware)
+		if !ok {
+			continue
+		}
+		fn(aware)
+	}
+}
+
+func (m *MultiWriter) broadcastValidationObserver(fn func(scanner.ValidationObserver)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sink := range m.sinks {
+		observer, ok := sink.(scanner.ValidationObserver)
+		if !ok {
+			continue
+		}
+		fn(observer)
 	}
 }
 
@@ -360,6 +437,14 @@ func SetBaselineFindings(sink scanner.FindingSink, findings []scanner.Finding) {
 	if aware, ok := sink.(BaselineAware); ok {
 		aware.SetBaselineFindings(findings)
 	}
+}
+
+func SetBaselineReport(sink scanner.FindingSink, report diff.Report) {
+	if sink == nil {
+		return
+	}
+	SetBaselineFindings(sink, report.Findings)
+	SetBaselinePerformance(sink, report.Performance)
 }
 
 func buildCategorySummaries(findings []scanner.Finding) []categorySummary {

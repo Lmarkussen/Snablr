@@ -29,30 +29,32 @@ var placeholderValueTokens = []string{
 }
 
 func shouldSuppressWeakContentMatch(ruleID string, category string, matchedText string, context string) bool {
+	suppress, _ := weakContentSuppression(ruleID, category, matchedText, context)
+	return suppress
+}
+
+func weakContentSuppression(ruleID string, category string, matchedText string, context string) (bool, string) {
 	blob := strings.TrimSpace(firstNonEmptyString(context, matchedText))
 	if blob == "" {
-		return false
+		return false, ""
 	}
 
 	switch ruleID {
 	case "content.database_connection_string_indicators":
-		return !hasMeaningfulConnectionStringEvidence(blob)
+		if assessConnectionStringQuality(blob).Weak {
+			return true, "connection string values look placeholder-like or weak"
+		}
+		return false, ""
 	}
 
 	switch strings.ToLower(strings.TrimSpace(category)) {
 	case "credentials", "infrastructure":
-		values := extractedSensitiveValues(blob)
-		if len(values) == 0 {
-			return false
+		if assessExtractedValuesQuality(extractedSensitiveValues(blob)).Weak {
+			return true, "sensitive values look placeholder-like or low quality"
 		}
-		for _, value := range values {
-			if !isPlaceholderSecretValue(value) {
-				return false
-			}
-		}
-		return true
+		return false, ""
 	default:
-		return false
+		return false, ""
 	}
 }
 
@@ -77,16 +79,8 @@ func extractedSensitiveValues(blob string) []string {
 }
 
 func hasMeaningfulConnectionStringEvidence(blob string) bool {
-	lower := strings.ToLower(blob)
-	if !containsAnyToken(lower, "server=", "host=", "data source=", "datasource=", "initial catalog=", "database=", "uid=", "user id=", "username=", "pwd=", "password=") {
-		return false
-	}
-	for _, value := range extractedSensitiveValues(blob) {
-		if !isPlaceholderSecretValue(value) {
-			return true
-		}
-	}
-	return false
+	quality := assessConnectionStringQuality(blob)
+	return !quality.Weak && quality.Score >= 10
 }
 
 func isPlaceholderSecretValue(value string) bool {

@@ -22,6 +22,7 @@ type Options struct {
 	MaxReadBytes     int64
 	SnippetBytes     int
 	Recorder         metrics.Recorder
+	ValidationMode   bool
 }
 
 type Engine struct {
@@ -39,6 +40,8 @@ type Engine struct {
 	contentExtHints  map[string]struct{}
 	hasGenericText   bool
 	dbInspector      dbinspect.Inspector
+	validationMode   bool
+	validationSink   ValidationObserver
 }
 
 func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx.Logger) *Engine {
@@ -62,13 +65,15 @@ func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx
 		recorder:         opts.Recorder,
 		filenameScanner:  FilenameScanner{},
 		extensionScanner: ExtensionScanner{},
-		contentScanner:   NewContentScanner(opts.SnippetBytes),
+		contentScanner:   NewContentScanner(opts.SnippetBytes, opts.ValidationMode, validationObserverForSink(sink), log),
 		filenameRules:    filenameRules,
 		extensionRules:   extensionRules,
 		contentRules:     contentRules,
 		contentExtHints:  contentExtHints,
 		hasGenericText:   hasGenericText,
 		dbInspector:      dbinspect.New(),
+		validationMode:   opts.ValidationMode,
+		validationSink:   validationObserverForSink(sink),
 	}
 }
 
@@ -101,6 +106,7 @@ func (e *Engine) Evaluate(meta FileMetadata, content []byte) Evaluation {
 	evaluation.NeedContent = e.shouldReadContent(meta, e.contentRules) || e.dbInspector.NeedsContent(dbCandidate(meta))
 	if !evaluation.NeedContent || len(content) == 0 {
 		evaluation.Findings = correlateFindings(meta, evaluation.Findings)
+		e.recordValidationFindings(evaluation.Findings)
 		return evaluation
 	}
 
@@ -112,7 +118,35 @@ func (e *Engine) Evaluate(meta FileMetadata, content []byte) Evaluation {
 	evaluation.Findings = append(evaluation.Findings, e.contentScanner.Scan(e.contentRules, meta, content)...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, e.dbInspector.InspectContent(dbCandidate(meta), content))...)
 	evaluation.Findings = correlateFindings(meta, evaluation.Findings)
+	e.recordValidationFindings(evaluation.Findings)
 	return evaluation
+}
+
+func (e *Engine) recordValidationFindings(findings []Finding) {
+	if !e.validationMode || e.validationSink == nil || len(findings) == 0 {
+		return
+	}
+	for _, finding := range findings {
+		e.validationSink.RecordVisibleFinding(finding)
+		if finding.ConfidenceBreakdown.TriageAdjustment < 0 || finding.TriageClass == "config-only" || finding.TriageClass == "weak-review" {
+			e.validationSink.RecordDowngradedFinding(finding)
+			if e.log != nil {
+				e.log.Infof("validation: downgraded finding for %s rule=%s triage=%s confidence=%s", finding.FilePath, finding.RuleID, finding.TriageClass, finding.Confidence)
+			}
+		}
+	}
+}
+
+func (e *Engine) ValidationMode() bool {
+	return e != nil && e.validationMode
+}
+
+func validationObserverForSink(sink FindingSink) ValidationObserver {
+	if sink == nil {
+		return nil
+	}
+	observer, _ := sink.(ValidationObserver)
+	return observer
 }
 
 func (e *Engine) NeedsContent(meta FileMetadata) bool {

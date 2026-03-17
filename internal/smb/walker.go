@@ -63,13 +63,14 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 				}
 
 				file := RemoteFile{
-					Host:      c.serverName,
-					Share:     share,
-					Path:      normalizedPath,
-					Name:      entry.Name(),
-					Size:      entry.Size(),
-					IsDir:     true,
-					Extension: strings.ToLower(filepath.Ext(entry.Name())),
+					Host:       c.serverName,
+					Share:      share,
+					Path:       normalizedPath,
+					Name:       entry.Name(),
+					Size:       entry.Size(),
+					ModifiedAt: entry.ModTime().UTC(),
+					IsDir:      true,
+					Extension:  strings.ToLower(filepath.Ext(entry.Name())),
 				}
 				if err := fn(file); err != nil {
 					return err
@@ -84,13 +85,14 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 			}
 
 			file := RemoteFile{
-				Host:      c.serverName,
-				Share:     share,
-				Path:      normalizedPath,
-				Name:      entry.Name(),
-				Size:      entry.Size(),
-				IsDir:     entry.IsDir(),
-				Extension: strings.ToLower(filepath.Ext(entry.Name())),
+				Host:       c.serverName,
+				Share:      share,
+				Path:       normalizedPath,
+				Name:       entry.Name(),
+				Size:       entry.Size(),
+				ModifiedAt: entry.ModTime().UTC(),
+				IsDir:      entry.IsDir(),
+				Extension:  strings.ToLower(filepath.Ext(entry.Name())),
 			}
 
 			if err := fn(file); err != nil {

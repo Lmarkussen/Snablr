@@ -11,22 +11,26 @@ import (
 )
 
 type JSONWriter struct {
-	closer   io.Closer
-	findings []scanner.Finding
-	baseline []scanner.Finding
-	mu       sync.Mutex
-	pretty   bool
-	metrics  metrics.Snapshot
-	summary  *summaryCollector
-	w        io.Writer
+	closer              io.Closer
+	findings            []scanner.Finding
+	baseline            []scanner.Finding
+	baselinePerformance *diff.PerformanceSummary
+	mu                  sync.Mutex
+	pretty              bool
+	metrics             metrics.Snapshot
+	summary             *summaryCollector
+	manifest            string
+	validationMode      *validationModeCollector
+	w                   io.Writer
 }
 
 func NewJSONWriter(w io.Writer, closer io.Closer, pretty bool) *JSONWriter {
 	return &JSONWriter{
-		w:       w,
-		closer:  closer,
-		pretty:  pretty,
-		summary: newSummaryCollector(),
+		w:              w,
+		closer:         closer,
+		pretty:         pretty,
+		summary:        newSummaryCollector(),
+		validationMode: newValidationModeCollector(),
 	}
 }
 
@@ -71,6 +75,42 @@ func (j *JSONWriter) SetBaselineFindings(findings []scanner.Finding) {
 	j.baseline = cloneFindings(findings)
 }
 
+func (j *JSONWriter) SetBaselinePerformance(summary *diff.PerformanceSummary) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if summary == nil {
+		j.baselinePerformance = nil
+		return
+	}
+	clone := *summary
+	clone.ClassificationDistribution = append([]diff.ClassificationSummary{}, summary.ClassificationDistribution...)
+	j.baselinePerformance = &clone
+}
+
+func (j *JSONWriter) SetValidationManifest(path string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.manifest = path
+}
+
+func (j *JSONWriter) SetValidationMode(enabled bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.validationMode.SetEnabled(enabled)
+}
+
+func (j *JSONWriter) RecordSuppressedFinding(event scanner.SuppressedFinding) {
+	j.validationMode.RecordSuppressedFinding(event)
+}
+
+func (j *JSONWriter) RecordVisibleFinding(f scanner.Finding) {
+	j.validationMode.RecordVisibleFinding(f)
+}
+
+func (j *JSONWriter) RecordDowngradedFinding(f scanner.Finding) {
+	j.validationMode.RecordDowngradedFinding(f)
+}
+
 func (j *JSONWriter) Close() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -94,6 +134,18 @@ func (j *JSONWriter) Close() error {
 		CategorySummaries: buildCategorySummaries(j.findings),
 		Findings:          make([]jsonFinding, 0, len(j.findings)),
 	}
+	performanceSummary := buildPerformanceSummary(report.Summary, j.findings)
+	report.Performance = performanceSummaryToJSON(performanceSummary)
+	report.PerformanceComparison = performanceComparisonToJSON(buildPerformanceComparison(performanceSummary, j.baselinePerformance))
+	report.ValidationMode = j.validationMode.Summary(report.Summary)
+	validation, err := buildValidationSummary(j.manifest, j.findings)
+	if err != nil {
+		if j.closer != nil {
+			_ = j.closer.Close()
+		}
+		return err
+	}
+	report.Validation = validation
 	for _, finding := range j.findings {
 		report.Findings = append(report.Findings, toJSONFinding(finding, statusByFingerprint[diff.Fingerprint(finding)]))
 	}
@@ -119,11 +171,30 @@ func (j *JSONWriter) Close() error {
 }
 
 type jsonReport struct {
-	Summary           summarySnapshot   `json:"summary"`
-	Metrics           metrics.Snapshot  `json:"metrics"`
-	CategorySummaries []categorySummary `json:"category_summaries,omitempty"`
-	DiffSummary       *jsonDiffSummary  `json:"diff_summary,omitempty"`
-	Findings          []jsonFinding     `json:"findings"`
+	Summary               summarySnapshot         `json:"summary"`
+	Metrics               metrics.Snapshot        `json:"metrics"`
+	CategorySummaries     []categorySummary       `json:"category_summaries,omitempty"`
+	DiffSummary           *jsonDiffSummary        `json:"diff_summary,omitempty"`
+	Performance           *jsonPerformanceSummary `json:"performance,omitempty"`
+	PerformanceComparison *jsonPerformanceCompare `json:"performance_comparison,omitempty"`
+	ValidationMode        *validationModeSummary  `json:"validation_mode,omitempty"`
+	Validation            *validationSummary      `json:"validation,omitempty"`
+	Findings              []jsonFinding           `json:"findings"`
+}
+
+type jsonPerformanceSummary struct {
+	FilesScanned               int                          `json:"files_scanned"`
+	FindingsTotal              int                          `json:"findings_total"`
+	DurationMS                 int64                        `json:"duration_ms"`
+	FilesPerSecond             float64                      `json:"files_per_second"`
+	ClassificationDistribution []diff.ClassificationSummary `json:"classification_distribution,omitempty"`
+}
+
+type jsonPerformanceCompare struct {
+	FindingsDelta         int                        `json:"findings_delta"`
+	DurationDeltaMS       int64                      `json:"duration_delta_ms"`
+	FilesPerSecondDelta   float64                    `json:"files_per_second_delta"`
+	ClassificationChanges []diff.ClassificationDelta `json:"classification_changes,omitempty"`
 }
 
 type jsonDiffSummary struct {
@@ -134,49 +205,50 @@ type jsonDiffSummary struct {
 }
 
 type jsonFinding struct {
-	Host                string                     `json:"host,omitempty"`
-	Share               string                     `json:"share,omitempty"`
-	ShareDescription    string                     `json:"share_description,omitempty"`
-	ShareType           string                     `json:"share_type,omitempty"`
-	FilePath            string                     `json:"file_path"`
-	Source              string                     `json:"source,omitempty"`
-	DFSNamespacePath    string                     `json:"dfs_namespace_path,omitempty"`
-	DFSLinkPath         string                     `json:"dfs_link_path,omitempty"`
-	RuleID              string                     `json:"rule_id"`
-	RuleName            string                     `json:"rule_name"`
-	Severity            string                     `json:"severity"`
-	Confidence          string                     `json:"confidence,omitempty"`
-	RuleConfidence      string                     `json:"rule_confidence,omitempty"`
-	ConfidenceScore     int                        `json:"confidence_score,omitempty"`
-	ConfidenceReasons   []string                   `json:"confidence_reasons,omitempty"`
-	Category            string                     `json:"category"`
-	TriageClass         string                     `json:"triage_class,omitempty"`
-	Actionable          bool                       `json:"actionable,omitempty"`
-	Correlated          bool                       `json:"correlated,omitempty"`
-	SharePriority       int                        `json:"share_priority,omitempty"`
-	SharePriorityReason string                     `json:"share_priority_reason,omitempty"`
-	FromSYSVOL          bool                       `json:"from_sysvol,omitempty"`
-	FromNETLOGON        bool                       `json:"from_netlogon,omitempty"`
-	MatchedRuleIDs      []string                   `json:"matched_rule_ids,omitempty"`
-	MatchedSignalTypes  []string                   `json:"matched_signal_types,omitempty"`
-	SupportingSignals   []scanner.SupportingSignal `json:"supporting_signals,omitempty"`
-	Tags                []string                   `json:"tags,omitempty"`
-	SignalType          string                     `json:"signal_type,omitempty"`
-	Match               string                     `json:"match,omitempty"`
-	MatchedText         string                     `json:"matched_text,omitempty"`
-	MatchedTextRedacted string                     `json:"matched_text_redacted,omitempty"`
-	Snippet             string                     `json:"snippet,omitempty"`
-	Context             string                     `json:"context,omitempty"`
-	ContextRedacted     string                     `json:"context_redacted,omitempty"`
-	PotentialAccount    string                     `json:"potential_account,omitempty"`
-	LineNumber          int                        `json:"line_number,omitempty"`
-	MatchSnippet        string                     `json:"match_snippet,omitempty"`
-	MatchReason         string                     `json:"match_reason,omitempty"`
-	RuleExplanation     string                     `json:"rule_explanation,omitempty"`
-	RuleRemediation     string                     `json:"rule_remediation,omitempty"`
-	RemediationGuidance string                     `json:"remediation_guidance,omitempty"`
-	DiffStatus          string                     `json:"diff_status,omitempty"`
-	ChangedFields       []string                   `json:"changed_fields,omitempty"`
+	Host                string                      `json:"host,omitempty"`
+	Share               string                      `json:"share,omitempty"`
+	ShareDescription    string                      `json:"share_description,omitempty"`
+	ShareType           string                      `json:"share_type,omitempty"`
+	FilePath            string                      `json:"file_path"`
+	Source              string                      `json:"source,omitempty"`
+	DFSNamespacePath    string                      `json:"dfs_namespace_path,omitempty"`
+	DFSLinkPath         string                      `json:"dfs_link_path,omitempty"`
+	RuleID              string                      `json:"rule_id"`
+	RuleName            string                      `json:"rule_name"`
+	Severity            string                      `json:"severity"`
+	Confidence          string                      `json:"confidence,omitempty"`
+	RuleConfidence      string                      `json:"rule_confidence,omitempty"`
+	ConfidenceScore     int                         `json:"confidence_score,omitempty"`
+	ConfidenceReasons   []string                    `json:"confidence_reasons,omitempty"`
+	Category            string                      `json:"category"`
+	TriageClass         string                      `json:"triage_class,omitempty"`
+	Actionable          bool                        `json:"actionable,omitempty"`
+	Correlated          bool                        `json:"correlated,omitempty"`
+	ConfidenceBreakdown scanner.ConfidenceBreakdown `json:"confidence_breakdown,omitempty"`
+	SharePriority       int                         `json:"share_priority,omitempty"`
+	SharePriorityReason string                      `json:"share_priority_reason,omitempty"`
+	FromSYSVOL          bool                        `json:"from_sysvol,omitempty"`
+	FromNETLOGON        bool                        `json:"from_netlogon,omitempty"`
+	MatchedRuleIDs      []string                    `json:"matched_rule_ids,omitempty"`
+	MatchedSignalTypes  []string                    `json:"matched_signal_types,omitempty"`
+	SupportingSignals   []scanner.SupportingSignal  `json:"supporting_signals,omitempty"`
+	Tags                []string                    `json:"tags,omitempty"`
+	SignalType          string                      `json:"signal_type,omitempty"`
+	Match               string                      `json:"match,omitempty"`
+	MatchedText         string                      `json:"matched_text,omitempty"`
+	MatchedTextRedacted string                      `json:"matched_text_redacted,omitempty"`
+	Snippet             string                      `json:"snippet,omitempty"`
+	Context             string                      `json:"context,omitempty"`
+	ContextRedacted     string                      `json:"context_redacted,omitempty"`
+	PotentialAccount    string                      `json:"potential_account,omitempty"`
+	LineNumber          int                         `json:"line_number,omitempty"`
+	MatchSnippet        string                      `json:"match_snippet,omitempty"`
+	MatchReason         string                      `json:"match_reason,omitempty"`
+	RuleExplanation     string                      `json:"rule_explanation,omitempty"`
+	RuleRemediation     string                      `json:"rule_remediation,omitempty"`
+	RemediationGuidance string                      `json:"remediation_guidance,omitempty"`
+	DiffStatus          string                      `json:"diff_status,omitempty"`
+	ChangedFields       []string                    `json:"changed_fields,omitempty"`
 }
 
 func toJSONFinding(f scanner.Finding, delta diff.FindingDelta) jsonFinding {
@@ -200,6 +272,7 @@ func toJSONFinding(f scanner.Finding, delta diff.FindingDelta) jsonFinding {
 		TriageClass:         f.TriageClass,
 		Actionable:          f.Actionable,
 		Correlated:          f.Correlated,
+		ConfidenceBreakdown: f.ConfidenceBreakdown,
 		SharePriority:       f.SharePriority,
 		SharePriorityReason: f.SharePriorityReason,
 		FromSYSVOL:          f.FromSYSVOL,
@@ -235,4 +308,26 @@ func cloneFindings(findings []scanner.Finding) []scanner.Finding {
 		out = append(out, clone)
 	}
 	return out
+}
+
+func performanceSummaryToJSON(summary diff.PerformanceSummary) *jsonPerformanceSummary {
+	return &jsonPerformanceSummary{
+		FilesScanned:               summary.FilesScanned,
+		FindingsTotal:              summary.FindingsTotal,
+		DurationMS:                 summary.DurationMS,
+		FilesPerSecond:             summary.FilesPerSecond,
+		ClassificationDistribution: append([]diff.ClassificationSummary{}, summary.ClassificationDistribution...),
+	}
+}
+
+func performanceComparisonToJSON(comparison *diff.PerformanceComparison) *jsonPerformanceCompare {
+	if comparison == nil {
+		return nil
+	}
+	return &jsonPerformanceCompare{
+		FindingsDelta:         comparison.FindingsDelta,
+		DurationDeltaMS:       comparison.DurationDeltaMS,
+		FilesPerSecondDelta:   comparison.FilesPerSecondDelta,
+		ClassificationChanges: append([]diff.ClassificationDelta{}, comparison.ClassificationChanges...),
+	}
 }

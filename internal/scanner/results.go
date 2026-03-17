@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"snablr/internal/rules"
 )
@@ -16,6 +17,19 @@ type SupportingSignal struct {
 	Confidence string `json:"confidence,omitempty"`
 	Weight     int    `json:"weight,omitempty"`
 	Reason     string `json:"reason,omitempty"`
+}
+
+type ConfidenceBreakdown struct {
+	BaseScore                   int    `json:"base_score,omitempty"`
+	FinalScore                  int    `json:"final_score,omitempty"`
+	ContentSignalStrength       int    `json:"content_signal_strength,omitempty"`
+	HeuristicSignalContribution int    `json:"heuristic_signal_contribution,omitempty"`
+	ValueQualityScore           int    `json:"value_quality_score,omitempty"`
+	ValueQualityLabel           string `json:"value_quality_label,omitempty"`
+	ValueQualityReason          string `json:"value_quality_reason,omitempty"`
+	CorrelationContribution     int    `json:"correlation_contribution,omitempty"`
+	PathContextContribution     int    `json:"path_context_contribution,omitempty"`
+	TriageAdjustment            int    `json:"triage_adjustment,omitempty"`
 }
 
 type findingEvidence struct {
@@ -31,52 +45,68 @@ type findingEvidence struct {
 }
 
 type Finding struct {
-	RuleID              string             `json:"rule_id"`
-	RuleName            string             `json:"rule_name"`
-	Severity            string             `json:"severity"`
-	Confidence          string             `json:"confidence,omitempty"`
-	RuleConfidence      string             `json:"rule_confidence,omitempty"`
-	ConfidenceScore     int                `json:"confidence_score,omitempty"`
-	ConfidenceReasons   []string           `json:"confidence_reasons,omitempty"`
-	Category            string             `json:"category"`
-	TriageClass         string             `json:"triage_class,omitempty"`
-	Actionable          bool               `json:"actionable,omitempty"`
-	Correlated          bool               `json:"correlated,omitempty"`
-	Priority            int                `json:"priority,omitempty"`
-	PriorityReason      string             `json:"priority_reason,omitempty"`
-	SharePriority       int                `json:"share_priority,omitempty"`
-	SharePriorityReason string             `json:"share_priority_reason,omitempty"`
-	FilePath            string             `json:"file_path"`
-	Share               string             `json:"share,omitempty"`
-	ShareDescription    string             `json:"share_description,omitempty"`
-	ShareType           string             `json:"share_type,omitempty"`
-	Host                string             `json:"host,omitempty"`
-	Source              string             `json:"source,omitempty"`
-	DFSNamespacePath    string             `json:"dfs_namespace_path,omitempty"`
-	DFSLinkPath         string             `json:"dfs_link_path,omitempty"`
-	SignalType          string             `json:"signal_type,omitempty"`
-	Match               string             `json:"match,omitempty"`
-	MatchedText         string             `json:"matched_text,omitempty"`
-	MatchedTextRedacted string             `json:"matched_text_redacted,omitempty"`
-	Snippet             string             `json:"snippet,omitempty"`
-	Context             string             `json:"context,omitempty"`
-	ContextRedacted     string             `json:"context_redacted,omitempty"`
-	PotentialAccount    string             `json:"potential_account,omitempty"`
-	LineNumber          int                `json:"line_number,omitempty"`
-	MatchReason         string             `json:"match_reason,omitempty"`
-	RuleExplanation     string             `json:"rule_explanation,omitempty"`
-	RuleRemediation     string             `json:"rule_remediation,omitempty"`
-	FromSYSVOL          bool               `json:"from_sysvol,omitempty"`
-	FromNETLOGON        bool               `json:"from_netlogon,omitempty"`
-	MatchedRuleIDs      []string           `json:"matched_rule_ids,omitempty"`
-	MatchedSignalTypes  []string           `json:"matched_signal_types,omitempty"`
-	SupportingSignals   []SupportingSignal `json:"supporting_signals,omitempty"`
-	Tags                []string           `json:"tags,omitempty"`
+	RuleID              string              `json:"rule_id"`
+	RuleName            string              `json:"rule_name"`
+	Severity            string              `json:"severity"`
+	Confidence          string              `json:"confidence,omitempty"`
+	RuleConfidence      string              `json:"rule_confidence,omitempty"`
+	ConfidenceScore     int                 `json:"confidence_score,omitempty"`
+	ConfidenceReasons   []string            `json:"confidence_reasons,omitempty"`
+	Category            string              `json:"category"`
+	TriageClass         string              `json:"triage_class,omitempty"`
+	Actionable          bool                `json:"actionable,omitempty"`
+	Correlated          bool                `json:"correlated,omitempty"`
+	ConfidenceBreakdown ConfidenceBreakdown `json:"confidence_breakdown,omitempty"`
+	Priority            int                 `json:"priority,omitempty"`
+	PriorityReason      string              `json:"priority_reason,omitempty"`
+	SharePriority       int                 `json:"share_priority,omitempty"`
+	SharePriorityReason string              `json:"share_priority_reason,omitempty"`
+	FilePath            string              `json:"file_path"`
+	Share               string              `json:"share,omitempty"`
+	ShareDescription    string              `json:"share_description,omitempty"`
+	ShareType           string              `json:"share_type,omitempty"`
+	Host                string              `json:"host,omitempty"`
+	Source              string              `json:"source,omitempty"`
+	DFSNamespacePath    string              `json:"dfs_namespace_path,omitempty"`
+	DFSLinkPath         string              `json:"dfs_link_path,omitempty"`
+	SignalType          string              `json:"signal_type,omitempty"`
+	Match               string              `json:"match,omitempty"`
+	MatchedText         string              `json:"matched_text,omitempty"`
+	MatchedTextRedacted string              `json:"matched_text_redacted,omitempty"`
+	Snippet             string              `json:"snippet,omitempty"`
+	Context             string              `json:"context,omitempty"`
+	ContextRedacted     string              `json:"context_redacted,omitempty"`
+	PotentialAccount    string              `json:"potential_account,omitempty"`
+	LineNumber          int                 `json:"line_number,omitempty"`
+	MatchReason         string              `json:"match_reason,omitempty"`
+	RuleExplanation     string              `json:"rule_explanation,omitempty"`
+	RuleRemediation     string              `json:"rule_remediation,omitempty"`
+	FromSYSVOL          bool                `json:"from_sysvol,omitempty"`
+	FromNETLOGON        bool                `json:"from_netlogon,omitempty"`
+	MatchedRuleIDs      []string            `json:"matched_rule_ids,omitempty"`
+	MatchedSignalTypes  []string            `json:"matched_signal_types,omitempty"`
+	SupportingSignals   []SupportingSignal  `json:"supporting_signals,omitempty"`
+	Tags                []string            `json:"tags,omitempty"`
 }
 
 type FindingSink interface {
 	WriteFinding(Finding) error
 	Close() error
+}
+
+type SuppressedFinding struct {
+	Host     string `json:"host,omitempty"`
+	Share    string `json:"share,omitempty"`
+	FilePath string `json:"file_path,omitempty"`
+	RuleID   string `json:"rule_id,omitempty"`
+	Category string `json:"category,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+type ValidationObserver interface {
+	RecordSuppressedFinding(SuppressedFinding)
+	RecordVisibleFinding(Finding)
+	RecordDowngradedFinding(Finding)
 }
 
 type ScanObserver interface {
@@ -99,6 +129,7 @@ type FileMetadata struct {
 	DFSNamespacePath    string
 	DFSLinkPath         string
 	Size                int64
+	ModifiedAt          time.Time
 	IsDir               bool
 	Name                string
 	Extension           string

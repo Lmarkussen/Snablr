@@ -115,6 +115,12 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if strings.TrimSpace(opts.Baseline) != "" {
 		cfg.Scan.Baseline = opts.Baseline
 	}
+	if strings.TrimSpace(opts.SeedManifest) != "" {
+		cfg.Scan.SeedManifest = opts.SeedManifest
+	}
+	if opts.ValidationMode {
+		cfg.Scan.ValidationMode = true
+	}
 	if strings.TrimSpace(opts.MaxScanTime) != "" {
 		cfg.Scan.MaxScanTime = opts.MaxScanTime
 	}

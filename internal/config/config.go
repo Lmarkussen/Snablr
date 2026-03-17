@@ -46,6 +46,8 @@ type ScanConfig struct {
 	PrioritizeADShares         bool     `yaml:"prioritize_ad_shares"`
 	OnlyADShares               bool     `yaml:"only_ad_shares"`
 	Baseline                   string   `yaml:"baseline"`
+	SeedManifest               string   `yaml:"seed_manifest"`
+	ValidationMode             bool     `yaml:"validation_mode"`
 	MaxScanTime                string   `yaml:"max_scan_time"`
 	CheckpointFile             string   `yaml:"checkpoint_file"`
 	Resume                     bool     `yaml:"resume"`

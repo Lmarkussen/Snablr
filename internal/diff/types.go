@@ -46,8 +46,36 @@ type FindingDelta struct {
 	ChangedFields []string           `json:"changed_fields,omitempty"`
 }
 
+type ClassificationSummary struct {
+	Class string `json:"class"`
+	Count int    `json:"count"`
+}
+
+type PerformanceSummary struct {
+	FilesScanned               int                     `json:"files_scanned"`
+	FindingsTotal              int                     `json:"findings_total"`
+	DurationMS                 int64                   `json:"duration_ms"`
+	FilesPerSecond             float64                 `json:"files_per_second"`
+	ClassificationDistribution []ClassificationSummary `json:"classification_distribution,omitempty"`
+}
+
+type ClassificationDelta struct {
+	Class string `json:"class"`
+	Prev  int    `json:"prev"`
+	Curr  int    `json:"curr"`
+	Delta int    `json:"delta"`
+}
+
+type PerformanceComparison struct {
+	FindingsDelta         int                   `json:"findings_delta"`
+	DurationDeltaMS       int64                 `json:"duration_delta_ms"`
+	FilesPerSecondDelta   float64               `json:"files_per_second_delta"`
+	ClassificationChanges []ClassificationDelta `json:"classification_changes,omitempty"`
+}
+
 type Report struct {
-	Findings []scanner.Finding `json:"findings"`
+	Findings    []scanner.Finding   `json:"findings"`
+	Performance *PerformanceSummary `json:"performance,omitempty"`
 }
 
 func (r DiffResult) Summary() Summary {

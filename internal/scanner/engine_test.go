@@ -77,11 +77,11 @@ func TestCorrelateFindingsGroupsSignalsByFileAndCategory(t *testing.T) {
 		newFinding(filenameRule, meta, heuristicEvidence(filenameRule.Type, "app.env")),
 		newFinding(contentRule, meta, findingEvidence{
 			SignalType:          "content",
-			Match:               "password=EXAMPLE_PASSWORD_001",
-			MatchedText:         "password=EXAMPLE_PASSWORD_001",
+			Match:               "password=Winter2025!",
+			MatchedText:         "password=Winter2025!",
 			MatchedTextRedacted: "password=********",
 			Snippet:             "password=********",
-			Context:             "password=EXAMPLE_PASSWORD_001",
+			Context:             "password=Winter2025!",
 			ContextRedacted:     "password=********",
 			PotentialAccount:    "user=demo",
 			LineNumber:          1,
@@ -102,6 +102,12 @@ func TestCorrelateFindingsGroupsSignalsByFileAndCategory(t *testing.T) {
 	}
 	if len(correlated[0].SupportingSignals) < 4 {
 		t.Fatalf("expected supporting signals to include contextual boosts, got %#v", correlated[0].SupportingSignals)
+	}
+	if correlated[0].ConfidenceBreakdown.BaseScore == 0 || correlated[0].ConfidenceBreakdown.ContentSignalStrength == 0 || correlated[0].ConfidenceBreakdown.CorrelationContribution == 0 || correlated[0].ConfidenceBreakdown.PathContextContribution == 0 {
+		t.Fatalf("expected structured confidence breakdown, got %#v", correlated[0].ConfidenceBreakdown)
+	}
+	if correlated[0].ConfidenceBreakdown.ValueQualityScore == 0 || correlated[0].ConfidenceBreakdown.FinalScore != correlated[0].ConfidenceScore {
+		t.Fatalf("expected value quality and final score in breakdown, got %#v", correlated[0].ConfidenceBreakdown)
 	}
 }
 
@@ -231,6 +237,9 @@ func TestCorrelateFindingsConfigOnlyStaysLowVisibility(t *testing.T) {
 	if findings[0].Severity != "low" || findings[0].Confidence != "low" {
 		t.Fatalf("expected low-visibility config-only finding, got %#v", findings[0])
 	}
+	if findings[0].ConfidenceBreakdown.HeuristicSignalContribution == 0 || findings[0].ConfidenceBreakdown.FinalScore != findings[0].ConfidenceScore {
+		t.Fatalf("expected consistent confidence breakdown, got %#v", findings[0].ConfidenceBreakdown)
+	}
 }
 
 func TestEngineSuppressesPlaceholderSecretAssignments(t *testing.T) {
@@ -255,6 +264,32 @@ func TestEngineSuppressesPlaceholderSecretAssignments(t *testing.T) {
 	for _, finding := range evaluation.Findings {
 		if finding.RuleID == "content.secret_assignment_indicators" || finding.RuleID == "content.password_assignment_indicators" || finding.RuleID == "content.cloud_configuration_indicators" {
 			t.Fatalf("expected placeholder-only secret indicators to be suppressed, got %#v", evaluation.Findings)
+		}
+	}
+}
+
+func TestEngineSuppressesWeakSampleSecretAssignments(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	meta := FileMetadata{
+		FilePath:  "Configs/app.env",
+		Name:      "app.env",
+		Extension: ".env",
+		Size:      128,
+	}
+	content := []byte("db_password=test1234\nclient_secret=example123\n")
+
+	evaluation := engine.Evaluate(meta, content)
+	for _, finding := range evaluation.Findings {
+		if finding.RuleID == "content.secret_assignment_indicators" || finding.RuleID == "content.password_assignment_indicators" {
+			t.Fatalf("expected weak sample secret indicators to be suppressed, got %#v", evaluation.Findings)
 		}
 	}
 }

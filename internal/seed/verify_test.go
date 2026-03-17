@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"snablr/internal/scanner"
 )
 
 func TestVerifyReportsFoundMissedUnexpectedAndCoverage(t *testing.T) {
@@ -258,5 +260,56 @@ func TestVerifySummarizesExpectedSeedClasses(t *testing.T) {
 	}
 	if len(report.ClassMismatches) != 0 {
 		t.Fatalf("expected no class mismatches, got %+v", report.ClassMismatches)
+	}
+}
+
+func TestVerifyFindingsMatchesInMemoryResults(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "manifest.json")
+
+	manifest := Manifest{
+		SeedPrefix: "SyntheticSeed",
+		Entries: []SeedManifestEntry{
+			{
+				Host:          "fileserver01",
+				Share:         "SQL",
+				Path:          "SyntheticSeed/SQL/app.dsn",
+				Category:      "database",
+				ExpectedClass: seedClassActionable,
+			},
+			{
+				Host:          "fileserver01",
+				Share:         "Config",
+				Path:          "SyntheticSeed/Config/database.yml",
+				Category:      "database",
+				ExpectedClass: seedClassConfigOnly,
+			},
+		},
+	}
+	if err := manifest.Write(manifestPath); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	report, err := VerifyFindings(manifestPath, []scanner.Finding{
+		{
+			Host:        "fileserver01",
+			Share:       "SQL",
+			FilePath:    "SyntheticSeed/SQL/app.dsn",
+			Category:    "database-access",
+			Severity:    "high",
+			Confidence:  "high",
+			TriageClass: "actionable",
+			Actionable:  true,
+			Correlated:  false,
+			SignalType:  "validated",
+		},
+	})
+	if err != nil {
+		t.Fatalf("VerifyFindings returned error: %v", err)
+	}
+	if report.ExpectedItems != 2 || report.FoundItems != 1 || report.MissedItems != 1 {
+		t.Fatalf("unexpected verification summary: %+v", report)
 	}
 }

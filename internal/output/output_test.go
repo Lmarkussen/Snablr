@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"snablr/internal/diff"
 	"snablr/internal/scanner"
+	"snablr/internal/seed"
 )
 
 func sampleFinding() scanner.Finding {
@@ -24,10 +27,21 @@ func sampleFinding() scanner.Finding {
 			"path contains high-value keywords associated with sensitive or operational content",
 			"multiple independent signal types increased confidence",
 		},
-		Category:            "credentials",
-		TriageClass:         "actionable",
-		Actionable:          true,
-		Correlated:          true,
+		Category:    "credentials",
+		TriageClass: "actionable",
+		Actionable:  true,
+		Correlated:  true,
+		ConfidenceBreakdown: scanner.ConfidenceBreakdown{
+			BaseScore:                   78,
+			FinalScore:                  78,
+			ContentSignalStrength:       32,
+			HeuristicSignalContribution: 18,
+			ValueQualityScore:           14,
+			ValueQualityLabel:           "high",
+			ValueQualityReason:          "content includes non-placeholder secret-like or credential-like values",
+			CorrelationContribution:     14,
+			PathContextContribution:     14,
+		},
 		Priority:            95,
 		PriorityReason:      "test priority reason",
 		SharePriority:       90,
@@ -68,17 +82,28 @@ func sampleFinding() scanner.Finding {
 
 func sampleHeuristicFinding() scanner.Finding {
 	return scanner.Finding{
-		RuleID:              "filename.password_export",
-		RuleName:            "Password Export Filename",
-		Severity:            "medium",
-		Confidence:          "medium",
-		RuleConfidence:      "medium",
-		ConfidenceScore:     54,
-		ConfidenceReasons:   []string{"filename rule matched \"passwords\" for Detect credential-style exports.", "planner marked this path as relevant review material"},
-		Category:            "credentials",
-		TriageClass:         "actionable",
-		Actionable:          true,
-		Correlated:          true,
+		RuleID:            "filename.password_export",
+		RuleName:          "Password Export Filename",
+		Severity:          "medium",
+		Confidence:        "medium",
+		RuleConfidence:    "medium",
+		ConfidenceScore:   38,
+		ConfidenceReasons: []string{"filename rule matched \"passwords\" for Detect credential-style exports.", "planner marked this path as relevant review material"},
+		Category:          "credentials",
+		TriageClass:       "actionable",
+		Actionable:        true,
+		Correlated:        true,
+		ConfidenceBreakdown: scanner.ConfidenceBreakdown{
+			BaseScore:                   38,
+			FinalScore:                  38,
+			ContentSignalStrength:       0,
+			HeuristicSignalContribution: 18,
+			ValueQualityScore:           0,
+			ValueQualityLabel:           "low",
+			ValueQualityReason:          "confidence comes from metadata and context rather than extracted value quality",
+			CorrelationContribution:     8,
+			PathContextContribution:     12,
+		},
 		Priority:            72,
 		PriorityReason:      "test filename priority reason",
 		SharePriority:       60,
@@ -108,17 +133,28 @@ func sampleHeuristicFinding() scanner.Finding {
 
 func sampleConfigOnlyFinding() scanner.Finding {
 	return scanner.Finding{
-		RuleID:              "filename.sensitive_config_names",
-		RuleName:            "Sensitive Config Names",
-		Severity:            "low",
-		Confidence:          "low",
-		RuleConfidence:      "high",
-		ConfidenceScore:     24,
-		ConfidenceReasons:   []string{"configuration artifact was identified without actionable evidence"},
-		Category:            "configuration",
-		TriageClass:         "config-only",
-		Actionable:          false,
-		Correlated:          false,
+		RuleID:            "filename.sensitive_config_names",
+		RuleName:          "Sensitive Config Names",
+		Severity:          "low",
+		Confidence:        "low",
+		RuleConfidence:    "high",
+		ConfidenceScore:   24,
+		ConfidenceReasons: []string{"configuration artifact was identified without actionable evidence"},
+		Category:          "configuration",
+		TriageClass:       "config-only",
+		Actionable:        false,
+		Correlated:        false,
+		ConfidenceBreakdown: scanner.ConfidenceBreakdown{
+			BaseScore:                   24,
+			FinalScore:                  24,
+			ContentSignalStrength:       0,
+			HeuristicSignalContribution: 24,
+			ValueQualityScore:           0,
+			ValueQualityLabel:           "low",
+			ValueQualityReason:          "confidence comes from metadata and context rather than extracted value quality",
+			CorrelationContribution:     0,
+			PathContextContribution:     0,
+		},
 		Priority:            48,
 		PriorityReason:      "config path",
 		FilePath:            "Apps/appsettings.json",
@@ -140,6 +176,53 @@ func sampleConfigOnlyFinding() scanner.Finding {
 		},
 		Tags: []string{"configuration", "filenames", "triage"},
 	}
+}
+
+func writeValidationManifest(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "seed-manifest.json")
+	manifest := seed.Manifest{
+		SeedPrefix: "SnablrLab",
+		Entries: []seed.SeedManifestEntry{
+			{
+				Host:          "dc01",
+				Share:         "SYSVOL",
+				Path:          "Policies/Groups.xml",
+				Category:      "database",
+				ExpectedClass: "actionable",
+			},
+			{
+				Host:          "fs01",
+				Share:         "Apps",
+				Path:          "Apps/appsettings.json",
+				Category:      "database",
+				ExpectedClass: "config-only",
+			},
+			{
+				Host:          "fs01",
+				Share:         "Deploy",
+				Path:          "Deploy/app.env",
+				Category:      "database",
+				ExpectedClass: "weak-review",
+			},
+			{
+				Host:          "fs01",
+				Share:         "Deploy",
+				Path:          "Deploy/appsettings.json",
+				Category:      "database",
+				ExpectedClass: "correlated-high-confidence",
+			},
+		},
+	}
+	if err := manifest.Write(path); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("stat manifest: %v", err)
+	}
+	return path
 }
 
 func TestJSONWriterGeneratesStructuredReport(t *testing.T) {
@@ -183,8 +266,17 @@ func TestJSONWriterGeneratesStructuredReport(t *testing.T) {
 	if !report.Findings[0].Actionable || !report.Findings[0].Correlated || report.Findings[0].TriageClass != "actionable" {
 		t.Fatalf("expected triage metadata in JSON finding, got %#v", report.Findings[0])
 	}
+	if report.Findings[0].ConfidenceBreakdown.BaseScore != 78 || report.Findings[0].ConfidenceBreakdown.ValueQualityScore == 0 || report.Findings[0].ConfidenceBreakdown.CorrelationContribution == 0 {
+		t.Fatalf("expected confidence breakdown in JSON finding, got %#v", report.Findings[0].ConfidenceBreakdown)
+	}
 	if len(report.CategorySummaries) != 1 || report.CategorySummaries[0].Category != "credentials" {
 		t.Fatalf("unexpected category summaries: %#v", report.CategorySummaries)
+	}
+	if report.Performance == nil || report.Performance.FilesScanned != 1 || report.Performance.FindingsTotal != 1 || report.Performance.DurationMS < 0 {
+		t.Fatalf("expected performance summary in JSON report, got %#v", report.Performance)
+	}
+	if len(report.Performance.ClassificationDistribution) == 0 || report.Performance.ClassificationDistribution[0].Class != "actionable" {
+		t.Fatalf("expected classification distribution in performance summary, got %#v", report.Performance)
 	}
 }
 
@@ -216,6 +308,15 @@ func TestJSONWriterIncludesDiffSummaryWhenBaselineIsSet(t *testing.T) {
 			Match:    "old",
 		},
 	})
+	writer.SetBaselinePerformance(&diff.PerformanceSummary{
+		FilesScanned:   10,
+		FindingsTotal:  2,
+		DurationMS:     500,
+		FilesPerSecond: 20,
+		ClassificationDistribution: []diff.ClassificationSummary{
+			{Class: "actionable", Count: 2},
+		},
+	})
 	if err := writer.WriteFinding(sampleFinding()); err != nil {
 		t.Fatalf("WriteFinding returned error: %v", err)
 	}
@@ -239,6 +340,73 @@ func TestJSONWriterIncludesDiffSummaryWhenBaselineIsSet(t *testing.T) {
 	if len(report.Findings[0].ChangedFields) == 0 {
 		t.Fatalf("expected changed fields metadata, got %#v", report.Findings[0])
 	}
+	if report.PerformanceComparison == nil || report.PerformanceComparison.FindingsDelta != -1 {
+		t.Fatalf("expected performance comparison in report, got %#v", report.PerformanceComparison)
+	}
+}
+
+func TestJSONWriterIncludesValidationSummaryWhenManifestIsSet(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer := NewJSONWriter(&buf, nil, true)
+	writer.SetValidationManifest(writeValidationManifest(t))
+	if err := writer.WriteFinding(sampleFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.WriteFinding(sampleConfigOnlyFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	var report jsonReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+	if report.Validation == nil || !report.Validation.HasValidation {
+		t.Fatalf("expected validation summary, got %#v", report.Validation)
+	}
+	if report.Validation.ExpectedItems != 4 || report.Validation.FoundItems != 2 || report.Validation.MissedItems != 2 {
+		t.Fatalf("unexpected validation summary: %#v", report.Validation)
+	}
+	if len(report.Validation.ClassCoverage) == 0 || len(report.Validation.MissedExpected) != 2 {
+		t.Fatalf("expected class coverage and missed expected items, got %#v", report.Validation)
+	}
+}
+
+func TestJSONWriterIncludesValidationModeSummaryWhenEnabled(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer := NewJSONWriter(&buf, nil, true)
+	writer.SetValidationMode(true)
+	writer.RecordSkip(scanner.FileMetadata{FilePath: "skip.txt"}, "max size")
+	writer.RecordSuppressedFinding(scanner.SuppressedFinding{FilePath: "suppressed.env", RuleID: "content.password_assignment_indicators"})
+	writer.RecordVisibleFinding(sampleFinding())
+	writer.RecordVisibleFinding(sampleConfigOnlyFinding())
+	writer.RecordDowngradedFinding(sampleConfigOnlyFinding())
+	if err := writer.WriteFinding(sampleFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.WriteFinding(sampleConfigOnlyFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	var report jsonReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+	if report.ValidationMode == nil || !report.ValidationMode.Enabled {
+		t.Fatalf("expected validation mode summary, got %#v", report.ValidationMode)
+	}
+	if report.ValidationMode.SuppressedFindings != 1 || report.ValidationMode.VisibleFindings != 2 || report.ValidationMode.DowngradedFindings != 1 {
+		t.Fatalf("unexpected validation mode counts: %#v", report.ValidationMode)
+	}
 }
 
 func TestConsoleWriterIncludesContextMetadata(t *testing.T) {
@@ -254,7 +422,86 @@ func TestConsoleWriterIncludesContextMetadata(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, want := range []string{"Share Type: sysvol", "Share Description: Domain policies and scripts", "Source: dfs", "AD Share: SYSVOL", "DFS Namespace:", "Confidence: HIGH (78)", "Matched Rules:", "Signals:", "Signal: content", "Line: 12", "Potential account context: user = alice", "Matched text: password = ReplaceMe123!", "Context:", "domain = example.local", "Confidence Raised By:", "Rule Note:", "Remediation:"} {
+	for _, want := range []string{"Share Type: sysvol", "Share Description: Domain policies and scripts", "Source: dfs", "AD Share: SYSVOL", "DFS Namespace:", "Confidence: HIGH (78)", "Matched Rules:", "Signals:", "Signal: content", "Line: 12", "Potential account context: user = alice", "Matched text: password = ReplaceMe123!", "Context:", "domain = example.local", "Confidence Raised By:", "Rule Note:", "Remediation:", "Performance: files_scanned=0 findings=1", "Classification Distribution: actionable=1"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected output to contain %q, got %s", want, out)
+		}
+	}
+}
+
+func TestConsoleWriterIncludesPerformanceComparisonWhenBaselineIsSet(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer := NewConsoleWriter(&buf, nil)
+	writer.SetBaselinePerformance(&diff.PerformanceSummary{
+		FilesScanned:   5,
+		FindingsTotal:  2,
+		DurationMS:     250,
+		FilesPerSecond: 20,
+		ClassificationDistribution: []diff.ClassificationSummary{
+			{Class: "actionable", Count: 2},
+		},
+	})
+	if err := writer.WriteFinding(sampleFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"Performance Comparison:", "Classification Changes:"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected output to contain %q, got %s", want, out)
+		}
+	}
+}
+
+func TestConsoleWriterIncludesValidationSummaryWhenManifestIsSet(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer := NewConsoleWriter(&buf, nil)
+	writer.SetValidationManifest(writeValidationManifest(t))
+	if err := writer.WriteFinding(sampleFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.WriteFinding(sampleConfigOnlyFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"Validation: expected=4 found=2 missed=2", "Validation Classes:", "informational:", "actionable:", "Validation Missed:"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected output to contain %q, got %s", want, out)
+		}
+	}
+}
+
+func TestConsoleWriterIncludesValidationModeSummaryWhenEnabled(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer := NewConsoleWriter(&buf, nil)
+	writer.SetValidationMode(true)
+	writer.RecordSkip(scanner.FileMetadata{FilePath: "skip.txt"}, "max size")
+	writer.RecordSuppressedFinding(scanner.SuppressedFinding{FilePath: "suppressed.env", RuleID: "content.password_assignment_indicators"})
+	writer.RecordVisibleFinding(sampleFinding())
+	writer.RecordVisibleFinding(sampleConfigOnlyFinding())
+	writer.RecordDowngradedFinding(sampleConfigOnlyFinding())
+	if err := writer.WriteFinding(sampleFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"Validation Mode: total=3 suppressed=1 visible=2 downgraded=1", "high_confidence=1", "skipped_files=1"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected output to contain %q, got %s", want, out)
 		}
@@ -286,7 +533,7 @@ func TestHTMLWriterRendersStandaloneTriageReport(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, want := range []string{"Snablr Scan Report", "Version", "quickFilter", "severityFilter", "categoryFilter", "confidenceFilter", "sourceFilter", "signalFilter", "scopeFilter", "correlatedOnly", "hideConfigOnly", "hideLowConfidence", "hideNonActionable", "resetFilters", "filterStatus", "Severity Summary", "Category Summary", "Host Summary", "SYSVOL", "Signal Type", "Password Export Filename", "Show Evidence", "Visible Evidence", "Raw Supporting Signals", "password = ReplaceMe123!", "user = alice", "Line Number", "Heuristic file hit", "Config artifact only.", "filename matched a heuristic naming pattern covered by the rule.", "Rule Explanation", "confidence high", "Supporting Signals", "Remediation", "data-triage=\"config-only\"", "data-actionable=\"false\""} {
+	for _, want := range []string{"Snablr Scan Report", "Version", "quickFilter", "severityFilter", "categoryFilter", "confidenceFilter", "sourceFilter", "signalFilter", "scopeFilter", "correlatedOnly", "hideConfigOnly", "hideLowConfidence", "hideNonActionable", "resetFilters", "filterStatus", "Severity Summary", "Category Summary", "Host Summary", "SYSVOL", "Signal Type", "Password Export Filename", "Show Evidence", "Visible Evidence", "Raw Supporting Signals", "password = ReplaceMe123!", "user = alice", "Line Number", "Heuristic file hit", "Config artifact only.", "filename matched a heuristic naming pattern covered by the rule.", "Rule Explanation", "confidence high", "Supporting Signals", "Confidence Breakdown", "Content signal strength", "Value quality:", "Final score:", "Remediation", "data-triage=\"config-only\"", "data-actionable=\"false\""} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected html output to contain %q", want)
 		}
@@ -323,6 +570,33 @@ func TestHTMLWriterShowsDiffSummaryAndHighlights(t *testing.T) {
 
 	out := buf.String()
 	for _, want := range []string{"Baseline Diff", "Changed Since Baseline", "badge diff-changed", "status-changed"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected html output to contain %q", want)
+		}
+	}
+}
+
+func TestHTMLWriterIncludesValidationSectionWhenManifestIsSet(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer, err := NewHTMLWriter(&buf, nil)
+	if err != nil {
+		t.Fatalf("NewHTMLWriter returned error: %v", err)
+	}
+	writer.SetValidationManifest(writeValidationManifest(t))
+	if err := writer.WriteFinding(sampleFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.WriteFinding(sampleConfigOnlyFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"Seeded Validation", "Config Suppressed", "Actionable Promoted", "Over-Promoted Items", "Missed Expected Items", "correlated / high-confidence"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected html output to contain %q", want)
 		}

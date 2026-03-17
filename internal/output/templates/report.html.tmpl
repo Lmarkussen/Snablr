@@ -786,6 +786,7 @@
           <a href="#severity-summary">Severity Summary</a>
           <a href="#category-summary">Category Summary</a>
           <a href="#host-summary">Host Summary</a>
+          {{- if .Validation }}<a href="#validation-summary">Validation</a>{{- end }}
           <a href="#findings">Findings</a>
         </div>
       </div>
@@ -899,6 +900,105 @@
         <div class="card-meta">Start {{ formatScanTime .Summary.StartedAt }} · End {{ formatScanTime .Summary.EndedAt }}</div>
       </article>
     </section>
+
+    {{- if .Validation }}
+    <section id="validation-summary">
+      <div class="section-head">
+        <h2>Seeded Validation</h2>
+        <span class="section-note">Expected seeded outcomes compared to the findings surfaced in this run.</span>
+      </div>
+      <div class="summary-grid">
+        <article class="card">
+          <span class="card-label">Expected</span>
+          <span class="card-value">{{ .Validation.ExpectedItems }}</span>
+        </article>
+        <article class="card">
+          <span class="card-label">Detected</span>
+          <span class="card-value">{{ .Validation.FoundItems }}</span>
+        </article>
+        <article class="card">
+          <span class="card-label">Missed</span>
+          <span class="card-value">{{ .Validation.MissedItems }}</span>
+        </article>
+        <article class="card">
+          <span class="card-label">Unexpected</span>
+          <span class="card-value">{{ .Validation.UnexpectedFindings }}</span>
+        </article>
+        <article class="card">
+          <span class="card-label">Config Suppressed</span>
+          <span class="card-value">{{ .Validation.SuppressedConfigOnly }}</span>
+        </article>
+        <article class="card">
+          <span class="card-label">Actionable Promoted</span>
+          <span class="card-value">{{ .Validation.PromotedActionable }}</span>
+        </article>
+        <article class="card">
+          <span class="card-label">Correlated Promoted</span>
+          <span class="card-value">{{ .Validation.PromotedCorrelated }}</span>
+        </article>
+      </div>
+
+      {{- if .Validation.ClassCoverage }}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Expected Class</th>
+              <th>Planted</th>
+              <th>Detected</th>
+              <th>Missed</th>
+              <th>Suppressed</th>
+              <th>Downgraded</th>
+              <th>Promoted</th>
+              <th>Mismatched</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{- range .Validation.ClassCoverage }}
+            <tr>
+              <td><strong>{{ .Label }}</strong></td>
+              <td>{{ .Planted }}</td>
+              <td>{{ .Detected }}</td>
+              <td>{{ .Missed }}</td>
+              <td>{{ .Suppressed }}</td>
+              <td>{{ .Downgraded }}</td>
+              <td>{{ .Promoted }}</td>
+              <td>{{ .Mismatched }}</td>
+            </tr>
+            {{- end }}
+          </tbody>
+        </table>
+      </div>
+      {{- end }}
+
+      <div class="severity-grid">
+        <article class="card">
+          <span class="card-label">Missed Expected Items</span>
+          <div class="card-meta">
+            {{- if .Validation.MissedExpected }}
+            {{- range .Validation.MissedExpected }}
+            <div><strong>{{ .Label }}</strong> · {{ valueOrDash .Host }}/{{ valueOrDash .Share }}/{{ .Path }}</div>
+            {{- end }}
+            {{- else }}
+            <div>None</div>
+            {{- end }}
+          </div>
+        </article>
+        <article class="card">
+          <span class="card-label">Over-Promoted Items</span>
+          <div class="card-meta">
+            {{- if .Validation.OverPromoted }}
+            {{- range .Validation.OverPromoted }}
+            <div><strong>{{ .Label }}</strong> · {{ valueOrDash .Host }}/{{ valueOrDash .Share }}/{{ .Path }} · observed {{ valueOrDash .ObservedTriageClass }} / {{ valueOrDash .ObservedConfidence }}</div>
+            {{- end }}
+            {{- else }}
+            <div>None</div>
+            {{- end }}
+          </div>
+        </article>
+      </div>
+    </section>
+    {{- end }}
 
     {{- if .DiffSummary }}
     <section id="diff-summary">
@@ -1269,6 +1369,32 @@
 	                    <ul class="confidence-reasons">
 	                      {{- range .Finding.ConfidenceReasons }}
 	                      <li>{{ . }}</li>
+	                      {{- end }}
+	                    </ul>
+	                  </div>
+	                  {{- end }}
+	                  {{- if or .Finding.ConfidenceBreakdown.BaseScore .Finding.ConfidenceBreakdown.ValueQualityScore .Finding.ConfidenceBreakdown.ValueQualityReason }}
+	                  <div>
+	                    <strong>Confidence Breakdown</strong>
+	                    <ul class="confidence-reasons">
+	                      <li>Base score: {{ .Finding.ConfidenceBreakdown.BaseScore }}</li>
+	                      <li>Content signal strength: {{ .Finding.ConfidenceBreakdown.ContentSignalStrength }}</li>
+	                      <li>Heuristic signal contribution: {{ .Finding.ConfidenceBreakdown.HeuristicSignalContribution }}</li>
+	                      <li>Path/context contribution: {{ .Finding.ConfidenceBreakdown.PathContextContribution }}</li>
+	                      <li>Correlation contribution: {{ .Finding.ConfidenceBreakdown.CorrelationContribution }}</li>
+	                      {{- if or .Finding.ConfidenceBreakdown.ValueQualityScore .Finding.ConfidenceBreakdown.ValueQualityReason }}
+	                      <li>
+	                        Value quality:
+	                        {{- if .Finding.ConfidenceBreakdown.ValueQualityLabel }} {{ .Finding.ConfidenceBreakdown.ValueQualityLabel }}{{ end -}}
+	                        {{- if .Finding.ConfidenceBreakdown.ValueQualityScore }} (score {{ .Finding.ConfidenceBreakdown.ValueQualityScore }}){{ end -}}
+	                        {{- if .Finding.ConfidenceBreakdown.ValueQualityReason }}. {{ .Finding.ConfidenceBreakdown.ValueQualityReason }}{{ end -}}
+	                      </li>
+	                      {{- end }}
+	                      {{- if .Finding.ConfidenceBreakdown.TriageAdjustment }}
+	                      <li>Triage adjustment: {{ if gt .Finding.ConfidenceBreakdown.TriageAdjustment 0 }}+{{ end }}{{ .Finding.ConfidenceBreakdown.TriageAdjustment }}</li>
+	                      {{- end }}
+	                      {{- if .Finding.ConfidenceBreakdown.FinalScore }}
+	                      <li>Final score: {{ .Finding.ConfidenceBreakdown.FinalScore }}</li>
 	                      {{- end }}
 	                    </ul>
 	                  </div>

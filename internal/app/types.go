@@ -22,6 +22,8 @@ type ScanOptions struct {
 	PrioritizeADShares         bool
 	OnlyADShares               bool
 	Baseline                   string
+	SeedManifest               string
+	ValidationMode             bool
 	MaxScanTime                string
 	CheckpointFile             string
 	Resume                     bool

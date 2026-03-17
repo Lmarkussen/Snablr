@@ -6,23 +6,29 @@ import (
 	"strings"
 	"sync"
 
+	"snablr/internal/diff"
 	"snablr/internal/metrics"
 	"snablr/internal/scanner"
 )
 
 type ConsoleWriter struct {
-	w       io.Writer
-	closer  io.Closer
-	mu      sync.Mutex
-	metrics metrics.Snapshot
-	summary *summaryCollector
+	w                   io.Writer
+	closer              io.Closer
+	mu                  sync.Mutex
+	metrics             metrics.Snapshot
+	summary             *summaryCollector
+	findings            []scanner.Finding
+	manifest            string
+	baselinePerformance *diff.PerformanceSummary
+	validationMode      *validationModeCollector
 }
 
 func NewConsoleWriter(w io.Writer, closer io.Closer) *ConsoleWriter {
 	return &ConsoleWriter{
-		w:       w,
-		closer:  closer,
-		summary: newSummaryCollector(),
+		w:              w,
+		closer:         closer,
+		summary:        newSummaryCollector(),
+		validationMode: newValidationModeCollector(),
 	}
 }
 
@@ -31,6 +37,7 @@ func (c *ConsoleWriter) WriteFinding(f scanner.Finding) error {
 	defer c.mu.Unlock()
 
 	c.summary.RecordFinding(f)
+	c.findings = append(c.findings, f)
 
 	if _, err := fmt.Fprintf(c.w, "[%s] %s\n", strings.ToUpper(f.Severity), f.RuleID); err != nil {
 		return err
@@ -177,6 +184,42 @@ func (c *ConsoleWriter) SetMetricsSnapshot(snapshot metrics.Snapshot) {
 	c.metrics = snapshot
 }
 
+func (c *ConsoleWriter) SetValidationManifest(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.manifest = path
+}
+
+func (c *ConsoleWriter) SetValidationMode(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.validationMode.SetEnabled(enabled)
+}
+
+func (c *ConsoleWriter) RecordSuppressedFinding(event scanner.SuppressedFinding) {
+	c.validationMode.RecordSuppressedFinding(event)
+}
+
+func (c *ConsoleWriter) RecordVisibleFinding(f scanner.Finding) {
+	c.validationMode.RecordVisibleFinding(f)
+}
+
+func (c *ConsoleWriter) RecordDowngradedFinding(f scanner.Finding) {
+	c.validationMode.RecordDowngradedFinding(f)
+}
+
+func (c *ConsoleWriter) SetBaselinePerformance(summary *diff.PerformanceSummary) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if summary == nil {
+		c.baselinePerformance = nil
+		return
+	}
+	clone := *summary
+	clone.ClassificationDistribution = append([]diff.ClassificationSummary{}, summary.ClassificationDistribution...)
+	c.baselinePerformance = &clone
+}
+
 func (c *ConsoleWriter) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -217,11 +260,149 @@ func (c *ConsoleWriter) Close() error {
 			}
 		}
 	}
+	performanceSummary := buildPerformanceSummary(snapshot, c.findings)
+	if _, err := fmt.Fprintf(c.w, "Performance: files_scanned=%d findings=%d duration_ms=%d files_per_second=%.2f\n",
+		performanceSummary.FilesScanned,
+		performanceSummary.FindingsTotal,
+		performanceSummary.DurationMS,
+		performanceSummary.FilesPerSecond,
+	); err != nil {
+		return err
+	}
+	if len(performanceSummary.ClassificationDistribution) > 0 {
+		if _, err := fmt.Fprintf(c.w, "Classification Distribution: %s\n", formatClassificationSummary(performanceSummary.ClassificationDistribution)); err != nil {
+			return err
+		}
+	}
+	if comparison := buildPerformanceComparison(performanceSummary, c.baselinePerformance); comparison != nil {
+		if _, err := fmt.Fprintf(c.w, "Performance Comparison: findings_delta=%+d duration_delta_ms=%+d files_per_second_delta=%+.2f\n",
+			comparison.FindingsDelta,
+			comparison.DurationDeltaMS,
+			comparison.FilesPerSecondDelta,
+		); err != nil {
+			return err
+		}
+		if len(comparison.ClassificationChanges) > 0 {
+			if _, err := fmt.Fprintf(c.w, "Classification Changes: %s\n", formatClassificationDeltas(comparison.ClassificationChanges)); err != nil {
+				return err
+			}
+		}
+	}
+	if validationMode := c.validationMode.Summary(snapshot); validationMode != nil {
+		if _, err := fmt.Fprintf(c.w, "Validation Mode: total=%d suppressed=%d visible=%d downgraded=%d false_positive_candidates=%d high_confidence=%d high_confidence_ratio=%.2f skipped_files=%d\n",
+			validationMode.TotalFindings,
+			validationMode.SuppressedFindings,
+			validationMode.VisibleFindings,
+			validationMode.DowngradedFindings,
+			validationMode.FalsePositiveCandidates,
+			validationMode.HighConfidenceFindings,
+			validationMode.HighConfidenceRatio,
+			validationMode.SkippedFiles,
+		); err != nil {
+			return err
+		}
+	}
+
+	validation, err := buildValidationSummary(c.manifest, c.findings)
+	if err != nil {
+		return err
+	}
+	if validation != nil && validation.HasValidation {
+		if _, err := fmt.Fprintf(c.w, "Validation: expected=%d found=%d missed=%d unexpected=%d suppressed_config_only=%d promoted_actionable=%d promoted_correlated=%d\n",
+			validation.ExpectedItems,
+			validation.FoundItems,
+			validation.MissedItems,
+			validation.UnexpectedFindings,
+			validation.SuppressedConfigOnly,
+			validation.PromotedActionable,
+			validation.PromotedCorrelated,
+		); err != nil {
+			return err
+		}
+		if len(validation.ClassCoverage) > 0 {
+			if _, err := fmt.Fprintln(c.w, "Validation Classes:"); err != nil {
+				return err
+			}
+			for _, class := range validation.ClassCoverage {
+				if _, err := fmt.Fprintf(c.w, "  %s: planted=%d detected=%d missed=%d matched=%d suppressed=%d downgraded=%d promoted=%d mismatched=%d\n",
+					class.Label,
+					class.Planted,
+					class.Detected,
+					class.Missed,
+					class.Matched,
+					class.Suppressed,
+					class.Downgraded,
+					class.Promoted,
+					class.Mismatched,
+				); err != nil {
+					return err
+				}
+			}
+		}
+		if len(validation.MissedExpected) > 0 {
+			if _, err := fmt.Fprintln(c.w, "Validation Missed:"); err != nil {
+				return err
+			}
+			for _, item := range limitValidationItems(validation.MissedExpected, 5) {
+				if _, err := fmt.Fprintf(c.w, "  [%s] %s/%s/%s %s\n", item.Label, valueOrDash(item.Host), valueOrDash(item.Share), item.Path, item.Reason); err != nil {
+					return err
+				}
+			}
+		}
+		if len(validation.OverPromoted) > 0 {
+			if _, err := fmt.Fprintln(c.w, "Validation Over-Promoted:"); err != nil {
+				return err
+			}
+			for _, item := range limitValidationItems(validation.OverPromoted, 5) {
+				if _, err := fmt.Fprintf(c.w, "  [%s] %s/%s/%s observed=%s confidence=%s correlated=%t %s\n",
+					item.Label,
+					valueOrDash(item.Host),
+					valueOrDash(item.Share),
+					item.Path,
+					valueOrDash(item.ObservedTriageClass),
+					valueOrDash(item.ObservedConfidence),
+					item.ObservedCorrelated,
+					item.Reason,
+				); err != nil {
+					return err
+				}
+			}
+		}
+	}
 
 	if c.closer == nil {
 		return nil
 	}
 	return c.closer.Close()
+}
+
+func limitValidationItems(values []validationItem, max int) []validationItem {
+	if len(values) <= max || max <= 0 {
+		return values
+	}
+	return values[:max]
+}
+
+func formatClassificationSummary(values []diff.ClassificationSummary) string {
+	parts := make([]string, 0, len(values))
+	for _, item := range values {
+		parts = append(parts, fmt.Sprintf("%s=%d", item.Class, item.Count))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatClassificationDeltas(values []diff.ClassificationDelta) string {
+	parts := make([]string, 0, len(values))
+	for _, item := range values {
+		if item.Delta == 0 {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s=%+d", item.Class, item.Delta))
+	}
+	if len(parts) == 0 {
+		return "no material classification changes"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func consoleEvidenceLines(f scanner.Finding) []string {

@@ -11,13 +11,19 @@ import (
 	"time"
 )
 
-const checkpointVersion = 1
+const checkpointVersion = 2
+
+type fileState struct {
+	Size       int64
+	ModifiedAt time.Time
+	Legacy     bool
+}
 
 type Store struct {
 	path   string
 	dirty  bool
 	mu     sync.RWMutex
-	files  map[string]struct{}
+	files  map[string]fileState
 	hosts  map[string]struct{}
 	shares map[string]struct{}
 }
@@ -30,7 +36,7 @@ func Open(path string, resume bool) (*Store, error) {
 
 	store := &Store{
 		path:   path,
-		files:  make(map[string]struct{}),
+		files:  make(map[string]fileState),
 		hosts:  make(map[string]struct{}),
 		shares: make(map[string]struct{}),
 	}
@@ -51,7 +57,7 @@ func Open(path string, resume bool) (*Store, error) {
 	if err := json.Unmarshal(data, &checkpoint); err != nil {
 		return nil, fmt.Errorf("parse checkpoint file %s: %w", path, err)
 	}
-	if checkpoint.Version != 0 && checkpoint.Version != checkpointVersion {
+	if checkpoint.Version != 0 && checkpoint.Version != 1 && checkpoint.Version != checkpointVersion {
 		return nil, fmt.Errorf("checkpoint file %s uses unsupported version %d", path, checkpoint.Version)
 	}
 
@@ -62,7 +68,17 @@ func Open(path string, resume bool) (*Store, error) {
 		store.shares[normalizeKey(share)] = struct{}{}
 	}
 	for _, file := range checkpoint.CompletedFiles {
-		store.files[normalizeKey(file)] = struct{}{}
+		store.files[normalizeKey(file)] = fileState{Legacy: true}
+	}
+	for _, file := range checkpoint.FileStates {
+		key := normalizeKey(file.Key)
+		if key == "" {
+			continue
+		}
+		store.files[key] = fileState{
+			Size:       file.Size,
+			ModifiedAt: file.ModifiedAt.UTC(),
+		}
 	}
 
 	return store, nil
@@ -89,7 +105,8 @@ func (s *Store) Save() error {
 		UpdatedAt:       time.Now().UTC(),
 		CompletedHosts:  sortedKeys(s.hosts),
 		CompletedShares: sortedKeys(s.shares),
-		CompletedFiles:  sortedKeys(s.files),
+		CompletedFiles:  legacyFileKeys(s.files),
+		FileStates:      sortedFileStates(s.files),
 	}
 
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
@@ -135,13 +152,25 @@ func (s *Store) IsShareComplete(host, share string) bool {
 	return ok
 }
 
-func (s *Store) IsFileComplete(host, share, path string) bool {
+func (s *Store) IsFileComplete(host, share, path string, size int64, modifiedAt time.Time) bool {
 	if s == nil {
 		return false
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	_, ok := s.files[FileKey(host, share, path)]
+	state, ok := s.files[FileKey(host, share, path)]
+	if !ok {
+		return false
+	}
+	if state.Legacy {
+		return true
+	}
+	if state.Size != size {
+		return false
+	}
+	if !state.ModifiedAt.IsZero() && !modifiedAt.IsZero() && !state.ModifiedAt.Equal(modifiedAt.UTC()) {
+		return false
+	}
 	return ok
 }
 
@@ -159,11 +188,14 @@ func (s *Store) MarkShareComplete(host, share string) {
 	s.mark(s.shares, ShareKey(host, share))
 }
 
-func (s *Store) MarkFileComplete(host, share, path string) {
+func (s *Store) MarkFileComplete(host, share, path string, size int64, modifiedAt time.Time) {
 	if s == nil {
 		return
 	}
-	s.mark(s.files, FileKey(host, share, path))
+	s.markFile(FileKey(host, share, path), fileState{
+		Size:       size,
+		ModifiedAt: modifiedAt.UTC(),
+	})
 }
 
 func (s *Store) mark(bucket map[string]struct{}, key string) {
@@ -176,6 +208,20 @@ func (s *Store) mark(bucket map[string]struct{}, key string) {
 		return
 	}
 	bucket[key] = struct{}{}
+	s.dirty = true
+}
+
+func (s *Store) markFile(key string, state fileState) {
+	if key == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.files[key]
+	if ok && current == state {
+		return
+	}
+	s.files[key] = state
 	s.dirty = true
 }
 
@@ -211,6 +257,35 @@ func sortedKeys(values map[string]struct{}) []string {
 		out = append(out, value)
 	}
 	sort.Strings(out)
+	return out
+}
+
+func legacyFileKeys(values map[string]fileState) []string {
+	out := make([]string, 0)
+	for key, state := range values {
+		if state.Legacy {
+			out = append(out, key)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedFileStates(values map[string]fileState) []CompletedFileState {
+	out := make([]CompletedFileState, 0, len(values))
+	for key, state := range values {
+		if state.Legacy {
+			continue
+		}
+		out = append(out, CompletedFileState{
+			Key:        key,
+			Size:       state.Size,
+			ModifiedAt: state.ModifiedAt,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Key < out[j].Key
+	})
 	return out
 }
 

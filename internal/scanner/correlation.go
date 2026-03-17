@@ -142,6 +142,10 @@ func correlateGroup(meta FileMetadata, group []Finding) Finding {
 
 	score := 0
 	distinctSignals := 0
+	contentContribution := 0
+	heuristicContribution := 0
+	pathContextContribution := 0
+	correlationContribution := 0
 	for signalType, weight := range weightsByType {
 		capWeight := signalWeightCaps[signalType]
 		if capWeight == 0 {
@@ -152,16 +156,27 @@ func correlateGroup(meta FileMetadata, group []Finding) Finding {
 		}
 		score += weight
 		distinctSignals++
+		switch signalType {
+		case "content", "validated":
+			contentContribution += weight
+		case "filename", "extension":
+			heuristicContribution += weight
+		case "path", "share_priority", "planner_priority":
+			pathContextContribution += weight
+		}
 	}
 	switch {
 	case distinctSignals >= 4:
 		score += 18
+		correlationContribution = 18
 		reasons = append(reasons, "multiple independent signal types increased confidence")
 	case distinctSignals >= 3:
 		score += 14
+		correlationContribution = 14
 		reasons = append(reasons, "multiple independent signal types increased confidence")
 	case distinctSignals >= 2:
 		score += 8
+		correlationContribution = 8
 		reasons = append(reasons, "multiple independent signal types increased confidence")
 	}
 	if score > 100 {
@@ -179,7 +194,11 @@ func correlateGroup(meta FileMetadata, group []Finding) Finding {
 	correlated.ConfidenceReasons = uniqueSorted(reasons)
 	correlated.Tags = uniqueSorted(tags)
 	correlated.MatchReason = correlationReason(correlated)
-	return applyTriageMetadata(correlated)
+	correlated.ConfidenceBreakdown = buildConfidenceBreakdown(correlated, score, contentContribution, heuristicContribution, pathContextContribution, correlationContribution)
+	correlated = applyTriageMetadata(correlated)
+	correlated.ConfidenceBreakdown.FinalScore = correlated.ConfidenceScore
+	correlated.ConfidenceBreakdown.TriageAdjustment = correlated.ConfidenceScore - correlated.ConfidenceBreakdown.BaseScore
+	return correlated
 }
 
 func allowsContextBoosts(group []Finding) bool {
@@ -284,6 +303,56 @@ func confidenceLevelForScore(score int) string {
 	default:
 		return "low"
 	}
+}
+
+func buildConfidenceBreakdown(f Finding, baseScore, contentContribution, heuristicContribution, pathContextContribution, correlationContribution int) ConfidenceBreakdown {
+	valueQualityScore, valueQualityLabel, valueQualityReason := valueQualityAssessment(f)
+	return ConfidenceBreakdown{
+		BaseScore:                   baseScore,
+		FinalScore:                  baseScore,
+		ContentSignalStrength:       contentContribution,
+		HeuristicSignalContribution: heuristicContribution,
+		ValueQualityScore:           valueQualityScore,
+		ValueQualityLabel:           valueQualityLabel,
+		ValueQualityReason:          valueQualityReason,
+		CorrelationContribution:     correlationContribution,
+		PathContextContribution:     pathContextContribution,
+	}
+}
+
+func valueQualityAssessment(f Finding) (int, string, string) {
+	quality := assessFindingValueQuality(f)
+	return quality.Score, quality.Label, quality.Reason
+}
+
+func hasSignalType(f Finding, signalType string) bool {
+	signalType = strings.TrimSpace(signalType)
+	if signalType == "" {
+		return false
+	}
+	for _, candidate := range f.MatchedSignalTypes {
+		if strings.EqualFold(strings.TrimSpace(candidate), signalType) {
+			return true
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(f.SignalType), signalType) {
+		return true
+	}
+	for _, signal := range f.SupportingSignals {
+		if strings.EqualFold(strings.TrimSpace(signal.SignalType), signalType) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasMeaningfulSensitiveValue(blob string) bool {
+	quality := assessExtractedValuesQuality(extractedSensitiveValues(blob))
+	return !quality.Weak && quality.Score >= 8
+}
+
+func hasPlaceholderOnlyValue(blob string) bool {
+	return assessExtractedValuesQuality(extractedSensitiveValues(blob)).Weak
 }
 
 func pathContextSignal(meta FileMetadata) (SupportingSignal, bool) {

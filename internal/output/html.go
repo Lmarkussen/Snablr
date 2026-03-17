@@ -28,6 +28,7 @@ type HTMLWriter struct {
 	metrics  metrics.Snapshot
 	summary  *summaryCollector
 	template *template.Template
+	manifest string
 	w        io.Writer
 }
 
@@ -151,6 +152,12 @@ func (h *HTMLWriter) SetBaselineFindings(findings []scanner.Finding) {
 	h.baseline = cloneFindings(findings)
 }
 
+func (h *HTMLWriter) SetValidationManifest(path string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.manifest = path
+}
+
 func (h *HTMLWriter) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -168,6 +175,13 @@ func (h *HTMLWriter) Close() error {
 	severitySummaries := buildSeveritySummaries(h.findings)
 	filterOptions := buildFilterOptions(h.findings)
 	summary := h.summary.Snapshot()
+	validation, err := buildValidationSummary(h.manifest, h.findings)
+	if err != nil {
+		if h.closer != nil {
+			_ = h.closer.Close()
+		}
+		return err
+	}
 
 	data := struct {
 		Version           string
@@ -181,6 +195,7 @@ func (h *HTMLWriter) Close() error {
 		RemovedFindings   []scanner.Finding
 		CategoryGroups    []htmlCategoryGroup
 		FilterOptions     reportFilterOptions
+		Validation        *validationSummary
 	}{
 		Version:           version.Short(),
 		Summary:           summary,
@@ -193,6 +208,7 @@ func (h *HTMLWriter) Close() error {
 		RemovedFindings:   removedFindings(diffResult),
 		CategoryGroups:    categoryGroups,
 		FilterOptions:     filterOptions,
+		Validation:        validation,
 	}
 
 	if err := h.template.ExecuteTemplate(h.w, "report.html.tmpl", data); err != nil {

@@ -96,10 +96,20 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 	if err != nil {
 		return VerificationReport{}, err
 	}
+	return verifyFindings(manifestPath, report.Findings, manifest), nil
+}
 
+func VerifyFindings(manifestPath string, findings []scanner.Finding) (VerificationReport, error) {
+	manifest, err := LoadManifest(manifestPath)
+	if err != nil {
+		return VerificationReport{}, err
+	}
+	return verifyFindings(manifestPath, findings, manifest), nil
+}
+
+func verifyFindings(manifestPath string, findings []scanner.Finding, manifest Manifest) VerificationReport {
 	result := VerificationReport{
 		ManifestPath:         manifestPath,
-		ResultsPath:          resultsPath,
 		Found:                make([]VerifiedSeedItem, 0),
 		Missed:               make([]SeedManifestEntry, 0),
 		Unexpected:           make([]scanner.Finding, 0),
@@ -150,7 +160,7 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 	}
 
 	findingsByKey := make(map[string][]scanner.Finding)
-	for _, finding := range report.Findings {
+	for _, finding := range findings {
 		key := findingKey(finding)
 		if key == "" {
 			continue
@@ -327,7 +337,7 @@ func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
 	result.MissedItems = len(result.Missed)
 	result.ExpectedItems = result.FoundItems + result.MissedItems
 	result.UnexpectedFindings = len(result.Unexpected)
-	return result, nil
+	return result
 }
 
 func PrintVerificationReport(report VerificationReport) {

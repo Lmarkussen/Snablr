@@ -73,8 +73,18 @@ func isWeakReviewFinding(f Finding) bool {
 }
 
 func hasStrongEvidence(f Finding) bool {
+	quality := assessFindingValueQuality(f)
+	if quality.Weak {
+		switch strings.ToLower(strings.TrimSpace(f.Category)) {
+		case "configuration", "credentials", "infrastructure", "database-access":
+			return false
+		}
+	}
+
 	switch strings.ToLower(strings.TrimSpace(findingPrimarySignal(f))) {
-	case "content", "validated":
+	case "validated":
+		return true
+	case "content":
 		return true
 	}
 

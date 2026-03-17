@@ -120,11 +120,11 @@ func (m *Manager) ShouldSkipShare(host, share string) bool {
 	return m.store.IsShareComplete(host, share)
 }
 
-func (m *Manager) ShouldSkipFile(host, share, path string) bool {
+func (m *Manager) ShouldSkipFile(host, share, path string, size int64, modifiedAt time.Time) bool {
 	if !m.Enabled() {
 		return false
 	}
-	return m.store.IsFileComplete(host, share, path)
+	return m.store.IsFileComplete(host, share, path, size, modifiedAt)
 }
 
 func (m *Manager) BeginShare(host, share string, fileCount int) {
@@ -222,13 +222,13 @@ func (m *Manager) AbortShare(host, share string) {
 	}
 }
 
-func (m *Manager) RecordFileResult(host, share, path string, success bool) {
+func (m *Manager) RecordFileResult(host, share, path string, size int64, modifiedAt time.Time, success bool) {
 	if !m.Enabled() {
 		return
 	}
 
 	if success {
-		m.store.MarkFileComplete(host, share, path)
+		m.store.MarkFileComplete(host, share, path, size, modifiedAt)
 	}
 
 	key := ShareKey(host, share)

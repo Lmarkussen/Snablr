@@ -81,8 +81,16 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		if err != nil {
 			return fmt.Errorf("load baseline %s: %w", cfg.Scan.Baseline, err)
 		}
-		output.SetBaselineFindings(sink, baseline.Findings)
+		output.SetBaselineReport(sink, baseline)
 		logger.Infof("loaded %d baseline finding(s) for diff reporting", len(baseline.Findings))
+	}
+	if strings.TrimSpace(cfg.Scan.SeedManifest) != "" {
+		output.SetValidationManifest(sink, cfg.Scan.SeedManifest)
+		logger.Infof("enabled seeded validation summary in reporting")
+	}
+	if cfg.Scan.ValidationMode {
+		output.SetValidationMode(sink, true)
+		logger.Infof("validation mode enabled")
 	}
 
 	recorder := metrics.NewCollector()
@@ -107,6 +115,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		MaxReadBytes:     cfg.Scan.MaxFileSize,
 		SnippetBytes:     120,
 		Recorder:         recorder,
+		ValidationMode:   cfg.Scan.ValidationMode,
 	}, manager, sink, logger)
 
 	resolvedTargets, err := discovery.Resolve(scanCtx, cfg.Scan, logger, recorder)
@@ -345,7 +354,7 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 				if !ok {
 					continue
 				}
-				if checkpoints != nil && checkpoints.ShouldSkipFile(remote.Host, remote.Share, remote.Path) {
+				if checkpoints != nil && checkpoints.ShouldSkipFile(remote.Host, remote.Share, remote.Path, remote.Size, remote.ModifiedAt) {
 					logger.Debugf("resume: skipping completed file %s/%s/%s", remote.Host, remote.Share, remote.Path)
 					continue
 				}
@@ -365,6 +374,7 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 					Name:                remote.Name,
 					Extension:           remote.Extension,
 					Size:                remote.Size,
+					ModifiedAt:          remote.ModifiedAt,
 					IsDir:               remote.IsDir,
 					FromSYSVOL:          strings.EqualFold(remote.Share, "SYSVOL"),
 					FromNETLOGON:        strings.EqualFold(remote.Share, "NETLOGON"),
@@ -390,7 +400,7 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 						if checkpoints == nil {
 							return
 						}
-						checkpoints.RecordFileResult(meta.Host, meta.Share, meta.FilePath, err == nil)
+						checkpoints.RecordFileResult(meta.Host, meta.Share, meta.FilePath, meta.Size, meta.ModifiedAt, err == nil)
 					},
 				}
 

@@ -24,13 +24,14 @@ var (
 )
 
 type RemoteFile struct {
-	Host      string
-	Share     string
-	Path      string
-	Name      string
-	Size      int64
-	IsDir     bool
-	Extension string
+	Host       string
+	Share      string
+	Path       string
+	Name       string
+	Size       int64
+	ModifiedAt time.Time
+	IsDir      bool
+	Extension  string
 }
 
 type ShareInfo struct {

@@ -162,20 +162,21 @@ func (h *HTMLWriter) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	categorySummaries := buildCategorySummaries(h.findings)
+	augmented := augmentFindingsForReporting(h.findings)
+	categorySummaries := buildCategorySummaries(augmented)
 	var diffResult *diff.DiffResult
 	statuses := map[diff.FindingFingerprint]diff.FindingDelta{}
 	if len(h.baseline) > 0 {
-		result := diff.Compare(h.baseline, h.findings)
+		result := diff.Compare(h.baseline, augmented)
 		diffResult = &result
 		statuses = diff.CurrentStatuses(result)
 	}
-	categoryGroups := groupFindingsByCategory(h.findings, categorySummaries, statuses)
-	hostSummaries := buildHostSummaries(h.findings)
-	severitySummaries := buildSeveritySummaries(h.findings)
-	filterOptions := buildFilterOptions(h.findings)
-	summary := h.summary.Snapshot()
-	validation, err := buildValidationSummary(h.manifest, h.findings)
+	categoryGroups := groupFindingsByCategory(augmented, categorySummaries, statuses)
+	hostSummaries := buildHostSummaries(augmented)
+	severitySummaries := buildSeveritySummaries(augmented)
+	filterOptions := buildFilterOptions(augmented)
+	summary := adjustedSummarySnapshot(h.summary.Snapshot(), h.findings, augmented)
+	validation, err := buildValidationSummary(h.manifest, augmented)
 	if err != nil {
 		if h.closer != nil {
 			_ = h.closer.Close()
@@ -282,6 +283,8 @@ func signalLabel(value string) string {
 		return "share priority"
 	case "planner_priority":
 		return "planner priority"
+	case "correlation":
+		return "correlation"
 	default:
 		return value
 	}
@@ -299,6 +302,8 @@ func signalClass(value string) string {
 		return "signal-extension"
 	case "path":
 		return "signal-path"
+	case "correlation":
+		return "signal-validated"
 	case "directory":
 		return "signal-directory"
 	default:
@@ -326,6 +331,8 @@ func signalMatchLabel(signal string) string {
 		return "Matched extension"
 	case "path":
 		return "Matched path token"
+	case "correlation":
+		return "Correlated evidence"
 	case "directory":
 		return "Matched directory token"
 	default:

@@ -37,23 +37,15 @@ func DiscoverLDAP(ctx context.Context, opts LDAPOptions, logger Logger) ([]Disco
 		return nil, fmt.Errorf("unable to determine a domain controller for ldap discovery")
 	}
 
-	conn, err := dialLDAP(domainContext.DomainController, opts.Timeout)
+	session, err := connectLDAPSession(opts, &domainContext, logger)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer session.Conn.Close()
 
-	rootDSE, err := preBindRootDSE(conn, &domainContext, logger)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := bindLDAP(conn, opts, domainContext.DomainName, logger); err != nil {
-		return nil, err
-	}
-
+	rootDSE := session.RootDSE
 	if rootDSE.DefaultNamingContext == "" && rootDSE.RootNamingContext == "" {
-		rootDSE, err = queryRootDSE(conn)
+		rootDSE, err = queryRootDSE(session.Conn)
 		if err != nil {
 			return nil, err
 		}
@@ -69,10 +61,10 @@ func DiscoverLDAP(ctx context.Context, opts LDAPOptions, logger Logger) ([]Disco
 		return nil, fmt.Errorf("ldap discovery: rootDSE did not return a naming context")
 	}
 	if logger != nil {
-		logger.Infof("ldap discovery: searching base DN %s", domainContext.BaseDN)
+		logger.Infof("ldap discovery: searching base DN %s using %s", domainContext.BaseDN, session.AuthMethod)
 	}
 
-	return queryComputerObjects(conn, domainContext.BaseDN, opts.PageSize, logger)
+	return queryComputerObjects(session.Conn, domainContext.BaseDN, opts.PageSize, logger)
 }
 
 func preBindRootDSE(conn *ldap.Conn, domainContext *DomainContext, logger Logger) (rootDSEInfo, error) {
@@ -129,31 +121,6 @@ func dialLDAP(dc string, timeout time.Duration) (*ldap.Conn, error) {
 	}
 	conn.SetTimeout(timeout)
 	return conn, nil
-}
-
-func bindLDAP(conn *ldap.Conn, opts LDAPOptions, domain string, logger Logger) error {
-	username := strings.TrimSpace(opts.Username)
-	password := opts.Password
-	if username == "" {
-		return nil
-	}
-
-	attempts := bindCandidates(username, domain)
-	var lastErr error
-	for _, attempt := range attempts {
-		if err := conn.Bind(attempt.Value, password); err != nil {
-			lastErr = err
-			continue
-		}
-		if logger != nil {
-			logger.Infof("ldap discovery: bind successful using %s format: %s", attempt.Label, attempt.Value)
-		}
-		return nil
-	}
-	if len(attempts) == 1 {
-		return fmt.Errorf("ldap discovery: bind failed for %s: %w", attempts[0].Value, lastErr)
-	}
-	return fmt.Errorf("ldap discovery: bind failed after trying %d username formats for %s: %w", len(attempts), username, lastErr)
 }
 
 type bindCandidate struct {

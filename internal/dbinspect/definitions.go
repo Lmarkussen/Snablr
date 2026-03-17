@@ -3,14 +3,22 @@ package dbinspect
 import "regexp"
 
 var (
-	quotedValueRegex = regexp.MustCompile(`"([^"\r\n]{8,})"|'([^'\r\n]{8,})'`)
-	tnsAliasRegex    = regexp.MustCompile(`(?im)^\s*([A-Za-z0-9_.-]+)\s*=\s*\(DESCRIPTION\b`)
-	tnsHostRegex     = regexp.MustCompile(`(?i)\bHOST\s*=\s*([^) \t\r\n]+)`)
-	tnsPortRegex     = regexp.MustCompile(`(?i)\bPORT\s*=\s*([0-9]{2,5})`)
-	tnsServiceRegex  = regexp.MustCompile(`(?i)\bSERVICE_NAME\s*=\s*([^) \t\r\n]+)`)
-	tnsSIDRegex      = regexp.MustCompile(`(?i)\bSID\s*=\s*([^) \t\r\n]+)`)
-	jdbcOracleRegex  = regexp.MustCompile(`(?i)^jdbc:oracle:[^@]+@(?://)?([^:/;]+)(?::([0-9]{2,5}))?/([A-Za-z0-9_.-]+)$`)
-	passwordKVRegex  = regexp.MustCompile(`(?i)\b(password|pwd)\s*=\s*([^;\r\n]+)`)
+	quotedValueRegex  = regexp.MustCompile(`"([^"\r\n]{8,})"|'([^'\r\n]{8,})'`)
+	tnsAliasRegex     = regexp.MustCompile(`(?im)^\s*([A-Za-z0-9_.-]+)\s*=\s*\(DESCRIPTION\b`)
+	tnsHostRegex      = regexp.MustCompile(`(?i)\bHOST\s*=\s*([^) \t\r\n]+)`)
+	tnsPortRegex      = regexp.MustCompile(`(?i)\bPORT\s*=\s*([0-9]{2,5})`)
+	tnsServiceRegex   = regexp.MustCompile(`(?i)\bSERVICE_NAME\s*=\s*([^) \t\r\n]+)`)
+	tnsSIDRegex       = regexp.MustCompile(`(?i)\bSID\s*=\s*([^) \t\r\n]+)`)
+	jdbcOracleRegex   = regexp.MustCompile(`(?i)^jdbc:oracle:[^@]+@(?://)?([^:/;]+)(?::([0-9]{2,5}))?/([A-Za-z0-9_.-]+)$`)
+	passwordKVRegex   = regexp.MustCompile(`(?i)\b(password|pwd)\s*=\s*([^;\r\n]+)`)
+	sqlMySQLDumpRegex = regexp.MustCompile(`(?im)^--\s+MySQL dump\b`)
+	sqlPgDumpRegex    = regexp.MustCompile(`(?im)^--\s+(PostgreSQL database dump|Dumped by pg_dump)\b`)
+	sqlCreateTable    = regexp.MustCompile(`(?im)\bCREATE\s+TABLE\b`)
+	sqlInsertInto     = regexp.MustCompile(`(?im)\bINSERT\s+INTO\b`)
+	sqlDropIfExists   = regexp.MustCompile(`(?im)\bDROP\s+TABLE\s+IF\s+EXISTS\b`)
+	sqlCopyFromStdin  = regexp.MustCompile(`(?im)\bCOPY\s+[^\r\n;]+\s+FROM\s+stdin;`)
+	sqlLockTables     = regexp.MustCompile(`(?im)\bLOCK\s+TABLES\b`)
+	sqlUnlockTables   = regexp.MustCompile(`(?im)\bUNLOCK\s+TABLES\b`)
 )
 
 var exactArtifactFiles = map[string]artifactDefinition{
@@ -135,6 +143,7 @@ var textLikeExtensions = map[string]struct{}{
 	".json":       {},
 	".ora":        {},
 	".properties": {},
+	".sql":        {},
 	".txt":        {},
 	".udl":        {},
 	".xml":        {},

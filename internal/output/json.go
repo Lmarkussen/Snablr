@@ -122,23 +122,24 @@ func (j *JSONWriter) Close() error {
 
 	var diffResult *diff.DiffResult
 	var statusByFingerprint map[diff.FindingFingerprint]diff.FindingDelta
+	augmented := augmentFindingsForReporting(j.findings)
 	if len(j.baseline) > 0 {
-		result := diff.Compare(j.baseline, j.findings)
+		result := diff.Compare(j.baseline, augmented)
 		diffResult = &result
 		statusByFingerprint = diff.CurrentStatuses(result)
 	}
 
 	report := jsonReport{
-		Summary:           j.summary.Snapshot(),
+		Summary:           adjustedSummarySnapshot(j.summary.Snapshot(), j.findings, augmented),
 		Metrics:           j.metrics,
-		CategorySummaries: buildCategorySummaries(j.findings),
-		Findings:          make([]jsonFinding, 0, len(j.findings)),
+		CategorySummaries: buildCategorySummaries(augmented),
+		Findings:          make([]jsonFinding, 0, len(augmented)),
 	}
-	performanceSummary := buildPerformanceSummary(report.Summary, j.findings)
+	performanceSummary := buildPerformanceSummary(report.Summary, augmented)
 	report.Performance = performanceSummaryToJSON(performanceSummary)
 	report.PerformanceComparison = performanceComparisonToJSON(buildPerformanceComparison(performanceSummary, j.baselinePerformance))
 	report.ValidationMode = j.validationMode.Summary(report.Summary)
-	validation, err := buildValidationSummary(j.manifest, j.findings)
+	validation, err := buildValidationSummary(j.manifest, augmented)
 	if err != nil {
 		if j.closer != nil {
 			_ = j.closer.Close()
@@ -146,7 +147,7 @@ func (j *JSONWriter) Close() error {
 		return err
 	}
 	report.Validation = validation
-	for _, finding := range j.findings {
+	for _, finding := range augmented {
 		report.Findings = append(report.Findings, toJSONFinding(finding, statusByFingerprint[diff.Fingerprint(finding)]))
 	}
 	if diffResult != nil {

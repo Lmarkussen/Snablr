@@ -75,6 +75,86 @@ rules:
     max_file_size: 0
     action: prioritize
 
+  # Safe default: exact secret-store artifact names are usually direct credential exposure review items.
+  - id: filename.secret_store_artifacts
+    name: Secret Store Artifacts
+    description: Detect exact high-value secret-store artifact filenames such as AD database or local password-hash stores.
+    type: filename
+    pattern: '(?i)^(ntds\.dit|shadow|sam)$'
+    case_sensitive: false
+    severity: critical
+    confidence: high
+    explanation: This filename is associated with an operating-system or directory-service secret store rather than a generic config file.
+    remediation: Restrict access immediately, verify whether the artifact belongs on the share, and rotate affected credentials if exposure is confirmed.
+    tags: [credentials, secret-store, filenames, remediation]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: prioritize
+
+  # Safe default: SYSTEM and SECURITY hives are only treated as high-value findings in known Windows hive locations.
+  - id: filename.windows_hive_artifacts
+    name: Windows Hive Artifacts
+    description: Detect exact SYSTEM and SECURITY registry hive filenames when they appear in known Windows credential-store locations.
+    type: filename
+    pattern: '(?i)^(system|security)$'
+    case_sensitive: false
+    severity: critical
+    confidence: high
+    explanation: This filename is associated with a Windows registry hive used for local credential extraction when found in standard hive-storage paths.
+    remediation: Restrict access immediately, verify why the hive copy exists on the share, and rotate affected credentials if exposure is confirmed.
+    tags: [credentials, secret-store, windows, filenames, remediation]
+    category: credentials
+    enabled: true
+    include_paths: [windows/system32/config, windows/repair, regback]
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: prioritize
+
+  # Safe default: copied AD database files are high-value credential-store artifacts even outside standard system paths.
+  - id: filename.ad_database_backup_artifacts
+    name: AD Database Backup Artifacts
+    description: Detect exact backup or copy filenames of the AD database artifact.
+    type: filename
+    pattern: '(?i)^(ntds\.dit\.(bak|old))$'
+    case_sensitive: false
+    severity: critical
+    confidence: high
+    explanation: This filename is an exact backup or copy variant of the Active Directory database artifact.
+    remediation: Restrict access immediately, verify why the backup exists on the share, and rotate affected credentials if exposure is confirmed.
+    tags: [credentials, secret-store, active-directory, filenames, remediation]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: prioritize
+
+  # Safe default: copied registry hives are only treated as high-value findings in known Windows hive or backup locations.
+  - id: filename.windows_hive_backup_artifacts
+    name: Windows Hive Backup Artifacts
+    description: Detect exact backup or copy filenames of Windows credential-relevant registry hives in known hive or backup locations.
+    type: filename
+    pattern: '(?i)^(sam|system|security)\.(bak|old)$'
+    case_sensitive: false
+    severity: critical
+    confidence: high
+    explanation: This filename is an exact backup or copy variant of a Windows registry hive used for local credential extraction when found in standard hive or backup paths.
+    remediation: Restrict access immediately, verify why the hive backup exists on the share, and rotate affected credentials if exposure is confirmed.
+    tags: [credentials, secret-store, windows, filenames, remediation]
+    category: credentials
+    enabled: true
+    include_paths: [windows/system32/config, windows/repair, regback, windowsimagebackup, system volume information]
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: prioritize
+
   # Organization-specific tuning candidate: broad department keywords vary significantly across environments.
   # Prefer a custom rule file with local department or export names instead of enabling this globally.
   - id: filename.business_sensitive_keywords

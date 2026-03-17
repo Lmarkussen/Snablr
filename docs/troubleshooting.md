@@ -69,6 +69,7 @@ No targets are discovered when running:
 - LDAP connectivity to a domain controller is blocked
 - domain detection failed
 - the supplied credentials do not work for LDAP bind
+- the server requires signing or stronger authentication and LDAPS is not reachable
 
 ### What To Check
 
@@ -77,6 +78,12 @@ No targets are discovered when running:
 - try `--base-dn 'DC=example,DC=local'` explicitly
 - raise logging with `--log-level debug`
 - confirm port and name resolution to the target DC
+
+Current bind behavior:
+
+- Snablr attempts LDAP simple bind first
+- if the server returns stronger-auth-required or confidentiality-required style errors, Snablr retries over LDAPS automatically
+- if both `389` and `636` are blocked or unusable, LDAP discovery still fails and explicit targets are the right fallback
 
 If LDAP discovery remains unreliable, fall back to explicit targets until domain context is confirmed.
 
@@ -269,6 +276,7 @@ See also:
 - the checkpoint file path changed between runs
 - the first run did not finish enough work to mark some shares or files complete
 - the checkpoint file was removed or overwritten
+- files changed size or modified timestamp between runs
 
 ### What To Check
 
@@ -276,8 +284,9 @@ See also:
 - inspect the checkpoint JSON directly
 - ensure the scan is not being restarted with a different host naming form
 - confirm the share/path filters are consistent between runs
+- confirm whether the files actually changed between runs
 
-Checkpoint behavior is designed to stay usable even for interrupted scans. Partial file completion should still be retained, and subsequent resumed runs should continue from the remaining work.
+Checkpoint behavior is designed to stay usable even for interrupted scans. Partial file completion should still be retained, and subsequent resumed runs should continue from the remaining work. Completed-file entries are invalidated when file size or modified timestamp changes.
 
 ## Time Limit Reached
 

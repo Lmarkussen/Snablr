@@ -119,8 +119,15 @@ How LDAP discovery works:
 1. Snablr checks for explicit targets
 2. if none are present, it tries to detect domain context
 3. it finds a domain controller or uses `dc`
-4. it queries LDAP for computer objects
-5. it merges those discovered hosts into the target pipeline
+4. it attempts LDAP simple bind with the configured credentials
+5. if the server requires stronger authentication or signing, it retries over LDAPS automatically
+6. it queries LDAP for computer objects
+7. it merges those discovered hosts into the target pipeline
+
+Notes:
+
+- the automatic fallback is transport-level only; it does not currently switch to Kerberos bind automatically
+- logs indicate which LDAP method was used so discovery behavior stays transparent during troubleshooting
 
 ### Share And Path Filters
 
@@ -169,12 +176,24 @@ Larger values increase coverage but also increase I/O and memory pressure.
 
 ### Runtime Control
 
+- `baseline`
+  Path to a previous JSON result used for comparison during the current scan
+- `seed_manifest`
+  Path to a seeder manifest JSON file so the report can include seeded expected-versus-observed validation
+- `validation_mode`
+  Enable extra diagnostic tracking for skipped files, suppressed findings, downgraded findings, and validation metrics
 - `max_scan_time`
   Maximum total scan time, for example `30m` or `2h`
 - `checkpoint_file`
   Path to the checkpoint JSON file
 - `resume`
   Resume from a previous checkpoint
+
+Resume behavior:
+
+- file completion is keyed by path plus file metadata
+- resumed scans reprocess files whose size or modified timestamp changed
+- this avoids the earlier path-only skip behavior for changed files without adding heavy content hashing by default
 
 ## `rules`
 

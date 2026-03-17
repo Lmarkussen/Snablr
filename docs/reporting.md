@@ -77,6 +77,8 @@ It includes:
 - phase metrics and timing data
 - category summaries
 - diff summary when a baseline is provided
+- seeded validation summary when `--seed-manifest` is provided
+- confidence breakdowns for why each finding scored the way it did
 - one structured object per finding
 
 Common finding fields:
@@ -227,6 +229,7 @@ Each finding row typically gives you:
 - rule explanation
 - remediation guidance
 - source context such as DFS, SYSVOL, NETLOGON, or planner priority
+- confidence breakdown covering content signal strength, value quality, correlation contribution, and path/context contribution
 
 Interpretation tips:
 
@@ -235,6 +238,7 @@ Interpretation tips:
 - the snippet shows the evidence that triggered the rule
 - the explanation tells you why the rule exists
 - the remediation guidance tells you what defensive action to consider next
+- the confidence breakdown tells you why a finding stayed low-value or was promoted
 
 ### 5. Use Filters And Groups
 
@@ -247,11 +251,32 @@ The quick filter is useful for narrowing by:
 - path fragment
 - tags
 
+Structured filters are also available in the standalone HTML report. They can be combined with the quick filter to narrow by:
+
+- severity
+- confidence
+- category
+- source
+- host/share
+- signal type
+- correlated findings only
+- actionable findings only
+- hide config-only findings
+- hide medium-or-lower confidence findings
+- reset filters back to the full report
+
 Practical examples:
 
 - filter on `SYSVOL` for AD-focused review
 - filter on `credentials` to focus on likely hardcoded secrets
 - filter on one hostname to review a single server in isolation
+
+The HTML view updates visible finding groups in place, so it is practical to move between:
+
+- all findings
+- only actionable findings
+- only correlated/high-confidence findings
+- everything except config-only review noise
 
 ## Diff / Baseline Reporting
 
@@ -287,6 +312,17 @@ When a baseline is supplied:
 
 - JSON includes `diff_summary`
 - HTML includes diff summary cards and finding highlights
+
+The JSON report also includes:
+
+- `performance`
+  Files scanned, findings, duration, and files-per-second
+- `performance_comparison`
+  Baseline deltas when `--baseline` is used
+- `validation`
+  Seeded expected-versus-observed summary when `--seed-manifest` is used
+- `validation_mode`
+  Diagnostic summary when `--validation-mode` is enabled
 
 This is useful when you want to focus on what changed since the last run rather than re-reading the full dataset.
 

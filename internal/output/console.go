@@ -38,7 +38,10 @@ func (c *ConsoleWriter) WriteFinding(f scanner.Finding) error {
 
 	c.summary.RecordFinding(f)
 	c.findings = append(c.findings, f)
+	return c.writeFindingLocked(f)
+}
 
+func (c *ConsoleWriter) writeFindingLocked(f scanner.Finding) error {
 	if _, err := fmt.Fprintf(c.w, "[%s] %s\n", strings.ToUpper(f.Severity), f.RuleID); err != nil {
 		return err
 	}
@@ -224,7 +227,22 @@ func (c *ConsoleWriter) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	snapshot := c.summary.Snapshot()
+	augmented := augmentFindingsForReporting(c.findings)
+	existing := make(map[string]struct{}, len(c.findings))
+	for _, finding := range c.findings {
+		existing[correlationFindingKey(finding)] = struct{}{}
+	}
+	for _, finding := range augmented {
+		key := correlationFindingKey(finding)
+		if _, ok := existing[key]; ok {
+			continue
+		}
+		if err := c.writeFindingLocked(finding); err != nil {
+			return err
+		}
+	}
+
+	snapshot := adjustedSummarySnapshot(c.summary.Snapshot(), c.findings, augmented)
 	if _, err := fmt.Fprintf(c.w, "Summary: hosts=%d shares=%d files=%d matches=%d skipped=%d read_errors=%d started=%s ended=%s\n",
 		snapshot.HostsScanned,
 		snapshot.SharesScanned,
@@ -260,7 +278,7 @@ func (c *ConsoleWriter) Close() error {
 			}
 		}
 	}
-	performanceSummary := buildPerformanceSummary(snapshot, c.findings)
+	performanceSummary := buildPerformanceSummary(snapshot, augmented)
 	if _, err := fmt.Fprintf(c.w, "Performance: files_scanned=%d findings=%d duration_ms=%d files_per_second=%.2f\n",
 		performanceSummary.FilesScanned,
 		performanceSummary.FindingsTotal,
@@ -303,7 +321,7 @@ func (c *ConsoleWriter) Close() error {
 		}
 	}
 
-	validation, err := buildValidationSummary(c.manifest, c.findings)
+	validation, err := buildValidationSummary(c.manifest, augmented)
 	if err != nil {
 		return err
 	}

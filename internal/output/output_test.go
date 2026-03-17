@@ -131,6 +131,60 @@ func sampleHeuristicFinding() scanner.Finding {
 	}
 }
 
+func sampleNTDSFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:             "filename.secret_store_artifacts",
+		RuleName:           "Secret Store Artifacts",
+		Severity:           "critical",
+		Confidence:         "low",
+		RuleConfidence:     "high",
+		ConfidenceScore:    18,
+		Category:           "credentials",
+		TriageClass:        "actionable",
+		Actionable:         true,
+		FilePath:           "Archive/Recovery/AD/NTDS.DIT",
+		Share:              "Archive",
+		Host:               "dc01",
+		SignalType:         "filename",
+		Match:              "NTDS.DIT",
+		MatchedText:        "NTDS.DIT",
+		MatchReason:        "filename matched a heuristic naming pattern covered by the rule.",
+		MatchedRuleIDs:     []string{"filename.secret_store_artifacts"},
+		MatchedSignalTypes: []string{"filename"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "filename", RuleID: "filename.secret_store_artifacts", RuleName: "Secret Store Artifacts", Match: "NTDS.DIT", Confidence: "high", Weight: 18, Reason: "exact AD database artifact was identified"},
+		},
+		Tags: []string{"credentials", "secret-store"},
+	}
+}
+
+func sampleSystemHiveFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:             "filename.windows_hive_artifacts",
+		RuleName:           "Windows Hive Artifacts",
+		Severity:           "critical",
+		Confidence:         "low",
+		RuleConfidence:     "high",
+		ConfidenceScore:    18,
+		Category:           "credentials",
+		TriageClass:        "actionable",
+		Actionable:         true,
+		FilePath:           "Archive/Recovery/AD/SYSTEM",
+		Share:              "Archive",
+		Host:               "dc01",
+		SignalType:         "filename",
+		Match:              "SYSTEM",
+		MatchedText:        "SYSTEM",
+		MatchReason:        "filename matched a heuristic naming pattern covered by the rule.",
+		MatchedRuleIDs:     []string{"filename.windows_hive_artifacts"},
+		MatchedSignalTypes: []string{"filename"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "filename", RuleID: "filename.windows_hive_artifacts", RuleName: "Windows Hive Artifacts", Match: "SYSTEM", Confidence: "high", Weight: 18, Reason: "exact SYSTEM hive artifact was identified"},
+		},
+		Tags: []string{"credentials", "secret-store", "windows"},
+	}
+}
+
 func sampleConfigOnlyFinding() scanner.Finding {
 	return scanner.Finding{
 		RuleID:            "filename.sensitive_config_names",
@@ -277,6 +331,75 @@ func TestJSONWriterGeneratesStructuredReport(t *testing.T) {
 	}
 	if len(report.Performance.ClassificationDistribution) == 0 || report.Performance.ClassificationDistribution[0].Class != "actionable" {
 		t.Fatalf("expected classification distribution in performance summary, got %#v", report.Performance)
+	}
+}
+
+func TestAugmentFindingsForReportingAddsADCorrelation(t *testing.T) {
+	t.Parallel()
+
+	augmented := augmentFindingsForReporting([]scanner.Finding{
+		sampleNTDSFinding(),
+		sampleSystemHiveFinding(),
+	})
+
+	if len(augmented) != 3 {
+		t.Fatalf("expected raw findings plus one correlated AD finding, got %#v", augmented)
+	}
+
+	found := false
+	for _, finding := range augmented {
+		if finding.RuleID != adCorrelationRuleID {
+			continue
+		}
+		found = true
+		if finding.Category != "active-directory" || !finding.Correlated || !finding.Actionable {
+			t.Fatalf("unexpected correlated AD finding: %#v", finding)
+		}
+		if finding.FilePath != sampleNTDSFinding().FilePath || finding.Confidence != "high" {
+			t.Fatalf("expected NTDS anchor and high confidence, got %#v", finding)
+		}
+	}
+	if !found {
+		t.Fatalf("expected correlated AD finding in augmented results, got %#v", augmented)
+	}
+}
+
+func TestJSONWriterIncludesADCorrelationFinding(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer := NewJSONWriter(&buf, nil, true)
+	if err := writer.WriteFinding(sampleNTDSFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.WriteFinding(sampleSystemHiveFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	var report jsonReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+
+	if report.Summary.MatchesFound != 3 || len(report.Findings) != 3 {
+		t.Fatalf("expected augmented findings in summary and JSON output, got summary=%#v findings=%#v", report.Summary, report.Findings)
+	}
+
+	found := false
+	for _, finding := range report.Findings {
+		if finding.RuleID != adCorrelationRuleID {
+			continue
+		}
+		found = true
+		if finding.Category != "active-directory" || !finding.Correlated || finding.SignalType != "correlation" {
+			t.Fatalf("unexpected correlated JSON finding: %#v", finding)
+		}
+	}
+	if !found {
+		t.Fatalf("expected correlated AD finding in JSON report, got %#v", report.Findings)
 	}
 }
 
@@ -597,6 +720,32 @@ func TestHTMLWriterIncludesValidationSectionWhenManifestIsSet(t *testing.T) {
 
 	out := buf.String()
 	for _, want := range []string{"Seeded Validation", "Config Suppressed", "Actionable Promoted", "Over-Promoted Items", "Missed Expected Items", "correlated / high-confidence"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected html output to contain %q", want)
+		}
+	}
+}
+
+func TestHTMLWriterRendersADCorrelationFinding(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer, err := NewHTMLWriter(&buf, nil)
+	if err != nil {
+		t.Fatalf("NewHTMLWriter returned error: %v", err)
+	}
+	if err := writer.WriteFinding(sampleNTDSFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.WriteFinding(sampleSystemHiveFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"correlation.ad.ntds_system", "signal correlation", "NTDS.DIT and SYSTEM artifacts were found together in the same directory context"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected html output to contain %q", want)
 		}

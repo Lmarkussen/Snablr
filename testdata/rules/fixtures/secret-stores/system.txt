@@ -1,0 +1,2 @@
+System maintenance checklist for the synthetic lab.
+No registry hive artifact is present here.

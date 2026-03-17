@@ -79,6 +79,27 @@ func defaultTemplates() []templateSpec {
 		newSpec("database", []string{
 			"SQL", "SQL/Backups", "Web/Configs", "Deploy", "IT/Scripts", "Archive/Legacy/App1/Config", "Backups/Daily",
 		}, dbTemplateVariants(), renderVariant),
+		newSpec("secret-stores", []string{
+			"IT/Admin", "Archive/Legacy", "Backups/Daily", "Old", "Windows/System32/config", "Windows/System32/config/RegBack",
+		}, []templateVariant{
+			classify(triage(likely("NTDS.DIT", "secret-store-marker", "high", []string{"filename"}, []string{"credentials", "secret-store"}, []string{"secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("NTDS.DIT.bak", "secret-store-marker", "high", []string{"filename"}, []string{"credentials", "secret-store"}, []string{"secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("shadow", "secret-store-marker", "high", []string{"filename"}, []string{"credentials", "secret-store"}, []string{"secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("SYSTEM", "secret-store-marker", "high", []string{"filename"}, []string{"credentials", "secret-store", "windows"}, []string{"secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("SECURITY", "secret-store-marker", "high", []string{"filename"}, []string{"credentials", "secret-store", "windows"}, []string{"secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("SYSTEM.bak", "secret-store-marker", "high", []string{"filename"}, []string{"credentials", "secret-store", "windows"}, []string{"secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("SECURITY.old", "secret-store-marker", "high", []string{"filename"}, []string{"credentials", "secret-store", "windows"}, []string{"secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			noise("shadow-notes.txt", "notes-benign", "low", []string{"noise"}, []string{"noise-review"}),
+			noise("system.txt", "notes-benign", "low", []string{"noise"}, []string{"noise-review"}),
+			noise("system.bak", "notes-benign", "low", []string{"noise"}, []string{"noise-review"}),
+		}, renderVariant),
+		newSpec("ad-correlation", []string{
+			"Recovery/AD",
+		}, []templateVariant{
+			classify(triage(likely("NTDS.DIT", "secret-store-marker", "high", []string{"filename", "correlation", "path"}, []string{"credentials", "secret-store", "active-directory"}, []string{"secret-store-artifact-review"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
+			classify(triage(likely("SYSTEM", "secret-store-marker", "high", []string{"filename"}, []string{"credentials", "secret-store", "windows"}, []string{"secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			noise("readme.txt", "readme-noise", "low", []string{"noise"}, []string{"noise-review"}),
+		}, renderVariant),
 		newSpec("cloud", []string{
 			"IT/Admin", "Deploy", "Web/Configs", "Archive",
 		}, []templateVariant{
@@ -511,11 +532,16 @@ func renderVariant(ctx renderContext, variant templateVariant) []byte {
 		)
 	case "db-sql-dump":
 		return text(
-			"-- Synthetic schema export only",
+			"-- MySQL dump 10.13  Distrib 8.0.36, for Linux (x86_64)",
 			"-- backup source="+dbHostValue(ctx)+" database="+dbNameValue(ctx),
 			"-- admin dsn="+odbcConnectionSummary(ctx),
+			"DROP TABLE IF EXISTS demo_accounts;",
 			"CREATE TABLE demo_accounts (id INT, username VARCHAR(64));",
+			"CREATE TABLE demo_audit (id INT, event_name VARCHAR(64));",
+			"LOCK TABLES demo_accounts WRITE;",
 			"INSERT INTO demo_accounts VALUES (1, '"+dbUserValue(ctx)+"');",
+			"INSERT INTO demo_accounts VALUES (2, 'synthetic_reader');",
+			"UNLOCK TABLES;",
 		)
 	case "db-yaml-config-only":
 		return text(
@@ -592,6 +618,12 @@ func renderVariant(ctx renderContext, variant templateVariant) []byte {
 			"Synthetic database migration checklist.",
 			"Contains placeholders and operational notes only.",
 			"No real credentials or infrastructure details are present.",
+		)
+	case "secret-store-marker":
+		return text(
+			"SYNTHETIC SECRET STORE PLACEHOLDER",
+			"Purpose: validate exact high-value artifact detection only.",
+			"Contains no usable credential material.",
 		)
 	case "meeting-notes":
 		return text(

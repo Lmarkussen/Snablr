@@ -73,6 +73,12 @@ func NewClient() *Client {
 	}
 }
 
+func (c *Client) SetMaxReadSize(limit int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.maxReadSize = limit
+}
+
 func (c *Client) Connect(host, user, pass string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -232,6 +232,15 @@ func sampleConfigOnlyFinding() scanner.Finding {
 	}
 }
 
+func sampleArchiveFinding() scanner.Finding {
+	finding := sampleFinding()
+	finding.FilePath = "Deploy/loot.zip!configs/web.config"
+	finding.ArchivePath = "Deploy/loot.zip"
+	finding.ArchiveMemberPath = "configs/web.config"
+	finding.ArchiveLocalInspect = true
+	return finding
+}
+
 func writeValidationManifest(t *testing.T) string {
 	t.Helper()
 
@@ -532,6 +541,31 @@ func TestJSONWriterIncludesValidationModeSummaryWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestJSONWriterIncludesArchiveMetadata(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer := NewJSONWriter(&buf, nil, true)
+	if err := writer.WriteFinding(sampleArchiveFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	var report jsonReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+	if len(report.Findings) != 1 {
+		t.Fatalf("expected one finding, got %#v", report.Findings)
+	}
+	finding := report.Findings[0]
+	if finding.ArchivePath != "Deploy/loot.zip" || finding.ArchiveMemberPath != "configs/web.config" || !finding.ArchiveLocalInspect {
+		t.Fatalf("expected archive metadata in JSON output, got %#v", finding)
+	}
+}
+
 func TestConsoleWriterIncludesContextMetadata(t *testing.T) {
 	t.Parallel()
 
@@ -746,6 +780,29 @@ func TestHTMLWriterRendersADCorrelationFinding(t *testing.T) {
 
 	out := buf.String()
 	for _, want := range []string{"correlation.ad.ntds_system", "signal correlation", "NTDS.DIT and SYSTEM artifacts were found together in the same directory context"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected html output to contain %q", want)
+		}
+	}
+}
+
+func TestHTMLWriterRendersArchiveMetadata(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer, err := NewHTMLWriter(&buf, nil)
+	if err != nil {
+		t.Fatalf("NewHTMLWriter returned error: %v", err)
+	}
+	if err := writer.WriteFinding(sampleArchiveFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"Deploy/loot.zip!configs/web.config", "Archive Member", "configs/web.config", "Archive Inspection", "local"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected html output to contain %q", want)
 		}

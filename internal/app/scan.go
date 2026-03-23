@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"snablr/internal/archiveinspect"
 	"snablr/internal/config"
 	"snablr/internal/diff"
 	"snablr/internal/discovery"
@@ -112,10 +113,20 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	engine := scanner.NewEngine(scanner.Options{
 		Workers:          cfg.Scan.WorkerCount,
 		MaxFileSizeBytes: cfg.Scan.MaxFileSize,
-		MaxReadBytes:     cfg.Scan.MaxFileSize,
+		MaxReadBytes:     scanReadLimit(cfg),
 		SnippetBytes:     120,
-		Recorder:         recorder,
-		ValidationMode:   cfg.Scan.ValidationMode,
+		Archives: archiveinspect.Options{
+			Enabled:                  cfg.Archives.Enabled,
+			AutoZIPMaxSize:           cfg.Archives.AutoZIPMaxSize,
+			AllowLargeZIPs:           cfg.Archives.AllowLargeZIPs,
+			MaxZIPSize:               cfg.Archives.MaxZIPSize,
+			MaxMembers:               cfg.Archives.MaxMembers,
+			MaxMemberBytes:           cfg.Archives.MaxMemberBytes,
+			MaxTotalUncompressed:     cfg.Archives.MaxTotalUncompressed,
+			InspectExtensionlessText: cfg.Archives.InspectExtensionlessText,
+		},
+		Recorder:       recorder,
+		ValidationMode: cfg.Scan.ValidationMode,
 	}, manager, sink, logger)
 
 	resolvedTargets, err := discovery.Resolve(scanCtx, cfg.Scan, logger, recorder)
@@ -236,6 +247,7 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 	}
 
 	client := smb.NewClient()
+	client.SetMaxReadSize(scanReadLimit(cfg))
 	defer client.Close()
 
 	if err := client.Connect(host, cfg.Scan.Username, cfg.Scan.Password); err != nil {
@@ -476,6 +488,19 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		return errors.Join(walkErrs...)
 	}
 	return nil
+}
+
+func scanReadLimit(cfg config.Config) int64 {
+	limit := cfg.Scan.MaxFileSize
+	if cfg.Archives.Enabled {
+		if cfg.Archives.AutoZIPMaxSize > limit {
+			limit = cfg.Archives.AutoZIPMaxSize
+		}
+		if cfg.Archives.AllowLargeZIPs && cfg.Archives.MaxZIPSize > limit {
+			limit = cfg.Archives.MaxZIPSize
+		}
+	}
+	return limit
 }
 
 func scanShareAllowed(share string, cfg config.ScanConfig) bool {

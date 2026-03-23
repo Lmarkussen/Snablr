@@ -93,6 +93,7 @@ func Generate(opts GenerateOptions) ([]SeedFile, error) {
 				Format:              variant.Format,
 				RelativePath:        relativePath,
 				Filename:            filename,
+				ExpectedPath:        expectedSeedPath(relativePath, filename, variant.ExpectedInnerPath),
 				Content:             content,
 				IntendedAs:          variant.IntendedAs,
 				ExpectedClass:       variant.ExpectedClass,
@@ -108,6 +109,20 @@ func Generate(opts GenerateOptions) ([]SeedFile, error) {
 	}
 
 	return out, nil
+}
+
+func expectedSeedPath(relativePath, filename, innerPath string) string {
+	basePath := joinSeedPath(relativePath, filename)
+	innerPath = strings.TrimSpace(strings.ReplaceAll(innerPath, `\`, "/"))
+	if innerPath == "" {
+		return ""
+	}
+	innerPath = strings.TrimPrefix(innerPath, "./")
+	innerPath = strings.Trim(innerPath, "/")
+	if innerPath == "" {
+		return basePath
+	}
+	return basePath + "!" + innerPath
 }
 
 func FullPath(file SeedFile) string {

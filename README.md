@@ -15,6 +15,7 @@ Snablr is intended for authorized defensive security work only. Run it only agai
 - SMB share enumeration, metadata collection, and recursive file walking
 - YAML rule packs for filename, extension, and content matching
 - Built-in database artifact and connection-material inspection for common enterprise formats
+- Limited local-side `.zip` inspection with defensive size and member limits
 - Rule validation, fixture-based testing, and custom rule overlays
 - Prioritized scan planning for high-value targets, shares, and paths
 - Concurrent file scanning with adaptive worker scaling
@@ -37,7 +38,7 @@ Snablr is organized around a small set of focused modules:
 - `planner`
   Prioritizes hosts, shares, and file paths before work reaches the scanner.
 - `scanner`
-  Applies filename, extension, and content rules to file metadata and content.
+  Applies filename, extension, and content rules to file metadata and content, including limited `.zip` member inspection.
 - `output`
   Renders findings to console, JSON, HTML, CSV, and Markdown.
 - `state`
@@ -181,6 +182,14 @@ What this does:
 4. enumerates accessible shares
 5. scans matching files with the active rule set
 6. writes findings to console, JSON, and HTML
+
+Archive note:
+
+- `.zip` files up to 10 MB are inspected by default
+- only text-like members are inspected
+- nested archives are skipped
+- archive member findings are reported as `outer.zip!inner/path`
+- remote SMB scans fetch the outer archive and inspect it locally in the Snablr process; archives are not unpacked on the target
 
 ### 4. Open The HTML Report
 

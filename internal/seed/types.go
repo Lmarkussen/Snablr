@@ -7,6 +7,7 @@ type SeedFile struct {
 	Format              string
 	RelativePath        string
 	Filename            string
+	ExpectedPath        string
 	Content             []byte
 	IntendedAs          string
 	ExpectedClass       string
@@ -96,6 +97,7 @@ type templateSpec struct {
 type templateVariant struct {
 	Filename            string
 	Format              string
+	ExpectedInnerPath   string
 	IntendedAs          string
 	ExpectedClass       string
 	ExpectedTriageClass string

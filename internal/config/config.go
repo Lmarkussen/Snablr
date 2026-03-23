@@ -11,10 +11,11 @@ import (
 )
 
 type Config struct {
-	App    AppConfig    `yaml:"app"`
-	Scan   ScanConfig   `yaml:"scan"`
-	Rules  RulesConfig  `yaml:"rules"`
-	Output OutputConfig `yaml:"output"`
+	App      AppConfig     `yaml:"app"`
+	Scan     ScanConfig    `yaml:"scan"`
+	Archives ArchiveConfig `yaml:"archives"`
+	Rules    RulesConfig   `yaml:"rules"`
+	Output   OutputConfig  `yaml:"output"`
 
 	configDir   string `yaml:"-"`
 	runtimeRoot string `yaml:"-"`
@@ -53,6 +54,17 @@ type ScanConfig struct {
 	Resume                     bool     `yaml:"resume"`
 	SkipReachabilityCheck      bool     `yaml:"skip_reachability_check"`
 	ReachabilityTimeoutSeconds int      `yaml:"reachability_timeout_seconds"`
+}
+
+type ArchiveConfig struct {
+	Enabled                  bool  `yaml:"enabled"`
+	AutoZIPMaxSize           int64 `yaml:"auto_zip_max_size"`
+	AllowLargeZIPs           bool  `yaml:"allow_large_zips"`
+	MaxZIPSize               int64 `yaml:"max_zip_size"`
+	MaxMembers               int   `yaml:"max_members"`
+	MaxMemberBytes           int64 `yaml:"max_member_bytes"`
+	MaxTotalUncompressed     int64 `yaml:"max_total_uncompressed_bytes"`
+	InspectExtensionlessText bool  `yaml:"inspect_extensionless_text"`
 }
 
 type RulesConfig struct {
@@ -107,6 +119,21 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Scan.ReachabilityTimeoutSeconds <= 0 {
 		cfg.Scan.ReachabilityTimeoutSeconds = 3
+	}
+	if cfg.Archives.AutoZIPMaxSize <= 0 {
+		cfg.Archives.AutoZIPMaxSize = 10 * 1024 * 1024
+	}
+	if cfg.Archives.MaxZIPSize <= 0 {
+		cfg.Archives.MaxZIPSize = cfg.Archives.AutoZIPMaxSize
+	}
+	if cfg.Archives.MaxMembers <= 0 {
+		cfg.Archives.MaxMembers = 64
+	}
+	if cfg.Archives.MaxMemberBytes <= 0 {
+		cfg.Archives.MaxMemberBytes = 512 * 1024
+	}
+	if cfg.Archives.MaxTotalUncompressed <= 0 {
+		cfg.Archives.MaxTotalUncompressed = 4 * 1024 * 1024
 	}
 	if cfg.Output.Format == "" {
 		cfg.Output.Format = "console"

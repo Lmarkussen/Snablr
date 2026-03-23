@@ -67,6 +67,21 @@ func (c *ConsoleWriter) writeFindingLocked(f scanner.Finding) error {
 	if _, err := fmt.Fprintf(c.w, "File: %s\n", uncPath(f)); err != nil {
 		return err
 	}
+	if f.ArchivePath != "" {
+		if _, err := fmt.Fprintf(c.w, "Archive: %s\n", f.ArchivePath); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(c.w, "Archive Member: %s\n", valueOrDash(f.ArchiveMemberPath)); err != nil {
+			return err
+		}
+		inspectionMode := "local"
+		if !f.ArchiveLocalInspect {
+			inspectionMode = "unknown"
+		}
+		if _, err := fmt.Fprintf(c.w, "Archive Inspection: %s\n", inspectionMode); err != nil {
+			return err
+		}
+	}
 	if _, err := fmt.Fprintf(c.w, "Rule: %s\n", f.RuleName); err != nil {
 		return err
 	}

@@ -29,6 +29,16 @@ func Default() Config {
 			SkipReachabilityCheck:      false,
 			ReachabilityTimeoutSeconds: 3,
 		},
+		Archives: ArchiveConfig{
+			Enabled:                  true,
+			AutoZIPMaxSize:           10 * 1024 * 1024,
+			AllowLargeZIPs:           false,
+			MaxZIPSize:               10 * 1024 * 1024,
+			MaxMembers:               64,
+			MaxMemberBytes:           512 * 1024,
+			MaxTotalUncompressed:     4 * 1024 * 1024,
+			InspectExtensionlessText: true,
+		},
 		Rules: RulesConfig{
 			Directory:     "",
 			FailOnInvalid: false,

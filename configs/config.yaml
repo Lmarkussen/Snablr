@@ -28,6 +28,16 @@ scan:
   skip_reachability_check: false
   reachability_timeout_seconds: 3
 
+archives:
+  enabled: true
+  auto_zip_max_size: 10485760
+  allow_large_zips: false
+  max_zip_size: 10485760
+  max_members: 64
+  max_member_bytes: 524288
+  max_total_uncompressed_bytes: 4194304
+  inspect_extensionless_text: true
+
 rules:
   rules_directory: ""
   fail_on_invalid: false

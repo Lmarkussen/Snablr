@@ -263,6 +263,51 @@ func TestVerifySummarizesExpectedSeedClasses(t *testing.T) {
 	}
 }
 
+func TestVerifyMatchesArchiveFindingPaths(t *testing.T) {
+	t.Parallel()
+
+	manifest := Manifest{
+		SeedPrefix: "SyntheticSeed",
+		Entries: []SeedManifestEntry{
+			{
+				Host:               "fileserver01",
+				Share:              "Deploy",
+				Path:               "SyntheticSeed/Deploy/deploy-package.zip!.env",
+				Category:           "zip-archives",
+				ExpectedClass:      seedClassCorrelatedHighConfidence,
+				ExpectedConfidence: "high",
+				ExpectedCorrelated: true,
+			},
+		},
+	}
+
+	report := verifyFindings("manifest.json", []scanner.Finding{
+		{
+			Host:              "fileserver01",
+			Share:             "Deploy",
+			FilePath:          "SyntheticSeed/Deploy/deploy-package.zip!.env",
+			ArchivePath:       "SyntheticSeed/Deploy/deploy-package.zip",
+			ArchiveMemberPath: ".env",
+			RuleID:            "content.password_assignment_indicators",
+			RuleName:          "Password Assignment Indicators",
+			Severity:          "high",
+			Confidence:        "high",
+			Category:          "credentials",
+			TriageClass:       "actionable",
+			Actionable:        true,
+			Correlated:        true,
+			SignalType:        "content",
+		},
+	}, manifest)
+
+	if report.ExpectedItems != 1 || report.FoundItems != 1 || report.MissedItems != 0 {
+		t.Fatalf("expected archive finding to verify cleanly, got %+v", report)
+	}
+	if len(report.PromotedCorrelated) != 1 {
+		t.Fatalf("expected correlated archive promotion in verification summary, got %+v", report.PromotedCorrelated)
+	}
+}
+
 func TestVerifyFindingsMatchesInMemoryResults(t *testing.T) {
 	t.Parallel()
 

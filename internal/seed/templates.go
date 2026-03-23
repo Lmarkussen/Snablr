@@ -1,9 +1,13 @@
 package seed
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"path"
 	"strings"
+	"time"
 )
 
 var (
@@ -79,6 +83,9 @@ func defaultTemplates() []templateSpec {
 		newSpec("database", []string{
 			"SQL", "SQL/Backups", "Web/Configs", "Deploy", "IT/Scripts", "Archive/Legacy/App1/Config", "Backups/Daily",
 		}, dbTemplateVariants(), renderVariant),
+		newSpec("zip-archives", []string{
+			"Deploy", "Archive/Legacy/App1/Config", "Backups/Monthly", "IT/Admin", "Finance/Exports", "Old",
+		}, archiveTemplateVariants(), renderArchiveVariant),
 		newSpec("secret-stores", []string{
 			"IT/Admin", "Archive/Legacy", "Backups/Daily", "Old", "Windows/System32/config", "Windows/System32/config/RegBack",
 		}, []templateVariant{
@@ -209,6 +216,18 @@ func dbTemplateVariants() []templateVariant {
 	}
 }
 
+func archiveTemplateVariants() []templateVariant {
+	return []templateVariant{
+		archiveInnerPath(classify(triage(likely("deploy-package.zip", "zip-db-env", "high", []string{"content", "filename", "extension"}, []string{"archives", "configuration", "database", "credentials"}, []string{"archive-review", "database-connection-strings", "hardcoded-secret-indicators"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true), ".env"),
+		archiveInnerPath(classify(triage(likely("legacy-configs.zip", "zip-web-config", "high", []string{"content", "filename", "extension"}, []string{"archives", "configuration", "credentials"}, []string{"archive-review", "hardcoded-secret-indicators"}), seedTriageActionable), seedClassActionable, "high", false), "configs/web.config"),
+		archiveInnerPath(classify(triage(possible("deployment-recovery.zip", "zip-unattended", "high", []string{"content", "filename", "extension"}, []string{"archives", "deployment", "credentials"}, []string{"archive-review", "unattended-install"}), seedTriageActionable), seedClassActionable, "high", false), "answers/unattended.xml"),
+		archiveInnerPath(classify(triage(possible("old-config-bundle.zip", "zip-config-only", "medium", []string{"filename", "extension"}, []string{"archives", "configuration"}, []string{"archive-review", "config-file-review"}), seedTriageConfigOnly), seedClassConfigOnly, "low", false), "configs/database.yml"),
+		noise("binary-media-bundle.zip", "zip-binary-only", "low", []string{"archives", "noise"}, []string{"archive-review"}),
+		noise("nested-export-bundle.zip", "zip-nested-archive", "low", []string{"archives", "noise"}, []string{"archive-review"}),
+		noise("oversized-config-export.zip", "zip-oversized", "low", []string{"archives", "noise"}, []string{"archive-review"}),
+	}
+}
+
 func likely(filename, style, severity string, signalTypes, tags, themes []string) templateVariant {
 	return templateVariant{
 		Filename:            filename,
@@ -231,6 +250,11 @@ func classify(variant templateVariant, expectedClass, confidence string, correla
 	variant.ExpectedClass = strings.TrimSpace(expectedClass)
 	variant.ExpectedConfidence = strings.TrimSpace(confidence)
 	variant.ExpectedCorrelated = correlated
+	return variant
+}
+
+func archiveInnerPath(variant templateVariant, innerPath string) templateVariant {
+	variant.ExpectedInnerPath = strings.TrimSpace(strings.ReplaceAll(innerPath, `\`, "/"))
 	return variant
 }
 
@@ -657,6 +681,138 @@ func renderVariant(ctx renderContext, variant templateVariant) []byte {
 			"note=LAB_ONLY_VALUE_DO_NOT_USE",
 		)
 	}
+}
+
+type archiveMemberTemplate struct {
+	Path         string
+	ContentStyle string
+	Content      []byte
+	Store        bool
+}
+
+var archiveTimestamp = time.Date(2026, time.March, 1, 0, 0, 0, 0, time.UTC)
+
+func renderArchiveVariant(ctx renderContext, variant templateVariant) []byte {
+	return buildArchiveBytes(ctx, archiveMembersForVariant(ctx, variant))
+}
+
+func archiveMembersForVariant(ctx renderContext, variant templateVariant) []archiveMemberTemplate {
+	switch variant.ContentStyle {
+	case "zip-db-env":
+		return []archiveMemberTemplate{
+			{Path: ".env", ContentStyle: "db-env"},
+			{Path: "configs/web.config", ContentStyle: "db-web-config"},
+			{Path: "notes/notes.txt", ContentStyle: "notes-benign"},
+		}
+	case "zip-web-config":
+		return []archiveMemberTemplate{
+			{Path: "configs/web.config", ContentStyle: "db-web-config"},
+			{Path: "configs/passwords.txt", ContentStyle: "notes-creds"},
+			{Path: "docs/readme.md", ContentStyle: "readme-noise"},
+		}
+	case "zip-unattended":
+		return []archiveMemberTemplate{
+			{Path: "answers/unattended.xml", ContentStyle: "unattend-xml"},
+			{Path: "exports/creds.csv", ContentStyle: "keepass-csv"},
+			{Path: "notes/notes.txt", ContentStyle: "notes-service"},
+		}
+	case "zip-config-only":
+		return []archiveMemberTemplate{
+			{Path: "configs/database.yml", ContentStyle: "db-yaml-config-only"},
+			{Path: "docs/notes.txt", ContentStyle: "notes-benign"},
+		}
+	case "zip-binary-only":
+		return []archiveMemberTemplate{
+			{Path: "media/logo.png", Content: append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00}, bytes.Repeat([]byte{0x01}, 256)...), Store: true},
+			{Path: "bin/tool.exe", Content: append([]byte("MZ"), bytes.Repeat([]byte{0x00, 0x02, 0x03, 0x04}, 256)...), Store: true},
+		}
+	case "zip-nested-archive":
+		inner := buildArchiveBytes(ctx, []archiveMemberTemplate{
+			{Path: "configs/passwords.txt", ContentStyle: "notes-creds"},
+		})
+		return []archiveMemberTemplate{
+			{Path: "nested/inner-archive.zip", Content: inner, Store: true},
+			{Path: "docs/readme.md", ContentStyle: "readme-noise"},
+		}
+	case "zip-oversized":
+		return []archiveMemberTemplate{
+			{
+				Path:    "exports/creds.csv",
+				Content: oversizedArchiveText(ctx, 11*1024*1024),
+				Store:   true,
+			},
+		}
+	default:
+		return []archiveMemberTemplate{
+			{Path: "docs/readme.txt", ContentStyle: "readme-noise"},
+		}
+	}
+}
+
+func buildArchiveBytes(ctx renderContext, members []archiveMemberTemplate) []byte {
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	for _, member := range members {
+		header := &zip.FileHeader{
+			Name:     strings.TrimPrefix(strings.ReplaceAll(member.Path, `\`, "/"), "./"),
+			Method:   zip.Deflate,
+			Modified: archiveTimestamp,
+		}
+		if member.Store {
+			header.Method = zip.Store
+		}
+		fileWriter, err := writer.CreateHeader(header)
+		if err != nil {
+			panic(fmt.Sprintf("build archive: create %s: %v", member.Path, err))
+		}
+		content := member.Content
+		if content == nil {
+			memberCtx := ctx
+			memberCtx.Filename = path.Base(member.Path)
+			memberCtx.Format = inferFormat(memberCtx.Filename)
+			memberCtx.ContentStyle = member.ContentStyle
+			content = renderVariant(memberCtx, templateVariant{
+				Filename:     memberCtx.Filename,
+				Format:       memberCtx.Format,
+				ContentStyle: member.ContentStyle,
+			})
+		}
+		if _, err := fileWriter.Write(content); err != nil {
+			panic(fmt.Sprintf("build archive: write %s: %v", member.Path, err))
+		}
+	}
+	if err := writer.Close(); err != nil {
+		panic(fmt.Sprintf("build archive: close: %v", err))
+	}
+	return buf.Bytes()
+}
+
+func oversizedArchiveText(ctx renderContext, size int) []byte {
+	if size <= 0 {
+		return nil
+	}
+	var builder strings.Builder
+	builder.Grow(size + 128)
+	builder.WriteString("username,password,token,comment\n")
+	index := 0
+	for builder.Len() < size {
+		builder.WriteString(fmt.Sprintf(
+			"%s_%06d,%s_%06d,%s_%06d,SYNTHETIC_ONLY_DO_NOT_USE_%s\n",
+			serviceAccountValue(ctx),
+			index,
+			passwordValue(ctx),
+			index,
+			tokenValue(ctx),
+			index,
+			ctx.Token,
+		))
+		index++
+	}
+	out := builder.String()
+	if len(out) > size {
+		out = out[:size]
+	}
+	return []byte(out)
 }
 
 func inferFormat(filename string) string {

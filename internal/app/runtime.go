@@ -211,6 +211,24 @@ func validateScanConfig(cfg config.Config) error {
 	if cfg.Scan.Resume && strings.TrimSpace(cfg.Scan.CheckpointFile) == "" {
 		return fmt.Errorf("resume requires a checkpoint file: set scan.checkpoint_file or pass --checkpoint-file")
 	}
+	if cfg.Archives.AutoZIPMaxSize < 0 {
+		return fmt.Errorf("archives.auto_zip_max_size cannot be negative")
+	}
+	if cfg.Archives.MaxZIPSize < 0 {
+		return fmt.Errorf("archives.max_zip_size cannot be negative")
+	}
+	if cfg.Archives.MaxMembers < 0 {
+		return fmt.Errorf("archives.max_members cannot be negative")
+	}
+	if cfg.Archives.MaxMemberBytes < 0 {
+		return fmt.Errorf("archives.max_member_bytes cannot be negative")
+	}
+	if cfg.Archives.MaxTotalUncompressed < 0 {
+		return fmt.Errorf("archives.max_total_uncompressed_bytes cannot be negative")
+	}
+	if cfg.Archives.AllowLargeZIPs && cfg.Archives.MaxZIPSize > 0 && cfg.Archives.MaxZIPSize < cfg.Archives.AutoZIPMaxSize {
+		return fmt.Errorf("archives.max_zip_size must be greater than or equal to archives.auto_zip_max_size when allow_large_zips is enabled")
+	}
 	switch strings.ToLower(cfg.Output.Format) {
 	case "console", "json", "html", "all":
 	default:

@@ -47,6 +47,7 @@ The config file is grouped into:
 
 - `app`
 - `scan`
+- `archives`
 - `rules`
 - `output`
 
@@ -194,6 +195,60 @@ Resume behavior:
 - file completion is keyed by path plus file metadata
 - resumed scans reprocess files whose size or modified timestamp changed
 - this avoids the earlier path-only skip behavior for changed files without adding heavy content hashing by default
+
+## `archives`
+
+The `archives` section controls limited archive inspection.
+
+Phase 1 support is intentionally narrow:
+
+- `.zip` only
+- local in-process inspection using Go stdlib
+- no nested archive traversal
+- no password-protected archive support
+- no extraction to disk during normal scanning
+
+Example:
+
+```yaml
+archives:
+  enabled: true
+  auto_zip_max_size: 10485760
+  allow_large_zips: false
+  max_zip_size: 10485760
+  max_members: 64
+  max_member_bytes: 524288
+  max_total_uncompressed_bytes: 4194304
+  inspect_extensionless_text: true
+```
+
+Fields:
+
+- `enabled`
+  Enable limited `.zip` inspection.
+- `auto_zip_max_size`
+  Automatically inspect `.zip` files up to this size in bytes. Default: `10485760` (10 MB).
+- `allow_large_zips`
+  Permit `.zip` inspection above the automatic limit when `max_zip_size` allows it.
+- `max_zip_size`
+  Absolute maximum `.zip` size Snablr will inspect when large-zip inspection is enabled.
+- `max_members`
+  Maximum number of archive members inspected per `.zip`.
+- `max_member_bytes`
+  Maximum uncompressed bytes read from any single member.
+- `max_total_uncompressed_bytes`
+  Maximum total uncompressed bytes read across inspected members in one archive.
+- `inspect_extensionless_text`
+  Inspect extensionless members when they look text-like.
+
+Behavior:
+
+- `.zip` files above the automatic limit are skipped by default
+- `.rar`, `.7z`, `.tar`, `.gz`, and similar formats remain skipped by default
+- only text-like members are inspected
+- nested archives are skipped
+- remote scans never unpack archives on the target side; the outer file is read and inspected locally
+- archive findings are reported with both the outer archive path and inner member path
 
 ## `rules`
 

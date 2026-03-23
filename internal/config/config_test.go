@@ -72,6 +72,24 @@ func TestRulePathsFallbackToRuntimeRootForCLIStyleRelativeOverride(t *testing.T)
 	}
 }
 
+func TestLoadAppliesArchiveDefaultsAndHonorsExplicitDisable(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "configs", "config.yaml"), "archives:\n  enabled: false\n")
+
+	cfg, err := Load(filepath.Join(root, "configs", "config.yaml"))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Archives.Enabled {
+		t.Fatalf("expected explicit archive disable to be preserved, got %#v", cfg.Archives)
+	}
+	if cfg.Archives.AutoZIPMaxSize != 10*1024*1024 || cfg.Archives.MaxMembers != 64 || cfg.Archives.MaxMemberBytes == 0 || cfg.Archives.MaxTotalUncompressed == 0 {
+		t.Fatalf("expected archive defaults to be applied, got %#v", cfg.Archives)
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	mkdirAll(t, filepath.Dir(path))

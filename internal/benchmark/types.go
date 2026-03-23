@@ -3,20 +3,22 @@ package benchmark
 import (
 	"time"
 
+	"snablr/internal/config"
 	"snablr/internal/metrics"
 	"snablr/internal/scanner"
 )
 
 type Config struct {
-	Name           string `json:"name" yaml:"name"`
-	Dataset        string `json:"dataset" yaml:"dataset"`
-	SnablrConfig   string `json:"snablr_config" yaml:"snablr_config"`
-	RulesDirectory string `json:"rules_directory" yaml:"rules_directory"`
-	WorkerCount    int    `json:"worker_count" yaml:"worker_count"`
-	MaxFileSize    int64  `json:"max_file_size" yaml:"max_file_size"`
-	MaxReadBytes   int64  `json:"max_read_bytes" yaml:"max_read_bytes"`
-	SnippetBytes   int    `json:"snippet_bytes" yaml:"snippet_bytes"`
-	LogLevel       string `json:"log_level" yaml:"log_level"`
+	Name           string               `json:"name" yaml:"name"`
+	Dataset        string               `json:"dataset" yaml:"dataset"`
+	SnablrConfig   string               `json:"snablr_config" yaml:"snablr_config"`
+	RulesDirectory string               `json:"rules_directory" yaml:"rules_directory"`
+	WorkerCount    int                  `json:"worker_count" yaml:"worker_count"`
+	MaxFileSize    int64                `json:"max_file_size" yaml:"max_file_size"`
+	MaxReadBytes   int64                `json:"max_read_bytes" yaml:"max_read_bytes"`
+	SnippetBytes   int                  `json:"snippet_bytes" yaml:"snippet_bytes"`
+	LogLevel       string               `json:"log_level" yaml:"log_level"`
+	Archives       config.ArchiveConfig `json:"archives" yaml:"archives"`
 }
 
 type CountStat struct {

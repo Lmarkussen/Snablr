@@ -1,8 +1,13 @@
 package seed
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"snablr/internal/rules"
+	"snablr/internal/scanner"
+	"snablr/pkg/logx"
 )
 
 func TestGenerateRespectsScaleDepthAndExpectedSignals(t *testing.T) {
@@ -348,5 +353,171 @@ func TestGenerateADCorrelationSeedPackIncludesCorrelatedAnchor(t *testing.T) {
 	}
 	if !foundSupportingSystem {
 		t.Fatal("expected ad-correlation seed pack to include supporting SYSTEM artifact")
+	}
+}
+
+func TestGenerateZIPSeedPackIncludesPositiveAndNegativeCases(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 24,
+		MaxFiles:         500,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260318,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	foundCorrelated := false
+	foundActionable := false
+	foundConfigOnly := false
+	foundBinaryNoise := false
+	foundNestedNoise := false
+	foundOversized := false
+
+	for _, file := range files {
+		if file.Category != "zip-archives" {
+			continue
+		}
+		switch strings.ToLower(file.Filename) {
+		case "deploy-package.zip":
+			if file.ExpectedClass == seedClassCorrelatedHighConfidence && file.ExpectedPath == "SnablrLab/Deploy/deploy-package.zip!.env" {
+				foundCorrelated = true
+			}
+		case "legacy-configs.zip", "deployment-recovery.zip":
+			if file.ExpectedClass == seedClassActionable && strings.Contains(file.ExpectedPath, ".zip!") {
+				foundActionable = true
+			}
+		case "old-config-bundle.zip":
+			if file.ExpectedClass == seedClassConfigOnly && strings.Contains(file.ExpectedPath, ".zip!") {
+				foundConfigOnly = true
+			}
+		case "binary-media-bundle.zip":
+			if file.IntendedAs == "filler/noise" {
+				foundBinaryNoise = true
+			}
+		case "nested-export-bundle.zip":
+			if file.IntendedAs == "filler/noise" {
+				foundNestedNoise = true
+			}
+		case "oversized-config-export.zip":
+			if file.IntendedAs == "filler/noise" && len(file.Content) > 10*1024*1024 {
+				foundOversized = true
+			}
+		}
+	}
+
+	if !foundCorrelated {
+		t.Fatal("expected zip seed pack to include correlated archive detection case")
+	}
+	if !foundActionable {
+		t.Fatal("expected zip seed pack to include actionable archive detection case")
+	}
+	if !foundConfigOnly {
+		t.Fatal("expected zip seed pack to include config-only archive case")
+	}
+	if !foundBinaryNoise {
+		t.Fatal("expected zip seed pack to include binary-only negative archive case")
+	}
+	if !foundNestedNoise {
+		t.Fatal("expected zip seed pack to include nested-archive negative case")
+	}
+	if !foundOversized {
+		t.Fatal("expected zip seed pack to include oversized archive case")
+	}
+}
+
+func TestGeneratedZIPSeedProducesArchiveFindings(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 24,
+		MaxFiles:         500,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260318,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	var archiveSeed *SeedFile
+	for i := range files {
+		file := &files[i]
+		if file.Category == "zip-archives" && file.ExpectedPath != "" && strings.EqualFold(file.Filename, "deploy-package.zip") {
+			archiveSeed = file
+			break
+		}
+	}
+	if archiveSeed == nil {
+		t.Fatal("expected generated zip archive seed")
+	}
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := scanner.NewEngine(scanner.Options{}, manager, nil, logx.New("error"))
+	meta := scanner.FileMetadata{
+		FilePath:  FullPath(*archiveSeed),
+		Name:      archiveSeed.Filename,
+		Extension: ".zip",
+		Size:      int64(len(archiveSeed.Content)),
+	}
+	evaluation := engine.Evaluate(meta, archiveSeed.Content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected findings from generated zip seed, got %#v", evaluation)
+	}
+
+	foundExpectedPath := false
+	for _, finding := range evaluation.Findings {
+		if finding.FilePath == archiveSeed.ExpectedPath && finding.ArchivePath == FullPath(*archiveSeed) && finding.ArchiveMemberPath == ".env" {
+			foundExpectedPath = true
+			break
+		}
+	}
+	if !foundExpectedPath {
+		t.Fatalf("expected archive finding path %q, got %#v", archiveSeed.ExpectedPath, evaluation.Findings)
+	}
+}
+
+func TestGeneratedOversizedZIPSeedIsSkippedByDefault(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 24,
+		MaxFiles:         500,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260318,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	var oversized *SeedFile
+	for i := range files {
+		file := &files[i]
+		if file.Category == "zip-archives" && strings.EqualFold(file.Filename, "oversized-config-export.zip") {
+			oversized = file
+			break
+		}
+	}
+	if oversized == nil {
+		t.Fatal("expected oversized zip seed")
+	}
+
+	engine := scanner.NewEngine(scanner.Options{}, &rules.Manager{}, nil, logx.New("error"))
+	meta := scanner.FileMetadata{
+		FilePath:  FullPath(*oversized),
+		Name:      oversized.Filename,
+		Extension: ".zip",
+		Size:      int64(len(oversized.Content)),
+	}
+
+	evaluation := engine.Evaluate(meta, oversized.Content)
+	if !evaluation.Skipped || !strings.Contains(evaluation.SkipReason, "automatic inspection limit") {
+		t.Fatalf("expected oversized zip seed to be skipped by default, got %#v", evaluation)
 	}
 }

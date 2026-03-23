@@ -100,6 +100,9 @@ Common finding fields:
 - `rule_explanation`
 - `rule_remediation`
 - `source`
+- `archive_path`
+- `archive_member_path`
+- `archive_local_inspect`
 - `dfs_namespace_path`
 - `dfs_link_path`
 - `from_sysvol`
@@ -224,6 +227,7 @@ Each finding row typically gives you:
 - severity and confidence
 - host and share location
 - file path
+- archive path and inner member path when the evidence came from inside a `.zip`
 - rule name and category
 - match snippet
 - rule explanation
@@ -238,6 +242,12 @@ Interpretation tips:
 - the snippet shows the evidence that triggered the rule
 - the explanation tells you why the rule exists
 - the remediation guidance tells you what defensive action to consider next
+
+Archive finding notes:
+
+- archive-derived findings use a combined path like `loot.zip!configs/web.config`
+- JSON also preserves `archive_path` and `archive_member_path` separately
+- `archive_local_inspect: true` means the outer archive was inspected locally by Snablr after being read, rather than unpacked on the remote target
 - the confidence breakdown tells you why a finding stayed low-value or was promoted
 
 ### 5. Use Filters And Groups

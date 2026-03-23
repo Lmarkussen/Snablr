@@ -31,6 +31,9 @@ type scanResultFinding struct {
 	ShareType           string                      `json:"share_type,omitempty"`
 	FilePath            string                      `json:"file_path"`
 	Source              string                      `json:"source,omitempty"`
+	ArchivePath         string                      `json:"archive_path,omitempty"`
+	ArchiveMemberPath   string                      `json:"archive_member_path,omitempty"`
+	ArchiveLocalInspect bool                        `json:"archive_local_inspect,omitempty"`
 	DFSNamespacePath    string                      `json:"dfs_namespace_path,omitempty"`
 	DFSLinkPath         string                      `json:"dfs_link_path,omitempty"`
 	RuleID              string                      `json:"rule_id"`
@@ -87,6 +90,9 @@ func LoadJSON(path string) (Report, error) {
 			ShareType:           finding.ShareType,
 			FilePath:            finding.FilePath,
 			Source:              finding.Source,
+			ArchivePath:         finding.ArchivePath,
+			ArchiveMemberPath:   finding.ArchiveMemberPath,
+			ArchiveLocalInspect: finding.ArchiveLocalInspect,
 			DFSNamespacePath:    finding.DFSNamespacePath,
 			DFSLinkPath:         finding.DFSLinkPath,
 			RuleID:              finding.RuleID,

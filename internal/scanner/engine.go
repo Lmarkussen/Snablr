@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"snablr/internal/archiveinspect"
 	"snablr/internal/dbinspect"
 	"snablr/internal/metrics"
 	"snablr/internal/rules"
@@ -21,6 +22,7 @@ type Options struct {
 	MaxFileSizeBytes int64
 	MaxReadBytes     int64
 	SnippetBytes     int
+	Archives         archiveinspect.Options
 	Recorder         metrics.Recorder
 	ValidationMode   bool
 }
@@ -38,6 +40,7 @@ type Engine struct {
 	extensionRules   []rules.Rule
 	contentRules     []rules.Rule
 	contentExtHints  map[string]struct{}
+	archiveExtHints  map[string]struct{}
 	hasGenericText   bool
 	dbInspector      dbinspect.Inspector
 	validationMode   bool
@@ -49,6 +52,7 @@ func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx
 	if opts.SnippetBytes <= 0 {
 		opts.SnippetBytes = 120
 	}
+	opts.Archives = resolveArchiveOptions(opts.Archives)
 	if manager == nil {
 		manager = &rules.Manager{}
 	}
@@ -56,6 +60,7 @@ func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx
 	extensionRules := manager.RulesByType(rules.RuleTypeExtension)
 	contentRules := manager.RulesByType(rules.RuleTypeContent)
 	contentExtHints, hasGenericText := buildContentRuleHints(contentRules)
+	archiveExtHints := buildArchiveExtensionHints(contentExtHints)
 
 	return &Engine{
 		opts:             opts,
@@ -70,6 +75,7 @@ func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx
 		extensionRules:   extensionRules,
 		contentRules:     contentRules,
 		contentExtHints:  contentExtHints,
+		archiveExtHints:  archiveExtHints,
 		hasGenericText:   hasGenericText,
 		dbInspector:      dbinspect.New(),
 		validationMode:   opts.ValidationMode,
@@ -79,47 +85,38 @@ func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx
 
 func (e *Engine) Evaluate(meta FileMetadata, content []byte) Evaluation {
 	meta = meta.Normalized()
-	evaluation := Evaluation{}
-
 	if meta.IsDir {
-		evaluation.Skipped = true
-		evaluation.SkipReason = "directories are not scanned as files"
-		return evaluation
+		return Evaluation{
+			Skipped:    true,
+			SkipReason: "directories are not scanned as files",
+		}
 	}
 
 	if e.shouldSkipByPath(meta) {
-		evaluation.Skipped = true
-		evaluation.SkipReason = "matched skip rule"
-		return evaluation
+		return Evaluation{
+			Skipped:    true,
+			SkipReason: "matched skip rule",
+		}
+	}
+
+	if shouldInspect, skipReason, isArchive := e.archiveDecision(meta); isArchive {
+		if !shouldInspect {
+			return Evaluation{
+				Skipped:    true,
+				SkipReason: skipReason,
+			}
+		}
+		return e.evaluateArchive(meta, content)
 	}
 
 	if e.opts.MaxFileSizeBytes > 0 && meta.Size > e.opts.MaxFileSizeBytes {
-		evaluation.Skipped = true
-		evaluation.SkipReason = fmt.Sprintf("file exceeds max size limit of %d bytes", e.opts.MaxFileSizeBytes)
-		return evaluation
+		return Evaluation{
+			Skipped:    true,
+			SkipReason: fmt.Sprintf("file exceeds max size limit of %d bytes", e.opts.MaxFileSizeBytes),
+		}
 	}
 
-	evaluation.Findings = append(evaluation.Findings, e.filenameScanner.Scan(e.filenameRules, meta)...)
-	evaluation.Findings = append(evaluation.Findings, e.extensionScanner.Scan(e.extensionRules, meta)...)
-	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, e.dbInspector.InspectMetadata(dbCandidate(meta)))...)
-
-	evaluation.NeedContent = e.shouldReadContent(meta, e.contentRules) || e.dbInspector.NeedsContent(dbCandidate(meta))
-	if !evaluation.NeedContent || len(content) == 0 {
-		evaluation.Findings = correlateFindings(meta, evaluation.Findings)
-		e.recordValidationFindings(evaluation.Findings)
-		return evaluation
-	}
-
-	evaluation.ContentRead = true
-	if e.opts.MaxReadBytes > 0 && int64(len(content)) > e.opts.MaxReadBytes {
-		content = content[:e.opts.MaxReadBytes]
-	}
-
-	evaluation.Findings = append(evaluation.Findings, e.contentScanner.Scan(e.contentRules, meta, content)...)
-	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, e.dbInspector.InspectContent(dbCandidate(meta), content))...)
-	evaluation.Findings = correlateFindings(meta, evaluation.Findings)
-	e.recordValidationFindings(evaluation.Findings)
-	return evaluation
+	return e.evaluateStandard(meta, content, false)
 }
 
 func (e *Engine) recordValidationFindings(findings []Finding) {
@@ -154,10 +151,91 @@ func (e *Engine) NeedsContent(meta FileMetadata) bool {
 	if meta.IsDir || e.shouldSkipByPath(meta) {
 		return false
 	}
+	if shouldInspect, _, isArchive := e.archiveDecision(meta); isArchive {
+		return shouldInspect
+	}
 	if e.opts.MaxFileSizeBytes > 0 && meta.Size > e.opts.MaxFileSizeBytes {
 		return false
 	}
 	return e.shouldReadContent(meta, e.contentRules) || e.dbInspector.NeedsContent(dbCandidate(meta))
+}
+
+func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceContent bool) Evaluation {
+	evaluation := Evaluation{}
+
+	evaluation.Findings = append(evaluation.Findings, e.filenameScanner.Scan(e.filenameRules, meta)...)
+	evaluation.Findings = append(evaluation.Findings, e.extensionScanner.Scan(e.extensionRules, meta)...)
+	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, e.dbInspector.InspectMetadata(dbCandidate(meta)))...)
+
+	evaluation.NeedContent = forceContent || e.shouldReadContent(meta, e.contentRules) || e.dbInspector.NeedsContent(dbCandidate(meta))
+	if !evaluation.NeedContent || len(content) == 0 {
+		evaluation.Findings = correlateFindings(meta, evaluation.Findings)
+		e.recordValidationFindings(evaluation.Findings)
+		return evaluation
+	}
+
+	evaluation.ContentRead = true
+	if e.opts.MaxReadBytes > 0 && int64(len(content)) > e.opts.MaxReadBytes {
+		content = content[:e.opts.MaxReadBytes]
+	}
+
+	evaluation.Findings = append(evaluation.Findings, e.contentScanner.Scan(e.contentRules, meta, content)...)
+	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, e.dbInspector.InspectContent(dbCandidate(meta), content))...)
+	evaluation.Findings = correlateFindings(meta, evaluation.Findings)
+	e.recordValidationFindings(evaluation.Findings)
+	return evaluation
+}
+
+func (e *Engine) evaluateArchive(meta FileMetadata, content []byte) Evaluation {
+	evaluation := Evaluation{NeedContent: true}
+	if len(content) == 0 {
+		evaluation.Skipped = true
+		evaluation.SkipReason = "archive content unavailable"
+		return evaluation
+	}
+	evaluation.ContentRead = true
+
+	result, err := archiveinspect.InspectZIP(content, e.opts.Archives, e.archiveExtHints)
+	if err != nil {
+		evaluation.Skipped = true
+		evaluation.SkipReason = fmt.Sprintf("archive inspection failed: %v", err)
+		return evaluation
+	}
+	if !result.Inspected {
+		evaluation.Skipped = true
+		evaluation.SkipReason = result.SkipReason
+		return evaluation
+	}
+
+	findings := make([]Finding, 0)
+	for _, member := range result.Members {
+		memberMeta := meta
+		memberMeta.ArchivePath = meta.FilePath
+		memberMeta.ArchiveMemberPath = member.Path
+		memberMeta.ArchiveLocalInspect = result.InspectedLocally
+		memberMeta.FilePath = archiveDisplayPath(meta.FilePath, member.Path)
+		memberMeta.Name = member.Name
+		memberMeta.Extension = member.Extension
+		memberMeta.Size = member.Size
+
+		memberEvaluation := e.evaluateStandard(memberMeta, member.Content, true)
+		findings = append(findings, memberEvaluation.Findings...)
+	}
+
+	evaluation.Findings = findings
+	return evaluation
+}
+
+func (e *Engine) archiveDecision(meta FileMetadata) (bool, string, bool) {
+	if !strings.EqualFold(normalizeExtension(meta.Extension), ".zip") {
+		return false, "", false
+	}
+	shouldInspect, reason := archiveinspect.ShouldInspect(archiveinspect.Candidate{
+		Name:      meta.Name,
+		Extension: meta.Extension,
+		Size:      meta.Size,
+	}, e.opts.Archives)
+	return shouldInspect, reason, true
 }
 
 func (e *Engine) shouldReadContent(meta FileMetadata, contentRules []rules.Rule) bool {
@@ -403,6 +481,55 @@ func buildContentRuleHints(ruleSet []rules.Rule) (map[string]struct{}, bool) {
 	return hints, hasGeneric
 }
 
+func buildArchiveExtensionHints(contentHints map[string]struct{}) map[string]struct{} {
+	hints := map[string]struct{}{
+		".txt":        {},
+		".ini":        {},
+		".conf":       {},
+		".config":     {},
+		".xml":        {},
+		".json":       {},
+		".yaml":       {},
+		".yml":        {},
+		".csv":        {},
+		".log":        {},
+		".ps1":        {},
+		".bat":        {},
+		".cmd":        {},
+		".vbs":        {},
+		".sh":         {},
+		".bash":       {},
+		".zsh":        {},
+		".py":         {},
+		".rb":         {},
+		".php":        {},
+		".pl":         {},
+		".js":         {},
+		".ts":         {},
+		".cs":         {},
+		".vb":         {},
+		".java":       {},
+		".go":         {},
+		".sql":        {},
+		".reg":        {},
+		".env":        {},
+		".md":         {},
+		".dsn":        {},
+		".udl":        {},
+		".ora":        {},
+		".properties": {},
+		".toml":       {},
+	}
+	for ext := range contentHints {
+		hints[normalizeExtension(ext)] = struct{}{}
+	}
+	return hints
+}
+
+func archiveDisplayPath(outerPath, memberPath string) string {
+	return rules.NormalizePath(strings.TrimSpace(outerPath) + "!" + strings.TrimSpace(memberPath))
+}
+
 func normalizeExtension(ext string) string {
 	if ext == "" {
 		return ""
@@ -411,4 +538,35 @@ func normalizeExtension(ext string) string {
 		ext = "." + ext
 	}
 	return strings.ToLower(ext)
+}
+
+func resolveArchiveOptions(opts archiveinspect.Options) archiveinspect.Options {
+	if !opts.Enabled && !opts.AllowLargeZIPs && opts.AutoZIPMaxSize == 0 && opts.MaxZIPSize == 0 && opts.MaxMembers == 0 && opts.MaxMemberBytes == 0 && opts.MaxTotalUncompressed == 0 && !opts.InspectExtensionlessText {
+		return archiveinspect.Options{
+			Enabled:                  true,
+			AutoZIPMaxSize:           10 * 1024 * 1024,
+			AllowLargeZIPs:           false,
+			MaxZIPSize:               10 * 1024 * 1024,
+			MaxMembers:               64,
+			MaxMemberBytes:           512 * 1024,
+			MaxTotalUncompressed:     4 * 1024 * 1024,
+			InspectExtensionlessText: true,
+		}
+	}
+	if opts.AutoZIPMaxSize <= 0 {
+		opts.AutoZIPMaxSize = 10 * 1024 * 1024
+	}
+	if opts.MaxZIPSize <= 0 {
+		opts.MaxZIPSize = opts.AutoZIPMaxSize
+	}
+	if opts.MaxMembers <= 0 {
+		opts.MaxMembers = 64
+	}
+	if opts.MaxMemberBytes <= 0 {
+		opts.MaxMemberBytes = 512 * 1024
+	}
+	if opts.MaxTotalUncompressed <= 0 {
+		opts.MaxTotalUncompressed = 4 * 1024 * 1024
+	}
+	return opts
 }

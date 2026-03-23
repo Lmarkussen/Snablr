@@ -173,10 +173,14 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 
 		target := destinations[i%len(destinations)]
 		fullPath := FullPath(file)
+		manifestPath := fullPath
+		if strings.TrimSpace(file.ExpectedPath) != "" {
+			manifestPath = file.ExpectedPath
+		}
 		entry := SeedManifestEntry{
 			Host:                target.Host,
 			Share:               target.Share,
-			Path:                fullPath,
+			Path:                manifestPath,
 			Category:            file.Category,
 			Format:              formatLabel(file),
 			IntendedAs:          file.IntendedAs,

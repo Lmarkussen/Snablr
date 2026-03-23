@@ -67,6 +67,9 @@ type Finding struct {
 	ShareType           string              `json:"share_type,omitempty"`
 	Host                string              `json:"host,omitempty"`
 	Source              string              `json:"source,omitempty"`
+	ArchivePath         string              `json:"archive_path,omitempty"`
+	ArchiveMemberPath   string              `json:"archive_member_path,omitempty"`
+	ArchiveLocalInspect bool                `json:"archive_local_inspect,omitempty"`
 	DFSNamespacePath    string              `json:"dfs_namespace_path,omitempty"`
 	DFSLinkPath         string              `json:"dfs_link_path,omitempty"`
 	SignalType          string              `json:"signal_type,omitempty"`
@@ -124,6 +127,9 @@ type FileMetadata struct {
 	ShareType           string
 	Host                string
 	Source              string
+	ArchivePath         string
+	ArchiveMemberPath   string
+	ArchiveLocalInspect bool
 	Priority            int
 	PriorityReason      string
 	DFSNamespacePath    string
@@ -202,6 +208,9 @@ func newFinding(rule rules.Rule, meta FileMetadata, evidence findingEvidence) Fi
 		ShareType:           meta.ShareType,
 		Host:                meta.Host,
 		Source:              meta.Source,
+		ArchivePath:         meta.ArchivePath,
+		ArchiveMemberPath:   meta.ArchiveMemberPath,
+		ArchiveLocalInspect: meta.ArchiveLocalInspect,
 		DFSNamespacePath:    meta.DFSNamespacePath,
 		DFSLinkPath:         meta.DFSLinkPath,
 		SignalType:          signalType,

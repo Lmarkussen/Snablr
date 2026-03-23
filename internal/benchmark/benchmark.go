@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"snablr/internal/archiveinspect"
 
 	"snablr/internal/config"
 	"snablr/internal/metrics"
@@ -21,7 +22,7 @@ import (
 )
 
 func LoadConfig(path string) (Config, error) {
-	cfg := Config{}
+	cfg := Config{Archives: config.Default().Archives}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("read benchmark config %s: %w", path, err)
@@ -46,9 +47,19 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	engine := scanner.NewEngine(scanner.Options{
 		Workers:          resolved.WorkerCount,
 		MaxFileSizeBytes: resolved.MaxFileSize,
-		MaxReadBytes:     resolved.MaxReadBytes,
+		MaxReadBytes:     benchmarkReadLimit(resolved),
 		SnippetBytes:     resolved.SnippetBytes,
-		Recorder:         recorder,
+		Archives: archiveinspect.Options{
+			Enabled:                  resolved.Archives.Enabled,
+			AutoZIPMaxSize:           resolved.Archives.AutoZIPMaxSize,
+			AllowLargeZIPs:           resolved.Archives.AllowLargeZIPs,
+			MaxZIPSize:               resolved.Archives.MaxZIPSize,
+			MaxMembers:               resolved.Archives.MaxMembers,
+			MaxMemberBytes:           resolved.Archives.MaxMemberBytes,
+			MaxTotalUncompressed:     resolved.Archives.MaxTotalUncompressed,
+			InspectExtensionlessText: resolved.Archives.InspectExtensionlessText,
+		},
+		Recorder: recorder,
 	}, manager, sink, logger)
 
 	err = engine.Run(ctx, []string{resolved.Dataset})
@@ -136,6 +147,7 @@ func resolve(cfg Config) (Config, []string, *rules.Manager, *logx.Logger, error)
 		if strings.TrimSpace(out.LogLevel) == "" {
 			out.LogLevel = baseCfg.App.LogLevel
 		}
+		out.Archives = baseCfg.Archives
 		if strings.TrimSpace(out.RulesDirectory) == "" {
 			out.RulesDirectory = baseCfg.Rules.Directory
 		}
@@ -144,11 +156,11 @@ func resolve(cfg Config) (Config, []string, *rules.Manager, *logx.Logger, error)
 	if out.SnippetBytes <= 0 {
 		out.SnippetBytes = 120
 	}
-	if out.MaxReadBytes <= 0 {
-		out.MaxReadBytes = out.MaxFileSize
-	}
 	if out.MaxFileSize <= 0 {
 		out.MaxFileSize = 10 * 1024 * 1024
+	}
+	if out.MaxReadBytes <= 0 {
+		out.MaxReadBytes = out.MaxFileSize
 	}
 	if strings.TrimSpace(out.LogLevel) == "" {
 		out.LogLevel = "info"
@@ -179,6 +191,19 @@ func resolve(cfg Config) (Config, []string, *rules.Manager, *logx.Logger, error)
 		logger.Warnf("rule warning: %v", issue)
 	}
 	return out, rulesPaths, manager, logger, nil
+}
+
+func benchmarkReadLimit(cfg Config) int64 {
+	limit := cfg.MaxReadBytes
+	if cfg.Archives.Enabled {
+		if cfg.Archives.AutoZIPMaxSize > limit {
+			limit = cfg.Archives.AutoZIPMaxSize
+		}
+		if cfg.Archives.AllowLargeZIPs && cfg.Archives.MaxZIPSize > limit {
+			limit = cfg.Archives.MaxZIPSize
+		}
+	}
+	return limit
 }
 
 func toCountStats(values map[string]int) []CountStat {

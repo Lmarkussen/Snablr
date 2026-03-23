@@ -94,6 +94,7 @@ The default synthetic catalog currently includes these generation categories:
 - `keepass`
 - `finance`
 - `sql`
+- `zip-archives`
 - `cloud`
 - `legacy`
 - `user-notes`
@@ -103,7 +104,7 @@ The default synthetic catalog currently includes these generation categories:
 - `service-accounts`
 - `noise`
 
-Across those categories, the file names and content cover common enterprise areas such as web configs, exports, payroll-style data, service-account notes, legacy archives, deployment answers, cloud placeholders, and benign clutter.
+Across those categories, the file names and content cover common enterprise areas such as web configs, exports, payroll-style data, service-account notes, legacy archives, deployment answers, cloud placeholders, zip-based honeypots, and benign clutter.
 
 ## Filename Patterns
 
@@ -133,6 +134,13 @@ The filename library now includes many more realistic enterprise-style names, in
 - `scripts-readme.md`
 - `temp-secrets.log`
 - `archive-notes.txt`
+- `deploy-package.zip`
+- `legacy-configs.zip`
+- `deployment-recovery.zip`
+- `old-config-bundle.zip`
+- `binary-media-bundle.zip`
+- `nested-export-bundle.zip`
+- `oversized-config-export.zip`
 
 The generator also adds benign clutter such as:
 
@@ -165,6 +173,15 @@ The default catalog generates realistic-looking placeholders across:
 - `env`
 - `properties`
 - `md`
+- `zip`
+
+`zip` honeypots are generated programmatically and currently cover:
+
+- small text-heavy archives that should be inspected by default
+- config-only archives that should stay low-value
+- nested-archive negative cases
+- binary-only negative cases
+- oversized archives that should be skipped unless larger archive inspection is enabled
 
 ## Fake Content Patterns
 

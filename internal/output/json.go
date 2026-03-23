@@ -212,6 +212,9 @@ type jsonFinding struct {
 	ShareType           string                      `json:"share_type,omitempty"`
 	FilePath            string                      `json:"file_path"`
 	Source              string                      `json:"source,omitempty"`
+	ArchivePath         string                      `json:"archive_path,omitempty"`
+	ArchiveMemberPath   string                      `json:"archive_member_path,omitempty"`
+	ArchiveLocalInspect bool                        `json:"archive_local_inspect,omitempty"`
 	DFSNamespacePath    string                      `json:"dfs_namespace_path,omitempty"`
 	DFSLinkPath         string                      `json:"dfs_link_path,omitempty"`
 	RuleID              string                      `json:"rule_id"`
@@ -260,6 +263,9 @@ func toJSONFinding(f scanner.Finding, delta diff.FindingDelta) jsonFinding {
 		ShareType:           f.ShareType,
 		FilePath:            f.FilePath,
 		Source:              f.Source,
+		ArchivePath:         f.ArchivePath,
+		ArchiveMemberPath:   f.ArchiveMemberPath,
+		ArchiveLocalInspect: f.ArchiveLocalInspect,
 		DFSNamespacePath:    f.DFSNamespacePath,
 		DFSLinkPath:         f.DFSLinkPath,
 		RuleID:              f.RuleID,

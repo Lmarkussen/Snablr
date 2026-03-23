@@ -1253,7 +1253,7 @@
 
 	        <div class="finding-list">
 	          {{- range .Findings }}
-	          <article class="finding-card {{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" data-search="{{ .Finding.Category }} {{ .Finding.Severity }} {{ .Finding.Confidence }} {{ .Finding.RuleID }} {{ .Finding.RuleName }} {{ .Finding.Host }} {{ .Finding.Share }} {{ .Finding.ShareType }} {{ .Finding.ShareDescription }} {{ .Finding.FilePath }} {{ .Finding.Source }} {{ .Finding.DFSNamespacePath }} {{ .Finding.DFSLinkPath }} {{ joinTags .Finding.Tags " " }} {{ .Finding.MatchReason }} {{ .Finding.RuleExplanation }} {{ .Finding.RuleRemediation }} {{ .Finding.Snippet }} {{ .Finding.Context }} {{ .Finding.ContextRedacted }} {{ .Finding.MatchedText }} {{ .Finding.MatchedTextRedacted }} {{ .Finding.PotentialAccount }} {{ .DiffStatus }} {{ joinTags .ChangedFields " " }} {{ joinList .Finding.MatchedRuleIDs " " }} {{ joinList .Finding.MatchedSignalTypes " " }} {{ joinList .Finding.ConfidenceReasons " " }}"
+	          <article class="finding-card {{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" data-search="{{ .Finding.Category }} {{ .Finding.Severity }} {{ .Finding.Confidence }} {{ .Finding.RuleID }} {{ .Finding.RuleName }} {{ .Finding.Host }} {{ .Finding.Share }} {{ .Finding.ShareType }} {{ .Finding.ShareDescription }} {{ .Finding.FilePath }} {{ .Finding.Source }} {{ .Finding.ArchivePath }} {{ .Finding.ArchiveMemberPath }} {{ .Finding.DFSNamespacePath }} {{ .Finding.DFSLinkPath }} {{ joinTags .Finding.Tags " " }} {{ .Finding.MatchReason }} {{ .Finding.RuleExplanation }} {{ .Finding.RuleRemediation }} {{ .Finding.Snippet }} {{ .Finding.Context }} {{ .Finding.ContextRedacted }} {{ .Finding.MatchedText }} {{ .Finding.MatchedTextRedacted }} {{ .Finding.PotentialAccount }} {{ .DiffStatus }} {{ joinTags .ChangedFields " " }} {{ joinList .Finding.MatchedRuleIDs " " }} {{ joinList .Finding.MatchedSignalTypes " " }} {{ joinList .Finding.ConfidenceReasons " " }}"
               data-severity="{{ .Finding.Severity }}"
               data-category="{{ .Finding.Category }}"
               data-confidence="{{ .Finding.Confidence }}"
@@ -1311,6 +1311,20 @@
 	                  <div>
 	                    <strong>Share Description</strong>
 	                    <div class="finding-text muted">{{ .Finding.ShareDescription }}</div>
+	                  </div>
+	                  {{- end }}
+	                  {{- if .Finding.ArchivePath }}
+	                  <div>
+	                    <strong>Archive</strong>
+	                    <div class="finding-text">{{ .Finding.ArchivePath }}</div>
+	                  </div>
+	                  <div>
+	                    <strong>Archive Member</strong>
+	                    <div class="finding-text">{{ .Finding.ArchiveMemberPath }}</div>
+	                  </div>
+	                  <div>
+	                    <strong>Archive Inspection</strong>
+	                    <div class="finding-text">{{ if .Finding.ArchiveLocalInspect }}local{{ else }}unknown{{ end }}</div>
 	                  </div>
 	                  {{- end }}
 	                  <div>

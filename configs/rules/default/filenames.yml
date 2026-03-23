@@ -11,7 +11,7 @@ rules:
     name: Credentials And Secrets Keywords
     description: Detect filenames that strongly suggest stored credentials, secrets, VPN material, or administrative access data.
     type: filename
-    pattern: '(?i)(credential|creds|secret|secrets|password|passwd|pwd(?:[-_ ]?list)?|(?:^|[^a-z0-9])pw(?:[^a-z0-9]|$)|login[-_ ]?(?:details|info)|account[-_ ]?(?:details|credentials)|token|apikey|api-key|private[-_]?key|vpn)'
+    pattern: '(?i)(credential|creds|secret|secrets|password|passwd|pwd(?:[-_ ]?list)?|(?:^|[^a-z0-9])pw(?:[^a-z0-9]|$)|login[-_ ]?(?:details|info)|account[-_ ]?(?:details|credentials)|token|apikey|api-key|private[-_]?key)'
     case_sensitive: false
     severity: high
     tags: [credentials, filenames, review]
@@ -74,6 +74,46 @@ rules:
     file_extensions: []
     max_file_size: 0
     action: prioritize
+
+  # Safe default: exact extensionless private key artifact names are high-value access material.
+  - id: filename.private_key_artifacts
+    name: Private Key Artifacts
+    description: Detect exact high-value private key artifact filenames that commonly appear without extensions.
+    type: filename
+    pattern: '(?i)^(id_rsa|id_ed25519|id_ecdsa|id_dsa|identity)$'
+    case_sensitive: false
+    severity: critical
+    confidence: high
+    explanation: This filename is a well-known private key artifact rather than a generic config or notes file.
+    remediation: Restrict access immediately, confirm whether the private key belongs on the share, and rotate or replace the key material if exposure is confirmed.
+    tags: [crypto, keys, remote-access, filenames, remediation, artifact:private-key]
+    category: crypto
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: prioritize
+
+  # Safe default: SSH support files are useful context but lower-value than exposed private keys.
+  - id: filename.ssh_supporting_artifacts
+    name: SSH Supporting Artifacts
+    description: Detect exact SSH supporting filenames that can add context for nearby private key exposure.
+    type: filename
+    pattern: '(?i)^(authorized_keys|known_hosts)$'
+    case_sensitive: false
+    severity: medium
+    confidence: medium
+    explanation: This filename is associated with SSH trust or access configuration and is most useful as supporting context alongside stronger authentication material.
+    remediation: Review whether this SSH support file belongs on the share and restrict access if it exposes trusted hosts or authorized access relationships.
+    tags: [crypto, ssh, remote-access, filenames, context, artifact:ssh-support]
+    category: remote-access
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: report
 
   # Safe default: exact secret-store artifact names are usually direct credential exposure review items.
   - id: filename.secret_store_artifacts

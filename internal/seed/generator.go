@@ -69,7 +69,12 @@ func Generate(opts GenerateOptions) ([]SeedFile, error) {
 			label := chooseValue(spec.Labels, i)
 			serviceAccount := chooseValue(spec.ServiceAccounts, i)
 			fullDir := applyDepth(dir, opts.Depth, i, spec.Category, persona)
-			variant := pickVariant(spec.Variants, opts, rng, len(out))
+			variant := templateVariant{}
+			if i < len(spec.Variants) {
+				variant = spec.Variants[i]
+			} else {
+				variant = pickVariant(spec.Variants, opts, rng, len(out))
+			}
 			content := spec.Render(renderContext{
 				Index:          i,
 				Format:         variant.Format,
@@ -116,6 +121,9 @@ func expectedSeedPath(relativePath, filename, innerPath string) string {
 	innerPath = strings.TrimSpace(strings.ReplaceAll(innerPath, `\`, "/"))
 	if innerPath == "" {
 		return ""
+	}
+	if strings.HasPrefix(innerPath, "!") || strings.HasPrefix(innerPath, "::") {
+		return basePath + innerPath
 	}
 	innerPath = strings.TrimPrefix(innerPath, "./")
 	innerPath = strings.Trim(innerPath, "/")

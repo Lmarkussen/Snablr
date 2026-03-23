@@ -11,11 +11,13 @@ import (
 )
 
 type Config struct {
-	App      AppConfig     `yaml:"app"`
-	Scan     ScanConfig    `yaml:"scan"`
-	Archives ArchiveConfig `yaml:"archives"`
-	Rules    RulesConfig   `yaml:"rules"`
-	Output   OutputConfig  `yaml:"output"`
+	App         AppConfig         `yaml:"app"`
+	Scan        ScanConfig        `yaml:"scan"`
+	Archives    ArchiveConfig     `yaml:"archives"`
+	SQLite      SQLiteConfig      `yaml:"sqlite"`
+	Suppression SuppressionConfig `yaml:"suppression"`
+	Rules       RulesConfig       `yaml:"rules"`
+	Output      OutputConfig      `yaml:"output"`
 
 	configDir   string `yaml:"-"`
 	runtimeRoot string `yaml:"-"`
@@ -30,6 +32,7 @@ type AppConfig struct {
 type ScanConfig struct {
 	Targets                    []string `yaml:"targets"`
 	TargetsFile                string   `yaml:"targets_file"`
+	Profile                    string   `yaml:"profile"`
 	Username                   string   `yaml:"username"`
 	Password                   string   `yaml:"password"`
 	Share                      []string `yaml:"share"`
@@ -67,6 +70,40 @@ type ArchiveConfig struct {
 	InspectExtensionlessText bool  `yaml:"inspect_extensionless_text"`
 }
 
+type SQLiteConfig struct {
+	Enabled            bool  `yaml:"enabled"`
+	AutoDBMaxSize      int64 `yaml:"auto_db_max_size"`
+	AllowLargeDBs      bool  `yaml:"allow_large_dbs"`
+	MaxDBSize          int64 `yaml:"max_db_size"`
+	MaxTables          int   `yaml:"max_tables"`
+	MaxRowsPerTable    int   `yaml:"max_rows_per_table"`
+	MaxCellBytes       int64 `yaml:"max_cell_bytes"`
+	MaxTotalBytes      int64 `yaml:"max_total_bytes"`
+	MaxInterestingCols int   `yaml:"max_interesting_columns"`
+}
+
+type SuppressionConfig struct {
+	File        string            `yaml:"file"`
+	SampleLimit int               `yaml:"sample_limit"`
+	Rules       []SuppressionRule `yaml:"rules"`
+}
+
+type SuppressionRule struct {
+	ID           string   `yaml:"id"`
+	Description  string   `yaml:"description"`
+	Reason       string   `yaml:"reason"`
+	Enabled      bool     `yaml:"enabled"`
+	Hosts        []string `yaml:"hosts"`
+	Shares       []string `yaml:"shares"`
+	RuleIDs      []string `yaml:"rule_ids"`
+	Categories   []string `yaml:"categories"`
+	ExactPaths   []string `yaml:"exact_paths"`
+	PathPrefixes []string `yaml:"path_prefixes"`
+	PathContains []string `yaml:"path_contains"`
+	Fingerprints []string `yaml:"fingerprints"`
+	Tags         []string `yaml:"tags"`
+}
+
 type RulesConfig struct {
 	Directory     string `yaml:"rules_directory"`
 	FailOnInvalid bool   `yaml:"fail_on_invalid"`
@@ -95,12 +132,29 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("read %s: %w", path, err)
 	}
 
+	var hint struct {
+		Scan struct {
+			Profile string `yaml:"profile"`
+		} `yaml:"scan"`
+	}
+	if err := yaml.Unmarshal(data, &hint); err != nil {
+		return Config{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if strings.TrimSpace(hint.Scan.Profile) != "" {
+		if err := ApplyScanProfile(&cfg, hint.Scan.Profile); err != nil {
+			return Config{}, fmt.Errorf("apply scan profile %q: %w", hint.Scan.Profile, err)
+		}
+	}
+
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 
 	applyDefaults(&cfg)
 	applyPathContext(&cfg, resolvedPath)
+	if err := loadSuppressionOverlay(&cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
 }
 
@@ -135,6 +189,30 @@ func applyDefaults(cfg *Config) {
 	if cfg.Archives.MaxTotalUncompressed <= 0 {
 		cfg.Archives.MaxTotalUncompressed = 4 * 1024 * 1024
 	}
+	if cfg.SQLite.AutoDBMaxSize <= 0 {
+		cfg.SQLite.AutoDBMaxSize = 5 * 1024 * 1024
+	}
+	if cfg.SQLite.MaxDBSize <= 0 {
+		cfg.SQLite.MaxDBSize = cfg.SQLite.AutoDBMaxSize
+	}
+	if cfg.SQLite.MaxTables <= 0 {
+		cfg.SQLite.MaxTables = 8
+	}
+	if cfg.SQLite.MaxRowsPerTable <= 0 {
+		cfg.SQLite.MaxRowsPerTable = 5
+	}
+	if cfg.SQLite.MaxCellBytes <= 0 {
+		cfg.SQLite.MaxCellBytes = 256
+	}
+	if cfg.SQLite.MaxTotalBytes <= 0 {
+		cfg.SQLite.MaxTotalBytes = 16 * 1024
+	}
+	if cfg.SQLite.MaxInterestingCols <= 0 {
+		cfg.SQLite.MaxInterestingCols = 4
+	}
+	if cfg.Suppression.SampleLimit <= 0 {
+		cfg.Suppression.SampleLimit = 10
+	}
 	if cfg.Output.Format == "" {
 		cfg.Output.Format = "console"
 	}
@@ -144,6 +222,103 @@ func applyDefaults(cfg *Config) {
 	if cfg.Output.HTMLOut == "" {
 		cfg.Output.HTMLOut = "report.html"
 	}
+}
+
+func ApplyScanProfile(cfg *Config, profile string) error {
+	if cfg == nil {
+		return nil
+	}
+	switch normalizeProfile(profile) {
+	case "", "default":
+		cfg.Scan.Profile = "default"
+		cfg.Scan.ValidationMode = false
+		cfg.Archives.Enabled = true
+		cfg.Archives.AutoZIPMaxSize = 10 * 1024 * 1024
+		cfg.Archives.AllowLargeZIPs = false
+		cfg.Archives.MaxZIPSize = 10 * 1024 * 1024
+		cfg.Archives.MaxMembers = 64
+		cfg.Archives.MaxMemberBytes = 512 * 1024
+		cfg.Archives.MaxTotalUncompressed = 4 * 1024 * 1024
+		cfg.Archives.InspectExtensionlessText = true
+		cfg.SQLite.Enabled = true
+		cfg.SQLite.AutoDBMaxSize = 5 * 1024 * 1024
+		cfg.SQLite.AllowLargeDBs = false
+		cfg.SQLite.MaxDBSize = 5 * 1024 * 1024
+		cfg.SQLite.MaxTables = 8
+		cfg.SQLite.MaxRowsPerTable = 5
+		cfg.SQLite.MaxCellBytes = 256
+		cfg.SQLite.MaxTotalBytes = 16 * 1024
+		cfg.SQLite.MaxInterestingCols = 4
+	case "validation":
+		cfg.Scan.Profile = "validation"
+		cfg.Scan.ValidationMode = true
+		cfg.Archives.Enabled = true
+		cfg.Archives.AutoZIPMaxSize = 5 * 1024 * 1024
+		cfg.Archives.AllowLargeZIPs = false
+		cfg.Archives.MaxZIPSize = 5 * 1024 * 1024
+		cfg.Archives.MaxMembers = 32
+		cfg.Archives.MaxMemberBytes = 256 * 1024
+		cfg.Archives.MaxTotalUncompressed = 2 * 1024 * 1024
+		cfg.Archives.InspectExtensionlessText = false
+		cfg.SQLite.Enabled = true
+		cfg.SQLite.AutoDBMaxSize = 2 * 1024 * 1024
+		cfg.SQLite.AllowLargeDBs = false
+		cfg.SQLite.MaxDBSize = 2 * 1024 * 1024
+		cfg.SQLite.MaxTables = 4
+		cfg.SQLite.MaxRowsPerTable = 3
+		cfg.SQLite.MaxCellBytes = 192
+		cfg.SQLite.MaxTotalBytes = 8 * 1024
+		cfg.SQLite.MaxInterestingCols = 3
+	case "aggressive":
+		cfg.Scan.Profile = "aggressive"
+		cfg.Scan.ValidationMode = true
+		cfg.Archives.Enabled = true
+		cfg.Archives.AutoZIPMaxSize = 10 * 1024 * 1024
+		cfg.Archives.AllowLargeZIPs = true
+		cfg.Archives.MaxZIPSize = 25 * 1024 * 1024
+		cfg.Archives.MaxMembers = 96
+		cfg.Archives.MaxMemberBytes = 1024 * 1024
+		cfg.Archives.MaxTotalUncompressed = 8 * 1024 * 1024
+		cfg.Archives.InspectExtensionlessText = true
+		cfg.SQLite.Enabled = true
+		cfg.SQLite.AutoDBMaxSize = 5 * 1024 * 1024
+		cfg.SQLite.AllowLargeDBs = true
+		cfg.SQLite.MaxDBSize = 15 * 1024 * 1024
+		cfg.SQLite.MaxTables = 12
+		cfg.SQLite.MaxRowsPerTable = 10
+		cfg.SQLite.MaxCellBytes = 512
+		cfg.SQLite.MaxTotalBytes = 64 * 1024
+		cfg.SQLite.MaxInterestingCols = 6
+	default:
+		return fmt.Errorf("unsupported scan profile %q: use default, validation, or aggressive", profile)
+	}
+	return nil
+}
+
+func normalizeProfile(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func loadSuppressionOverlay(cfg *Config) error {
+	if cfg == nil || strings.TrimSpace(cfg.Suppression.File) == "" {
+		return nil
+	}
+	path := resolvePath(cfg.Suppression.File, cfg.configDir, cfg.runtimeRoot)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read suppression file %s: %w", cfg.Suppression.File, err)
+	}
+	var overlay SuppressionConfig
+	if err := yaml.Unmarshal(data, &overlay); err != nil {
+		return fmt.Errorf("parse suppression file %s: %w", cfg.Suppression.File, err)
+	}
+	if overlay.SampleLimit > 0 {
+		cfg.Suppression.SampleLimit = overlay.SampleLimit
+	}
+	if len(overlay.Rules) > 0 {
+		cfg.Suppression.Rules = append(cfg.Suppression.Rules, overlay.Rules...)
+	}
+	return nil
 }
 
 func (c Config) RulePaths() []string {

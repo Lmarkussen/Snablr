@@ -6,6 +6,7 @@ app:
 scan:
   targets: []
   targets_file: ""
+  profile: default
   username: ""
   password: ""
   share: []
@@ -37,6 +38,22 @@ archives:
   max_member_bytes: 524288
   max_total_uncompressed_bytes: 4194304
   inspect_extensionless_text: true
+
+sqlite:
+  enabled: true
+  auto_db_max_size: 5242880
+  allow_large_dbs: false
+  max_db_size: 5242880
+  max_tables: 8
+  max_rows_per_table: 5
+  max_cell_bytes: 256
+  max_total_bytes: 16384
+  max_interesting_columns: 4
+
+suppression:
+  file: ""
+  sample_limit: 10
+  rules: []
 
 rules:
   rules_directory: ""

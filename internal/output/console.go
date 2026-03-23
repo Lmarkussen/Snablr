@@ -18,7 +18,9 @@ type ConsoleWriter struct {
 	metrics             metrics.Snapshot
 	summary             *summaryCollector
 	findings            []scanner.Finding
+	profile             string
 	manifest            string
+	suppression         *suppressionSummary
 	baselinePerformance *diff.PerformanceSummary
 	validationMode      *validationModeCollector
 }
@@ -80,6 +82,22 @@ func (c *ConsoleWriter) writeFindingLocked(f scanner.Finding) error {
 		}
 		if _, err := fmt.Fprintf(c.w, "Archive Inspection: %s\n", inspectionMode); err != nil {
 			return err
+		}
+	}
+	if f.DatabaseFilePath != "" || f.DatabaseTable != "" || f.DatabaseColumn != "" {
+		if _, err := fmt.Fprintf(c.w, "Database File: %s\n", valueOrDash(f.DatabaseFilePath)); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(c.w, "Database Table: %s\n", valueOrDash(f.DatabaseTable)); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(c.w, "Database Column: %s\n", valueOrDash(f.DatabaseColumn)); err != nil {
+			return err
+		}
+		if f.DatabaseRowContext != "" {
+			if _, err := fmt.Fprintf(c.w, "Database Row Context: %s\n", f.DatabaseRowContext); err != nil {
+				return err
+			}
 		}
 	}
 	if _, err := fmt.Fprintf(c.w, "Rule: %s\n", f.RuleName); err != nil {
@@ -208,6 +226,18 @@ func (c *ConsoleWriter) SetValidationManifest(path string) {
 	c.manifest = path
 }
 
+func (c *ConsoleWriter) SetSuppressionSummary(summary *suppressionSummary) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.suppression = summary
+}
+
+func (c *ConsoleWriter) SetScanProfile(profile string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.profile = strings.TrimSpace(profile)
+}
+
 func (c *ConsoleWriter) SetValidationMode(enabled bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -270,6 +300,9 @@ func (c *ConsoleWriter) Close() error {
 	); err != nil {
 		return err
 	}
+	if _, err := fmt.Fprintf(c.w, "Profile: %s\n", valueOrDash(c.profile)); err != nil {
+		return err
+	}
 	if c.metrics.Counters.TargetsLoaded > 0 || c.metrics.Counters.TargetsReachable > 0 || c.metrics.Counters.SharesEnumerated > 0 {
 		if _, err := fmt.Fprintf(c.w, "Metrics: targets_loaded=%d targets_reachable=%d shares_enumerated=%d files_visited=%d files_skipped=%d files_read=%d matches_found=%d\n",
 			c.metrics.Counters.TargetsLoaded,
@@ -321,6 +354,52 @@ func (c *ConsoleWriter) Close() error {
 			}
 		}
 	}
+	accessPaths := buildAccessPathSummaries(augmented)
+	if len(accessPaths) > 0 {
+		if _, err := fmt.Fprintf(c.w, "Top Access Paths: showing %d of %d ranked clusters\n", len(topAccessPaths(accessPaths, 5)), len(accessPaths)); err != nil {
+			return err
+		}
+		for _, item := range topAccessPaths(accessPaths, 5) {
+			if _, err := fmt.Fprintf(c.w, "  %d. [%s %d] %s\n",
+				item.Rank,
+				strings.ToUpper(valueOrDash(item.PriorityTier)),
+				item.ExploitabilityScore,
+				item.Label,
+			); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(c.w, "    Type: %s\n", valueOrDash(item.Type)); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(c.w, "    Host/Share: %s/%s\n",
+				valueOrDash(item.Host),
+				valueOrDash(item.Share),
+			); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(c.w, "    Primary: %s\n", item.PrimaryPath); err != nil {
+				return err
+			}
+			if item.Completeness != "" {
+				if _, err := fmt.Fprintf(c.w, "    Completeness: %s\n", item.Completeness); err != nil {
+					return err
+				}
+			}
+			if _, err := fmt.Fprintf(c.w, "    Why: %s\n", item.WhyItMatters); err != nil {
+				return err
+			}
+			if item.AccessHint != "" {
+				if _, err := fmt.Fprintf(c.w, "    Enables: %s\n", item.AccessHint); err != nil {
+					return err
+				}
+			}
+			if len(item.RelatedArtifacts) > 0 {
+				if _, err := fmt.Fprintf(c.w, "    Related: %s\n", strings.Join(limitStrings(item.RelatedArtifacts, 3), "; ")); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	if validationMode := c.validationMode.Summary(snapshot); validationMode != nil {
 		if _, err := fmt.Fprintf(c.w, "Validation Mode: total=%d suppressed=%d visible=%d downgraded=%d false_positive_candidates=%d high_confidence=%d high_confidence_ratio=%.2f skipped_files=%d\n",
 			validationMode.TotalFindings,
@@ -333,6 +412,28 @@ func (c *ConsoleWriter) Close() error {
 			validationMode.SkippedFiles,
 		); err != nil {
 			return err
+		}
+	}
+	if c.suppression != nil && c.suppression.TotalSuppressed > 0 {
+		if _, err := fmt.Fprintf(c.w, "Suppressed Findings: total=%d rules=%d\n", c.suppression.TotalSuppressed, len(c.suppression.Rules)); err != nil {
+			return err
+		}
+		for _, item := range limitSuppressionRules(c.suppression.Rules, 5) {
+			if _, err := fmt.Fprintf(c.w, "  %s: count=%d %s\n", item.ID, item.Count, valueOrDash(item.Reason)); err != nil {
+				return err
+			}
+		}
+		for _, item := range limitSuppressedFindings(c.suppression.Samples, 5) {
+			if _, err := fmt.Fprintf(c.w, "  sample: [%s] %s/%s/%s rule=%s %s\n",
+				item.SuppressionID,
+				valueOrDash(item.Host),
+				valueOrDash(item.Share),
+				item.FilePath,
+				valueOrDash(item.RuleID),
+				valueOrDash(item.SuppressionReason),
+			); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -410,6 +511,20 @@ func (c *ConsoleWriter) Close() error {
 }
 
 func limitValidationItems(values []validationItem, max int) []validationItem {
+	if len(values) <= max || max <= 0 {
+		return values
+	}
+	return values[:max]
+}
+
+func limitSuppressionRules(values []suppressionRuleCount, max int) []suppressionRuleCount {
+	if len(values) <= max || max <= 0 {
+		return values
+	}
+	return values[:max]
+}
+
+func limitSuppressedFindings(values []suppressedFinding, max int) []suppressedFinding {
 	if len(values) <= max || max <= 0 {
 		return values
 	}

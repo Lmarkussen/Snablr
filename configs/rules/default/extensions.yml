@@ -56,6 +56,26 @@ rules:
     max_file_size: 0
     action: prioritize
 
+  # Safe default: client-auth artifacts often provide direct VPN or SSH access context and deserve review.
+  - id: extension.client_auth_artifacts
+    name: Client Auth Artifact Extensions
+    description: Prioritize common VPN and client-auth artifact extensions that often represent reusable access material.
+    type: extension
+    pattern: '^(\.ovpn|\.ppk)$'
+    case_sensitive: false
+    severity: high
+    confidence: high
+    explanation: These extensions are associated with VPN or client-auth artifacts rather than generic text files.
+    remediation: Review whether the client-auth artifact belongs on the share, restrict access, and rotate or replace related credentials if exposure is confirmed.
+    tags: [remote-access, vpn, client-auth, extensions, artifact:client-auth]
+    category: remote-access
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: prioritize
+
   # Noisy but useful: office and export file types are common and should usually be narrowed with include_paths or custom filename rules.
   - id: extension.office_and_export_extensions
     name: Office And Export Extensions

@@ -17,6 +17,7 @@ import (
 	"snablr/internal/planner"
 	"snablr/internal/scanner"
 	"snablr/internal/smb"
+	"snablr/internal/sqliteinspect"
 	"snablr/internal/state"
 	"snablr/internal/ui"
 	"snablr/pkg/logx"
@@ -63,6 +64,8 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	if err != nil {
 		return fmt.Errorf("create output writer: %w", err)
 	}
+	sink = output.WrapWithSuppression(sink, cfg.Suppression)
+	output.SetScanProfile(sink, strings.TrimSpace(cfg.Scan.Profile))
 	defer func() {
 		if sink == nil {
 			return
@@ -124,6 +127,17 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			MaxMemberBytes:           cfg.Archives.MaxMemberBytes,
 			MaxTotalUncompressed:     cfg.Archives.MaxTotalUncompressed,
 			InspectExtensionlessText: cfg.Archives.InspectExtensionlessText,
+		},
+		SQLite: sqliteinspect.Options{
+			Enabled:            cfg.SQLite.Enabled,
+			AutoDBMaxSize:      cfg.SQLite.AutoDBMaxSize,
+			AllowLargeDBs:      cfg.SQLite.AllowLargeDBs,
+			MaxDBSize:          cfg.SQLite.MaxDBSize,
+			MaxTables:          cfg.SQLite.MaxTables,
+			MaxRowsPerTable:    cfg.SQLite.MaxRowsPerTable,
+			MaxCellBytes:       cfg.SQLite.MaxCellBytes,
+			MaxTotalBytes:      cfg.SQLite.MaxTotalBytes,
+			MaxInterestingCols: cfg.SQLite.MaxInterestingCols,
 		},
 		Recorder:       recorder,
 		ValidationMode: cfg.Scan.ValidationMode,
@@ -498,6 +512,14 @@ func scanReadLimit(cfg config.Config) int64 {
 		}
 		if cfg.Archives.AllowLargeZIPs && cfg.Archives.MaxZIPSize > limit {
 			limit = cfg.Archives.MaxZIPSize
+		}
+	}
+	if cfg.SQLite.Enabled {
+		if cfg.SQLite.AutoDBMaxSize > limit {
+			limit = cfg.SQLite.AutoDBMaxSize
+		}
+		if cfg.SQLite.AllowLargeDBs && cfg.SQLite.MaxDBSize > limit {
+			limit = cfg.SQLite.MaxDBSize
 		}
 	}
 	return limit

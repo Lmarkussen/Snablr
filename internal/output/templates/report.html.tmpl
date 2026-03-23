@@ -777,12 +777,15 @@
           <p class="subtitle">Standalone defensive triage report for post-scan review. Use the filter to narrow findings quickly, then open the most relevant categories first.</p>
           <div class="hero-meta">
             <span class="meta-pill"><strong>Version</strong> {{ .Version }}</span>
+            <span class="meta-pill"><strong>Profile</strong> {{ valueOrDash .Profile }}</span>
             <span class="meta-pill"><strong>Started</strong> {{ formatScanTime .Summary.StartedAt }}</span>
             <span class="meta-pill"><strong>Completed</strong> {{ formatScanTime .Summary.EndedAt }}</span>
             <span class="meta-pill"><strong>Duration</strong> {{ formatDuration .Summary.StartedAt .Summary.EndedAt }}</span>
           </div>
         </div>
         <div class="hero-actions">
+          {{- if .TopAccessPaths }}<a href="#access-paths">Top Access Paths</a>{{- end }}
+          {{- if .Suppression }}<a href="#suppression-summary">Suppressed Findings</a>{{- end }}
           <a href="#severity-summary">Severity Summary</a>
           <a href="#category-summary">Category Summary</a>
           <a href="#host-summary">Host Summary</a>
@@ -900,6 +903,113 @@
         <div class="card-meta">Start {{ formatScanTime .Summary.StartedAt }} · End {{ formatScanTime .Summary.EndedAt }}</div>
       </article>
     </section>
+
+    {{- if .TopAccessPaths }}
+    <section id="access-paths">
+      <div class="section-head">
+        <h2>Top Access Paths</h2>
+        <span class="section-note">Ranked correlated clusters that most directly suggest reusable access or offline extraction paths. Showing the highest-ranked entries first.</span>
+      </div>
+      <div class="severity-grid">
+        {{- range .TopAccessPaths }}
+        <article class="card">
+          <span class="card-label">#{{ .Rank }} · {{ accessPathLabel . }}</span>
+          <span class="card-value" style="font-size: 1.1rem;">{{ .PrimaryPath }}</span>
+          <div class="card-meta">
+            <div class="badge-row">
+              <span class="badge {{ severityClass .Severity }}">{{ .Severity }}</span>
+              <span class="badge {{ confidenceClass .Confidence }}">{{ .Confidence }}</span>
+              <span class="badge">{{ .PriorityTier }} priority</span>
+              <span class="badge">score {{ .ExploitabilityScore }}</span>
+              <span class="badge">{{ .Type }}</span>
+              {{- if .Category }}<span class="badge">{{ .Category }}</span>{{- end }}
+            </div>
+            <div>{{ valueOrDash .Host }} / {{ valueOrDash .Share }}</div>
+            {{- if .Completeness }}<div>Completeness: {{ .Completeness }}</div>{{- end }}
+            <div>{{ .WhyItMatters }}</div>
+            {{- if .AccessHint }}<div>Enables: {{ .AccessHint }}</div>{{- end }}
+            {{- if .RelatedArtifacts }}
+            <div style="margin-top:8px;">
+              {{- range .RelatedArtifacts }}
+              <div>{{ . }}</div>
+              {{- end }}
+            </div>
+            {{- end }}
+          </div>
+        </article>
+        {{- end }}
+      </div>
+    </section>
+    {{- end }}
+
+    {{- if .Suppression }}
+    <section id="suppression-summary">
+      <div class="section-head">
+        <h2>Suppressed Findings</h2>
+        <span class="section-note">Explicit allowlist matches hidden from the primary finding list. These items remain auditable so operators can review what was suppressed and why.</span>
+      </div>
+      <div class="summary-grid">
+        <article class="card">
+          <span class="card-label">Suppressed Total</span>
+          <span class="card-value">{{ .Suppression.TotalSuppressed }}</span>
+          <div class="card-meta">Explicit suppression rules applied during reporting.</div>
+        </article>
+        <article class="card">
+          <span class="card-label">Suppression Rules</span>
+          <span class="card-value">{{ len .Suppression.Rules }}</span>
+          <div class="card-meta">Visible findings are filtered only when a configured suppression rule matches.</div>
+        </article>
+      </div>
+      {{- if .Suppression.Rules }}
+      <div class="table-card">
+        <table>
+          <thead>
+            <tr>
+              <th>Rule</th>
+              <th>Count</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{- range .Suppression.Rules }}
+            <tr>
+              <td><strong>{{ .ID }}</strong>{{ if .Description }}<div class="muted-text">{{ .Description }}</div>{{ end }}</td>
+              <td>{{ .Count }}</td>
+              <td>{{ valueOrDash .Reason }}</td>
+            </tr>
+            {{- end }}
+          </tbody>
+        </table>
+      </div>
+      {{- end }}
+      {{- if .Suppression.Samples }}
+      <div class="table-card">
+        <table>
+          <thead>
+            <tr>
+              <th>Suppression Rule</th>
+              <th>Host / Share</th>
+              <th>Path</th>
+              <th>Finding Rule</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{- range .Suppression.Samples }}
+            <tr>
+              <td>{{ .SuppressionID }}</td>
+              <td>{{ valueOrDash .Host }} / {{ valueOrDash .Share }}</td>
+              <td>{{ .FilePath }}</td>
+              <td>{{ valueOrDash .RuleID }}</td>
+              <td>{{ valueOrDash .SuppressionReason }}</td>
+            </tr>
+            {{- end }}
+          </tbody>
+        </table>
+      </div>
+      {{- end }}
+    </section>
+    {{- end }}
 
     {{- if .Validation }}
     <section id="validation-summary">
@@ -1253,7 +1363,7 @@
 
 	        <div class="finding-list">
 	          {{- range .Findings }}
-	          <article class="finding-card {{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" data-search="{{ .Finding.Category }} {{ .Finding.Severity }} {{ .Finding.Confidence }} {{ .Finding.RuleID }} {{ .Finding.RuleName }} {{ .Finding.Host }} {{ .Finding.Share }} {{ .Finding.ShareType }} {{ .Finding.ShareDescription }} {{ .Finding.FilePath }} {{ .Finding.Source }} {{ .Finding.ArchivePath }} {{ .Finding.ArchiveMemberPath }} {{ .Finding.DFSNamespacePath }} {{ .Finding.DFSLinkPath }} {{ joinTags .Finding.Tags " " }} {{ .Finding.MatchReason }} {{ .Finding.RuleExplanation }} {{ .Finding.RuleRemediation }} {{ .Finding.Snippet }} {{ .Finding.Context }} {{ .Finding.ContextRedacted }} {{ .Finding.MatchedText }} {{ .Finding.MatchedTextRedacted }} {{ .Finding.PotentialAccount }} {{ .DiffStatus }} {{ joinTags .ChangedFields " " }} {{ joinList .Finding.MatchedRuleIDs " " }} {{ joinList .Finding.MatchedSignalTypes " " }} {{ joinList .Finding.ConfidenceReasons " " }}"
+	          <article class="finding-card {{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" data-search="{{ .Finding.Category }} {{ .Finding.Severity }} {{ .Finding.Confidence }} {{ .Finding.RuleID }} {{ .Finding.RuleName }} {{ .Finding.Host }} {{ .Finding.Share }} {{ .Finding.ShareType }} {{ .Finding.ShareDescription }} {{ .Finding.FilePath }} {{ .Finding.Source }} {{ .Finding.ArchivePath }} {{ .Finding.ArchiveMemberPath }} {{ .Finding.DatabaseFilePath }} {{ .Finding.DatabaseTable }} {{ .Finding.DatabaseColumn }} {{ .Finding.DatabaseRowContext }} {{ .Finding.DFSNamespacePath }} {{ .Finding.DFSLinkPath }} {{ joinTags .Finding.Tags " " }} {{ .Finding.MatchReason }} {{ .Finding.RuleExplanation }} {{ .Finding.RuleRemediation }} {{ .Finding.Snippet }} {{ .Finding.Context }} {{ .Finding.ContextRedacted }} {{ .Finding.MatchedText }} {{ .Finding.MatchedTextRedacted }} {{ .Finding.PotentialAccount }} {{ .DiffStatus }} {{ joinTags .ChangedFields " " }} {{ joinList .Finding.MatchedRuleIDs " " }} {{ joinList .Finding.MatchedSignalTypes " " }} {{ joinList .Finding.ConfidenceReasons " " }}"
               data-severity="{{ .Finding.Severity }}"
               data-category="{{ .Finding.Category }}"
               data-confidence="{{ .Finding.Confidence }}"
@@ -1333,6 +1443,26 @@
 	                      {{- if .Finding.Tags }}{{- range .Finding.Tags }}<span class="badge good">{{ . }}</span>{{ end }}{{ else }}<span class="muted">-</span>{{ end -}}
 	                    </div>
 	                  </div>
+	                  {{- if or .Finding.DatabaseFilePath .Finding.DatabaseTable .Finding.DatabaseColumn }}
+	                  <div>
+	                    <strong>Database File</strong>
+	                    <div class="finding-text">{{ valueOrDash .Finding.DatabaseFilePath }}</div>
+	                  </div>
+	                  <div>
+	                    <strong>Database Table</strong>
+	                    <div class="finding-text">{{ valueOrDash .Finding.DatabaseTable }}</div>
+	                  </div>
+	                  <div>
+	                    <strong>Database Column</strong>
+	                    <div class="finding-text">{{ valueOrDash .Finding.DatabaseColumn }}</div>
+	                  </div>
+	                  {{- if .Finding.DatabaseRowContext }}
+	                  <div>
+	                    <strong>Database Row Context</strong>
+	                    <div class="finding-text">{{ .Finding.DatabaseRowContext }}</div>
+	                  </div>
+	                  {{- end }}
+	                  {{- end }}
 	                  {{- if .Finding.MatchedSignalTypes }}
 	                  <div>
 	                    <strong>Matched Signals</strong>

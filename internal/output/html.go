@@ -28,7 +28,9 @@ type HTMLWriter struct {
 	metrics  metrics.Snapshot
 	summary  *summaryCollector
 	template *template.Template
+	profile  string
 	manifest string
+	suppression *suppressionSummary
 	w        io.Writer
 }
 
@@ -98,6 +100,7 @@ func NewHTMLWriter(w io.Writer, closer io.Closer) (*HTMLWriter, error) {
 		"isCorrelated":      isCorrelated,
 		"normalizedSource":  normalizedSourceLabel,
 		"slug":              slug,
+		"accessPathLabel":   accessPathSummaryLabel,
 	}).ParseFS(reportTemplates, "templates/report.html.tmpl")
 	if err != nil {
 		return nil, err
@@ -158,6 +161,18 @@ func (h *HTMLWriter) SetValidationManifest(path string) {
 	h.manifest = path
 }
 
+func (h *HTMLWriter) SetSuppressionSummary(summary *suppressionSummary) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.suppression = summary
+}
+
+func (h *HTMLWriter) SetScanProfile(profile string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.profile = strings.TrimSpace(profile)
+}
+
 func (h *HTMLWriter) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -186,10 +201,14 @@ func (h *HTMLWriter) Close() error {
 
 	data := struct {
 		Version           string
+		Profile           string
 		Summary           summarySnapshot
 		Metrics           metrics.Snapshot
 		SeveritySummaries []severitySummary
 		CategorySummaries []categorySummary
+		AccessPaths       []accessPathSummary
+		TopAccessPaths    []accessPathSummary
+		Suppression       *suppressionSummary
 		HostSummaries     []hostSummary
 		DiffSummary       *diff.Summary
 		ChangedFindings   []diff.ChangedFinding
@@ -199,11 +218,14 @@ func (h *HTMLWriter) Close() error {
 		Validation        *validationSummary
 	}{
 		Version:           version.Short(),
+		Profile:           h.profile,
 		Summary:           summary,
 		Metrics:           h.metrics,
 		SeveritySummaries: severitySummaries,
 		CategorySummaries: categorySummaries,
+		AccessPaths:       buildAccessPathSummaries(augmented),
 		HostSummaries:     hostSummaries,
+		Suppression:       h.suppression,
 		DiffSummary:       diffSummary(diffResult),
 		ChangedFindings:   changedFindings(diffResult),
 		RemovedFindings:   removedFindings(diffResult),
@@ -211,6 +233,7 @@ func (h *HTMLWriter) Close() error {
 		FilterOptions:     filterOptions,
 		Validation:        validation,
 	}
+	data.TopAccessPaths = topAccessPaths(data.AccessPaths, 8)
 
 	if err := h.template.ExecuteTemplate(h.w, "report.html.tmpl", data); err != nil {
 		if h.closer != nil {

@@ -15,6 +15,11 @@ Snablr is intended for authorized defensive security work only. Run it only agai
 - SMB share enumeration, metadata collection, and recursive file walking
 - YAML rule packs for filename, extension, and content matching
 - Built-in database artifact and connection-material inspection for common enterprise formats
+- Limited local-only SQLite inspection for bounded credential, token, and connection-material review
+- High-signal private key and client-auth artifact coverage, including exact extensionless SSH private key names
+- Exact Windows credential-store path coverage for `Credentials`, `Vault`, and `Protect` profile families
+- Exact Windows backup-exposure path coverage for `WindowsImageBackup`, `System Volume Information`, `RegBack`, and Windows repair hive families
+- Exact browser profile credential-store artifact coverage for Firefox and Chromium-family profile stores
 - Limited local-side `.zip` inspection with defensive size and member limits
 - Rule validation, fixture-based testing, and custom rule overlays
 - Prioritized scan planning for high-value targets, shares, and paths
@@ -22,6 +27,9 @@ Snablr is intended for authorized defensive security work only. Run it only agai
 - Checkpoint and resume support for longer scans
 - Console, JSON, HTML, CSV, and Markdown output formats
 - Structured HTML report filtering, confidence breakdowns, and seeded validation summaries
+- Explicit suppression and allowlisting with auditable suppressed-finding summaries
+- Deterministic scan profiles for default, validation, and aggressive bounded-inspection modes
+- Ranked top access-path summaries for correlated AD, backup, credential-store, private-key, browser, and app/database exposure clusters
 - Baseline and diff mode for repeated scans and change tracking
 - Synthetic lab seeding and manifest-based verification with `snablr-seed`
 
@@ -189,7 +197,40 @@ Archive note:
 - only text-like members are inspected
 - nested archives are skipped
 - archive member findings are reported as `outer.zip!inner/path`
+- archive-contained private keys and client-auth artifacts use the same `outer.zip!inner/path` format and keep their inner member context in JSON and HTML output
 - remote SMB scans fetch the outer archive and inspect it locally in the Snablr process; archives are not unpacked on the target
+
+SQLite note:
+
+- `.sqlite`, `.sqlite3`, `.db`, and `.db3` files can be inspected locally when they fall within the configured SQLite size limits
+- Snablr validates the SQLite header before inspection
+- inspection is read-only and bounded by table, row, cell, and total-byte limits
+- findings use a combined path like `app.db::users.password`
+- JSON and HTML output also preserve `database_file_path`, `database_table`, `database_column`, and `database_row_context`
+- remote SMB scans read the outer SQLite file and inspect it locally in the Snablr process; databases are never queried on the remote target
+
+Backup exposure note:
+
+- exact backup path families such as `WindowsImageBackup`, `System Volume Information`, `RegBack`, and `Windows/repair` are detected as high-signal backup-exposure artifacts
+- grouped backup contexts containing multiple hive or AD database artifacts can be promoted into an access-path summary for faster operator triage
+
+Browser credential-store note:
+
+- exact Firefox profile artifacts such as `logins.json` and `key4.db` are detected by exact profile path and filename
+- exact Chromium-family profile artifacts such as `Login Data` and `Cookies` are detected by exact profile path and filename
+- standalone browser credential-store artifacts stay low-visibility until paired exact profile artifacts are found in the same normalized browser profile context
+
+Top access-path note:
+
+- correlated findings are grouped into deterministic access-path types such as AD compromise path, VPN/client-auth access path, Windows credential-store exposure, database access path, and archive-derived credential cluster
+- the report ranks these clusters by exploitability score and priority tier so operators can act on the highest-value paths first
+- the raw findings remain available below the summary, so every ranked cluster stays traceable to the original evidence
+
+Suppression note:
+
+- explicit suppression rules can hide known-benign findings by exact path, path subtree, rule ID, fingerprint, host/share scope, tag, or known application path context
+- suppressed findings are summarized separately in JSON, HTML, and console output so they remain auditable
+- suppression is applied before correlated access-path summaries are generated
 
 ### 4. Open The HTML Report
 

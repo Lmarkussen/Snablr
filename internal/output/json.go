@@ -3,6 +3,7 @@ package output
 import (
 	"encoding/json"
 	"io"
+	"strings"
 	"sync"
 
 	"snablr/internal/diff"
@@ -19,7 +20,9 @@ type JSONWriter struct {
 	pretty              bool
 	metrics             metrics.Snapshot
 	summary             *summaryCollector
+	profile             string
 	manifest            string
+	suppression         *suppressionSummary
 	validationMode      *validationModeCollector
 	w                   io.Writer
 }
@@ -93,6 +96,18 @@ func (j *JSONWriter) SetValidationManifest(path string) {
 	j.manifest = path
 }
 
+func (j *JSONWriter) SetSuppressionSummary(summary *suppressionSummary) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.suppression = summary
+}
+
+func (j *JSONWriter) SetScanProfile(profile string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.profile = profile
+}
+
 func (j *JSONWriter) SetValidationMode(enabled bool) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -130,9 +145,12 @@ func (j *JSONWriter) Close() error {
 	}
 
 	report := jsonReport{
+		Profile:           strings.TrimSpace(j.profile),
 		Summary:           adjustedSummarySnapshot(j.summary.Snapshot(), j.findings, augmented),
 		Metrics:           j.metrics,
 		CategorySummaries: buildCategorySummaries(augmented),
+		AccessPaths:       buildAccessPathSummaries(augmented),
+		Suppression:       j.suppression,
 		Findings:          make([]jsonFinding, 0, len(augmented)),
 	}
 	performanceSummary := buildPerformanceSummary(report.Summary, augmented)
@@ -172,9 +190,12 @@ func (j *JSONWriter) Close() error {
 }
 
 type jsonReport struct {
+	Profile               string                  `json:"profile,omitempty"`
 	Summary               summarySnapshot         `json:"summary"`
 	Metrics               metrics.Snapshot        `json:"metrics"`
 	CategorySummaries     []categorySummary       `json:"category_summaries,omitempty"`
+	AccessPaths           []accessPathSummary     `json:"access_paths,omitempty"`
+	Suppression           *suppressionSummary     `json:"suppression,omitempty"`
 	DiffSummary           *jsonDiffSummary        `json:"diff_summary,omitempty"`
 	Performance           *jsonPerformanceSummary `json:"performance,omitempty"`
 	PerformanceComparison *jsonPerformanceCompare `json:"performance_comparison,omitempty"`
@@ -215,6 +236,10 @@ type jsonFinding struct {
 	ArchivePath         string                      `json:"archive_path,omitempty"`
 	ArchiveMemberPath   string                      `json:"archive_member_path,omitempty"`
 	ArchiveLocalInspect bool                        `json:"archive_local_inspect,omitempty"`
+	DatabaseFilePath    string                      `json:"database_file_path,omitempty"`
+	DatabaseTable       string                      `json:"database_table,omitempty"`
+	DatabaseColumn      string                      `json:"database_column,omitempty"`
+	DatabaseRowContext  string                      `json:"database_row_context,omitempty"`
 	DFSNamespacePath    string                      `json:"dfs_namespace_path,omitempty"`
 	DFSLinkPath         string                      `json:"dfs_link_path,omitempty"`
 	RuleID              string                      `json:"rule_id"`
@@ -266,6 +291,10 @@ func toJSONFinding(f scanner.Finding, delta diff.FindingDelta) jsonFinding {
 		ArchivePath:         f.ArchivePath,
 		ArchiveMemberPath:   f.ArchiveMemberPath,
 		ArchiveLocalInspect: f.ArchiveLocalInspect,
+		DatabaseFilePath:    f.DatabaseFilePath,
+		DatabaseTable:       f.DatabaseTable,
+		DatabaseColumn:      f.DatabaseColumn,
+		DatabaseRowContext:  f.DatabaseRowContext,
 		DFSNamespacePath:    f.DFSNamespacePath,
 		DFSLinkPath:         f.DFSLinkPath,
 		RuleID:              f.RuleID,

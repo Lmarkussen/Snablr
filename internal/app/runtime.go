@@ -55,11 +55,17 @@ func loadConfigAndLogger(configPath, logLevelOverride string) (config.Config, *l
 }
 
 func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
+	if strings.TrimSpace(opts.Profile) != "" {
+		_ = config.ApplyScanProfile(cfg, opts.Profile)
+	}
 	if len(opts.Targets) > 0 {
 		cfg.Scan.Targets = append([]string{}, opts.Targets...)
 	}
 	if strings.TrimSpace(opts.TargetsFile) != "" {
 		cfg.Scan.TargetsFile = opts.TargetsFile
+	}
+	if strings.TrimSpace(opts.Profile) != "" {
+		cfg.Scan.Profile = opts.Profile
 	}
 	if strings.TrimSpace(opts.Username) != "" {
 		cfg.Scan.Username = opts.Username
@@ -196,6 +202,9 @@ func applyDiscoverOverrides(cfg *config.Config, opts DiscoverOptions) {
 }
 
 func validateScanConfig(cfg config.Config) error {
+	if err := config.ApplyScanProfile(&cfg, cfg.Scan.Profile); err != nil {
+		return err
+	}
 	if strings.TrimSpace(cfg.Scan.Username) == "" {
 		return fmt.Errorf("missing SMB username: set scan.username in config or pass --username (run `snablr scan --help` for examples)")
 	}
@@ -228,6 +237,29 @@ func validateScanConfig(cfg config.Config) error {
 	}
 	if cfg.Archives.AllowLargeZIPs && cfg.Archives.MaxZIPSize > 0 && cfg.Archives.MaxZIPSize < cfg.Archives.AutoZIPMaxSize {
 		return fmt.Errorf("archives.max_zip_size must be greater than or equal to archives.auto_zip_max_size when allow_large_zips is enabled")
+	}
+	if cfg.Suppression.SampleLimit < 0 {
+		return fmt.Errorf("suppression.sample_limit cannot be negative")
+	}
+	seenSuppressionIDs := make(map[string]struct{}, len(cfg.Suppression.Rules))
+	for idx, rule := range cfg.Suppression.Rules {
+		if !rule.Enabled {
+			continue
+		}
+		if strings.TrimSpace(rule.ID) == "" {
+			return fmt.Errorf("suppression.rules[%d] is missing id", idx)
+		}
+		id := strings.ToLower(strings.TrimSpace(rule.ID))
+		if _, ok := seenSuppressionIDs[id]; ok {
+			return fmt.Errorf("duplicate suppression rule id %q", rule.ID)
+		}
+		seenSuppressionIDs[id] = struct{}{}
+		if strings.TrimSpace(rule.Reason) == "" {
+			return fmt.Errorf("suppression rule %q is missing reason", rule.ID)
+		}
+		if len(rule.Hosts) == 0 && len(rule.Shares) == 0 && len(rule.RuleIDs) == 0 && len(rule.Categories) == 0 && len(rule.ExactPaths) == 0 && len(rule.PathPrefixes) == 0 && len(rule.PathContains) == 0 && len(rule.Fingerprints) == 0 && len(rule.Tags) == 0 {
+			return fmt.Errorf("suppression rule %q has no match criteria", rule.ID)
+		}
 	}
 	switch strings.ToLower(cfg.Output.Format) {
 	case "console", "json", "html", "all":

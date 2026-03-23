@@ -92,6 +92,18 @@ The default synthetic catalog currently includes these generation categories:
 - `deploy`
 - `vpn`
 - `keepass`
+- `private-keys`
+- `private-key-correlation`
+- `windows-credential-stores`
+- `windows-credential-correlation`
+- `browser-credential-stores`
+- `browser-credential-correlation`
+- `secret-stores`
+- `ad-correlation`
+- `backup-exposure`
+- `backup-exposure-correlation`
+- `sqlite-databases`
+- `sqlite-correlation`
 - `finance`
 - `sql`
 - `zip-archives`
@@ -104,7 +116,7 @@ The default synthetic catalog currently includes these generation categories:
 - `service-accounts`
 - `noise`
 
-Across those categories, the file names and content cover common enterprise areas such as web configs, exports, payroll-style data, service-account notes, legacy archives, deployment answers, cloud placeholders, zip-based honeypots, and benign clutter.
+Across those categories, the file names and content cover common enterprise areas such as web configs, exports, payroll-style data, service-account notes, legacy archives, deployment answers, cloud placeholders, browser credential-store artifacts, secret-store artifacts, backup-exposure paths, zip-based honeypots, bounded SQLite databases, and benign clutter.
 
 ## Filename Patterns
 
@@ -118,6 +130,26 @@ The filename library now includes many more realistic enterprise-style names, in
 - `appsettings.json`
 - `deploy.env`
 - `vpn-config.txt`
+- `id_rsa`
+- `id_ed25519`
+- `identity`
+- `client-admin.ppk`
+- `branch-admin.ovpn`
+- `authorized_keys`
+- `known_hosts`
+- `A1B2C3D4`
+- `Policy.vpol`
+- `Preferred`
+- `logins.json`
+- `key4.db`
+- `Login Data`
+- `Cookies`
+- `NTDS.DIT`
+- `NTDS.DIT.bak`
+- `SAM`
+- `SYSTEM`
+- `SYSTEM.bak`
+- `SECURITY.old`
 - `keepass-export.csv`
 - `payroll-export-2025.csv`
 - `customer_export_q1.csv`
@@ -138,6 +170,8 @@ The filename library now includes many more realistic enterprise-style names, in
 - `legacy-configs.zip`
 - `deployment-recovery.zip`
 - `old-config-bundle.zip`
+- `ssh-recovery.zip`
+- `profile-backup.zip`
 - `binary-media-bundle.zip`
 - `nested-export-bundle.zip`
 - `oversized-config-export.zip`
@@ -179,9 +213,34 @@ The default catalog generates realistic-looking placeholders across:
 
 - small text-heavy archives that should be inspected by default
 - config-only archives that should stay low-value
+- archives containing extensionless private keys and nearby client-auth artifacts
+- archives containing Windows profile credential-store paths such as `AppData/.../Microsoft/Credentials` and `Protect`
 - nested-archive negative cases
 - binary-only negative cases
 - oversized archives that should be skipped unless larger archive inspection is enabled
+
+`sqlite` honeypots are generated programmatically and currently cover:
+
+- actionable small SQLite databases with `users`, `sessions`, `settings`, and `config` style tables
+- bounded rows that contain strong passwords, tokens, API keys, and validated connection strings
+- benign SQLite databases with non-interesting schema that should stay quiet
+- correlated SQLite cases that sit next to nearby `.env` config material for report-time promotion
+
+`backup-exposure` honeypots currently cover:
+
+- exact `WindowsImageBackup` path families containing hive or AD backup artifacts
+- `System Volume Information` restore-style paths
+- `RegBack` and copied Windows hive backup paths
+- correlated backup cases where `NTDS.DIT` and hive artifacts co-occur in the same exact backup context
+- near-miss negative paths such as backup-themed note directories that should not trigger exact-path detections
+
+`browser-credential-store` honeypots currently cover:
+
+- Firefox profile artifacts such as `logins.json` and `key4.db`
+- Chromium-family profile artifacts such as `Login Data` and `Cookies`
+- copied or migrated profile variants under backup-style paths
+- correlated browser profile cases that should promote only when exact paired profile artifacts co-occur
+- near-miss negative artifacts such as `logins.json.bak` or `Login Data.txt`
 
 ## Fake Content Patterns
 

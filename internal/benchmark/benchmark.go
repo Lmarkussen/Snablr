@@ -18,11 +18,13 @@ import (
 	"snablr/internal/metrics"
 	"snablr/internal/rules"
 	"snablr/internal/scanner"
+	"snablr/internal/sqliteinspect"
 	"snablr/pkg/logx"
 )
 
 func LoadConfig(path string) (Config, error) {
 	cfg := Config{Archives: config.Default().Archives}
+	cfg.SQLite = config.Default().SQLite
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("read benchmark config %s: %w", path, err)
@@ -59,6 +61,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 			MaxTotalUncompressed:     resolved.Archives.MaxTotalUncompressed,
 			InspectExtensionlessText: resolved.Archives.InspectExtensionlessText,
 		},
+		SQLite:   sqliteOptions(resolved.SQLite),
 		Recorder: recorder,
 	}, manager, sink, logger)
 
@@ -148,6 +151,7 @@ func resolve(cfg Config) (Config, []string, *rules.Manager, *logx.Logger, error)
 			out.LogLevel = baseCfg.App.LogLevel
 		}
 		out.Archives = baseCfg.Archives
+		out.SQLite = baseCfg.SQLite
 		if strings.TrimSpace(out.RulesDirectory) == "" {
 			out.RulesDirectory = baseCfg.Rules.Directory
 		}
@@ -203,7 +207,29 @@ func benchmarkReadLimit(cfg Config) int64 {
 			limit = cfg.Archives.MaxZIPSize
 		}
 	}
+	if cfg.SQLite.Enabled {
+		if cfg.SQLite.AutoDBMaxSize > limit {
+			limit = cfg.SQLite.AutoDBMaxSize
+		}
+		if cfg.SQLite.AllowLargeDBs && cfg.SQLite.MaxDBSize > limit {
+			limit = cfg.SQLite.MaxDBSize
+		}
+	}
 	return limit
+}
+
+func sqliteOptions(cfg config.SQLiteConfig) sqliteinspect.Options {
+	return sqliteinspect.Options{
+		Enabled:            cfg.Enabled,
+		AutoDBMaxSize:      cfg.AutoDBMaxSize,
+		AllowLargeDBs:      cfg.AllowLargeDBs,
+		MaxDBSize:          cfg.MaxDBSize,
+		MaxTables:          cfg.MaxTables,
+		MaxRowsPerTable:    cfg.MaxRowsPerTable,
+		MaxCellBytes:       cfg.MaxCellBytes,
+		MaxTotalBytes:      cfg.MaxTotalBytes,
+		MaxInterestingCols: cfg.MaxInterestingCols,
+	}
 }
 
 func toCountStats(values map[string]int) []CountStat {

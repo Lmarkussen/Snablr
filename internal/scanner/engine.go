@@ -11,9 +11,14 @@ import (
 	"sync"
 
 	"snablr/internal/archiveinspect"
+	"snablr/internal/backupinspect"
+	"snablr/internal/browsercredinspect"
 	"snablr/internal/dbinspect"
+	"snablr/internal/keyinspect"
 	"snablr/internal/metrics"
 	"snablr/internal/rules"
+	"snablr/internal/sqliteinspect"
+	"snablr/internal/wincredinspect"
 	"snablr/pkg/logx"
 )
 
@@ -23,6 +28,7 @@ type Options struct {
 	MaxReadBytes     int64
 	SnippetBytes     int
 	Archives         archiveinspect.Options
+	SQLite           sqliteinspect.Options
 	Recorder         metrics.Recorder
 	ValidationMode   bool
 }
@@ -42,7 +48,12 @@ type Engine struct {
 	contentExtHints  map[string]struct{}
 	archiveExtHints  map[string]struct{}
 	hasGenericText   bool
+	backupInspector  backupinspect.Inspector
+	browserInspector browsercredinspect.Inspector
 	dbInspector      dbinspect.Inspector
+	keyInspector     keyinspect.Inspector
+	sqliteInspector  sqliteinspect.Inspector
+	winCredInspector wincredinspect.Inspector
 	validationMode   bool
 	validationSink   ValidationObserver
 }
@@ -77,7 +88,12 @@ func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx
 		contentExtHints:  contentExtHints,
 		archiveExtHints:  archiveExtHints,
 		hasGenericText:   hasGenericText,
+		backupInspector:  backupinspect.New(),
+		browserInspector: browsercredinspect.New(),
 		dbInspector:      dbinspect.New(),
+		keyInspector:     keyinspect.New(),
+		sqliteInspector:  sqliteinspect.New(opts.SQLite),
+		winCredInspector: wincredinspect.New(),
 		validationMode:   opts.ValidationMode,
 		validationSink:   validationObserverForSink(sink),
 	}
@@ -107,6 +123,12 @@ func (e *Engine) Evaluate(meta FileMetadata, content []byte) Evaluation {
 			}
 		}
 		return e.evaluateArchive(meta, content)
+	}
+	if shouldInspect, skipReason, isSQLite := e.sqliteDecision(meta); isSQLite && !shouldInspect {
+		return Evaluation{
+			Skipped:    true,
+			SkipReason: skipReason,
+		}
 	}
 
 	if e.opts.MaxFileSizeBytes > 0 && meta.Size > e.opts.MaxFileSizeBytes {
@@ -154,10 +176,17 @@ func (e *Engine) NeedsContent(meta FileMetadata) bool {
 	if shouldInspect, _, isArchive := e.archiveDecision(meta); isArchive {
 		return shouldInspect
 	}
+	if shouldInspect, _, isSQLite := e.sqliteDecision(meta); isSQLite {
+		return shouldInspect
+	}
 	if e.opts.MaxFileSizeBytes > 0 && meta.Size > e.opts.MaxFileSizeBytes {
 		return false
 	}
-	return e.shouldReadContent(meta, e.contentRules) || e.dbInspector.NeedsContent(dbCandidate(meta))
+	return e.shouldReadContent(meta, e.contentRules) ||
+		e.dbInspector.NeedsContent(dbCandidate(meta)) ||
+		e.keyInspector.NeedsContent(keyCandidate(meta)) ||
+		e.sqliteInspector.NeedsContent(sqliteCandidate(meta)) ||
+		e.winCredInspector.NeedsContent(winCredCandidate(meta))
 }
 
 func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceContent bool) Evaluation {
@@ -165,11 +194,20 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 
 	evaluation.Findings = append(evaluation.Findings, e.filenameScanner.Scan(e.filenameRules, meta)...)
 	evaluation.Findings = append(evaluation.Findings, e.extensionScanner.Scan(e.extensionRules, meta)...)
+	evaluation.Findings = append(evaluation.Findings, findingsFromBackupMatches(meta, e.backupInspector.InspectMetadata(backupCandidate(meta)))...)
+	evaluation.Findings = append(evaluation.Findings, findingsFromBrowserCredMatches(meta, e.browserInspector.InspectMetadata(browserCredCandidate(meta)))...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, e.dbInspector.InspectMetadata(dbCandidate(meta)))...)
+	evaluation.Findings = append(evaluation.Findings, findingsFromWinCredMatches(meta, e.winCredInspector.InspectMetadata(winCredCandidate(meta)))...)
 
-	evaluation.NeedContent = forceContent || e.shouldReadContent(meta, e.contentRules) || e.dbInspector.NeedsContent(dbCandidate(meta))
+	evaluation.NeedContent = forceContent ||
+		e.shouldReadContent(meta, e.contentRules) ||
+		e.dbInspector.NeedsContent(dbCandidate(meta)) ||
+		e.keyInspector.NeedsContent(keyCandidate(meta)) ||
+		e.sqliteInspector.NeedsContent(sqliteCandidate(meta)) ||
+		e.winCredInspector.NeedsContent(winCredCandidate(meta))
 	if !evaluation.NeedContent || len(content) == 0 {
 		evaluation.Findings = correlateFindings(meta, evaluation.Findings)
+		evaluation.Findings = adjustBrowserArtifactVisibility(evaluation.Findings)
 		e.recordValidationFindings(evaluation.Findings)
 		return evaluation
 	}
@@ -181,7 +219,10 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 
 	evaluation.Findings = append(evaluation.Findings, e.contentScanner.Scan(e.contentRules, meta, content)...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, e.dbInspector.InspectContent(dbCandidate(meta), content))...)
+	evaluation.Findings = append(evaluation.Findings, findingsFromKeyMatches(meta, e.keyInspector.InspectContent(keyCandidate(meta), content))...)
+	evaluation.Findings = append(evaluation.Findings, findingsFromSQLiteMatches(meta, e.sqliteInspector.InspectContent(sqliteCandidate(meta), content))...)
 	evaluation.Findings = correlateFindings(meta, evaluation.Findings)
+	evaluation.Findings = adjustBrowserArtifactVisibility(evaluation.Findings)
 	e.recordValidationFindings(evaluation.Findings)
 	return evaluation
 }
@@ -236,6 +277,16 @@ func (e *Engine) archiveDecision(meta FileMetadata) (bool, string, bool) {
 		Size:      meta.Size,
 	}, e.opts.Archives)
 	return shouldInspect, reason, true
+}
+
+func (e *Engine) sqliteDecision(meta FileMetadata) (bool, string, bool) {
+	switch normalizeExtension(meta.Extension) {
+	case ".sqlite", ".sqlite3", ".db", ".db3":
+		shouldInspect, reason := sqliteinspect.ShouldInspect(sqliteCandidate(meta), e.opts.SQLite)
+		return shouldInspect, reason, true
+	default:
+		return false, "", false
+	}
 }
 
 func (e *Engine) shouldReadContent(meta FileMetadata, contentRules []rules.Rule) bool {
@@ -519,6 +570,8 @@ func buildArchiveExtensionHints(contentHints map[string]struct{}) map[string]str
 		".ora":        {},
 		".properties": {},
 		".toml":       {},
+		".ovpn":       {},
+		".ppk":        {},
 	}
 	for ext := range contentHints {
 		hints[normalizeExtension(ext)] = struct{}{}

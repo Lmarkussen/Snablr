@@ -268,6 +268,14 @@ func (m *MultiWriter) SetValidationManifest(path string) {
 	m.broadcastValidation(func(aware validationManifestAware) { aware.SetValidationManifest(path) })
 }
 
+func (m *MultiWriter) SetSuppressionSummary(summary *suppressionSummary) {
+	m.broadcastSuppression(func(aware SuppressionSummaryAware) { aware.SetSuppressionSummary(summary) })
+}
+
+func (m *MultiWriter) SetScanProfile(profile string) {
+	m.broadcastProfile(func(aware ScanProfileAware) { aware.SetScanProfile(profile) })
+}
+
 func (m *MultiWriter) SetValidationMode(enabled bool) {
 	m.broadcastValidationMode(func(aware ValidationModeAware) { aware.SetValidationMode(enabled) })
 }
@@ -337,6 +345,30 @@ func (m *MultiWriter) broadcastValidation(fn func(validationManifestAware)) {
 	defer m.mu.Unlock()
 	for _, sink := range m.sinks {
 		aware, ok := sink.(validationManifestAware)
+		if !ok {
+			continue
+		}
+		fn(aware)
+	}
+}
+
+func (m *MultiWriter) broadcastSuppression(fn func(SuppressionSummaryAware)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sink := range m.sinks {
+		aware, ok := sink.(SuppressionSummaryAware)
+		if !ok {
+			continue
+		}
+		fn(aware)
+	}
+}
+
+func (m *MultiWriter) broadcastProfile(fn func(ScanProfileAware)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sink := range m.sinks {
+		aware, ok := sink.(ScanProfileAware)
 		if !ok {
 			continue
 		}

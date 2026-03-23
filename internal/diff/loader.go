@@ -34,6 +34,10 @@ type scanResultFinding struct {
 	ArchivePath         string                      `json:"archive_path,omitempty"`
 	ArchiveMemberPath   string                      `json:"archive_member_path,omitempty"`
 	ArchiveLocalInspect bool                        `json:"archive_local_inspect,omitempty"`
+	DatabaseFilePath    string                      `json:"database_file_path,omitempty"`
+	DatabaseTable       string                      `json:"database_table,omitempty"`
+	DatabaseColumn      string                      `json:"database_column,omitempty"`
+	DatabaseRowContext  string                      `json:"database_row_context,omitempty"`
 	DFSNamespacePath    string                      `json:"dfs_namespace_path,omitempty"`
 	DFSLinkPath         string                      `json:"dfs_link_path,omitempty"`
 	RuleID              string                      `json:"rule_id"`
@@ -93,6 +97,10 @@ func LoadJSON(path string) (Report, error) {
 			ArchivePath:         finding.ArchivePath,
 			ArchiveMemberPath:   finding.ArchiveMemberPath,
 			ArchiveLocalInspect: finding.ArchiveLocalInspect,
+			DatabaseFilePath:    finding.DatabaseFilePath,
+			DatabaseTable:       finding.DatabaseTable,
+			DatabaseColumn:      finding.DatabaseColumn,
+			DatabaseRowContext:  finding.DatabaseRowContext,
 			DFSNamespacePath:    finding.DFSNamespacePath,
 			DFSLinkPath:         finding.DFSLinkPath,
 			RuleID:              finding.RuleID,

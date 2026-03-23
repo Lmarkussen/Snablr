@@ -356,12 +356,301 @@ func TestGenerateADCorrelationSeedPackIncludesCorrelatedAnchor(t *testing.T) {
 	}
 }
 
+func TestGeneratePrivateKeySeedPackIncludesHighSignalAndSupportArtifacts(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 24,
+		MaxFiles:         900,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260323,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	foundPrivateKey := false
+	foundPPK := false
+	foundOVPN := false
+	foundSupport := false
+	foundCorrelated := false
+
+	for _, file := range files {
+		switch file.Category {
+		case "private-keys":
+			switch strings.ToLower(file.Filename) {
+			case "id_rsa", "id_ed25519", "identity":
+				if file.ExpectedClass == seedClassActionable && file.ExpectedConfidence == "high" {
+					foundPrivateKey = true
+				}
+			case "client-admin.ppk":
+				if file.ExpectedClass == seedClassActionable {
+					foundPPK = true
+				}
+			case "branch-admin.ovpn":
+				if file.ExpectedClass == seedClassActionable {
+					foundOVPN = true
+				}
+			case "authorized_keys", "known_hosts":
+				if file.ExpectedClass == seedClassWeakReview {
+					foundSupport = true
+				}
+			}
+		case "private-key-correlation":
+			if strings.EqualFold(file.Filename, "id_rsa") && file.ExpectedClass == seedClassCorrelatedHighConfidence && file.ExpectedCorrelated {
+				foundCorrelated = true
+			}
+		}
+	}
+
+	if !foundPrivateKey {
+		t.Fatal("expected private key seed pack to include actionable extensionless private key artifacts")
+	}
+	if !foundPPK {
+		t.Fatal("expected private key seed pack to include actionable .ppk artifacts")
+	}
+	if !foundOVPN {
+		t.Fatal("expected private key seed pack to include actionable .ovpn artifacts")
+	}
+	if !foundSupport {
+		t.Fatal("expected private key seed pack to include lower-priority SSH support artifacts")
+	}
+	if !foundCorrelated {
+		t.Fatal("expected private key correlation seed pack to include correlated high-confidence anchor")
+	}
+}
+
+func TestGenerateWindowsCredentialStoreSeedPackIncludesStandaloneAndCorrelatedCases(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 24,
+		MaxFiles:         900,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260324,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	foundCredentials := false
+	foundVault := false
+	foundProtect := false
+	foundCorrelated := false
+	foundBackupVariant := false
+
+	for _, file := range files {
+		switch file.Category {
+		case "windows-credential-stores":
+			path := FullPath(file)
+			switch strings.ToLower(file.Filename) {
+			case "a1b2c3d4":
+				if file.ExpectedClass == seedClassActionable && strings.Contains(strings.ToLower(path), "/microsoft/credentials/") {
+					foundCredentials = true
+				}
+			case "policy.vpol":
+				if file.ExpectedClass == seedClassActionable && strings.Contains(strings.ToLower(path), "/microsoft/vault/") {
+					foundVault = true
+				}
+			case "preferred":
+				if file.ExpectedClass == seedClassActionable && strings.Contains(strings.ToLower(path), "/microsoft/protect/") {
+					foundProtect = true
+				}
+			}
+			if strings.Contains(strings.ToLower(path), "archive/profilecopies/") || strings.Contains(strings.ToLower(path), "backups/usermigrations/") {
+				foundBackupVariant = true
+			}
+		case "windows-credential-correlation":
+			if file.ExpectedClass == seedClassCorrelatedHighConfidence && strings.Contains(strings.ToLower(FullPath(file)), "/microsoft/credentials/") && file.ExpectedCorrelated {
+				foundCorrelated = true
+			}
+		}
+	}
+
+	if !foundCredentials || !foundVault || !foundProtect {
+		t.Fatalf("expected windows credential-store seed pack to include credentials, vault, and protect samples")
+	}
+	if !foundCorrelated {
+		t.Fatal("expected windows credential-store correlation seed pack to include correlated anchor")
+	}
+	if !foundBackupVariant {
+		t.Fatal("expected windows credential-store seed pack to include backup or migrated profile variants")
+	}
+}
+
+func TestGenerateBackupExposureSeedPackIncludesStandaloneAndCorrelatedCases(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 24,
+		MaxFiles:         900,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260326,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	foundWindowsImageBackup := false
+	foundSystemVolumeInfo := false
+	foundRegBack := false
+	foundCorrelated := false
+	foundNegative := false
+
+	for _, file := range files {
+		switch file.Category {
+		case "backup-exposure":
+			path := strings.ToLower(FullPath(file))
+			if file.ExpectedClass == seedClassActionable && strings.Contains(path, "/windowsimagebackup/") {
+				foundWindowsImageBackup = true
+			}
+			if file.ExpectedClass == seedClassActionable && strings.Contains(path, "/system volume information/") {
+				foundSystemVolumeInfo = true
+			}
+			if file.ExpectedClass == seedClassActionable && strings.Contains(path, "/regback/") {
+				foundRegBack = true
+			}
+			if strings.Contains(path, "/windowsimagebackup-notes/") && file.IntendedAs == "filler/noise" {
+				foundNegative = true
+			}
+		case "backup-exposure-correlation":
+			if file.ExpectedClass == seedClassCorrelatedHighConfidence && file.ExpectedCorrelated && strings.Contains(strings.ToLower(FullPath(file)), "ntds.dit.bak") {
+				foundCorrelated = true
+			}
+		}
+	}
+
+	if !foundWindowsImageBackup || !foundSystemVolumeInfo || !foundRegBack {
+		t.Fatal("expected backup-exposure seed pack to include WindowsImageBackup, System Volume Information, and RegBack cases")
+	}
+	if !foundCorrelated {
+		t.Fatal("expected backup-exposure correlation seed pack to include a correlated high-confidence anchor")
+	}
+	if !foundNegative {
+		t.Fatal("expected backup-exposure seed pack to include a negative near-miss path")
+	}
+}
+
+func TestGenerateBrowserCredentialStoreSeedPackIncludesWeakAndCorrelatedCases(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 24,
+		MaxFiles:         900,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260327,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	foundFirefox := false
+	foundFirefoxKey := false
+	foundChromium := false
+	foundChromiumCookie := false
+	foundCorrelated := false
+	foundNegative := false
+
+	for _, file := range files {
+		switch file.Category {
+		case "browser-credential-stores":
+			path := strings.ToLower(FullPath(file))
+			switch strings.ToLower(file.Filename) {
+			case "logins.json":
+				if file.ExpectedClass == seedClassWeakReview && strings.Contains(path, "/mozilla/firefox/profiles/") {
+					foundFirefox = true
+				}
+			case "key4.db":
+				if file.ExpectedClass == seedClassWeakReview && strings.Contains(path, "/mozilla/firefox/profiles/") {
+					foundFirefoxKey = true
+				}
+			case "login data":
+				if file.ExpectedClass == seedClassWeakReview && strings.Contains(path, "/user data/") {
+					foundChromium = true
+				}
+			case "cookies":
+				if file.ExpectedClass == seedClassWeakReview && strings.Contains(path, "/user data/") {
+					foundChromiumCookie = true
+				}
+			}
+			if (strings.HasSuffix(path, "/login data.txt") || strings.HasSuffix(path, "/logins.json.bak")) && file.IntendedAs == "filler/noise" {
+				foundNegative = true
+			}
+		case "browser-credential-correlation":
+			if file.ExpectedClass == seedClassCorrelatedHighConfidence && file.ExpectedCorrelated &&
+				(strings.EqualFold(file.Filename, "logins.json") || strings.EqualFold(file.Filename, "Login Data")) {
+				foundCorrelated = true
+			}
+		}
+	}
+
+	if !foundFirefox || !foundFirefoxKey || !(foundChromium || foundChromiumCookie) {
+		t.Fatal("expected browser credential-store seed pack to include Firefox and Chromium credential artifacts")
+	}
+	if !foundCorrelated {
+		t.Fatal("expected browser credential-store correlation seed pack to include a correlated high-confidence anchor")
+	}
+	if !foundNegative {
+		t.Fatal("expected browser credential-store seed pack to include negative near-miss artifacts")
+	}
+}
+
+func TestGenerateSQLiteSeedPackIncludesPositiveNegativeAndCorrelatedCases(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 24,
+		MaxFiles:         900,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260325,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	foundCredentialDB := false
+	foundTokenDB := false
+	foundBenignDB := false
+	foundCorrelated := false
+
+	for _, file := range files {
+		switch file.Category {
+		case "sqlite-databases":
+			switch strings.ToLower(file.Filename) {
+			case "customers-prod.sqlite":
+				if file.ExpectedClass == seedClassActionable && strings.HasSuffix(file.ExpectedPath, "::users.password") {
+					foundCredentialDB = true
+				}
+			case "session-store.db":
+				if file.ExpectedClass == seedClassActionable && strings.HasSuffix(file.ExpectedPath, "::sessions.token") {
+					foundTokenDB = true
+				}
+			case "telemetry-cache.db":
+				if file.ExpectedClass == seedClassConfigOnly {
+					foundBenignDB = true
+				}
+			}
+		case "sqlite-correlation":
+			if strings.EqualFold(file.Filename, "payroll-cache.sqlite3") && file.ExpectedClass == seedClassCorrelatedHighConfidence && file.ExpectedCorrelated {
+				foundCorrelated = true
+			}
+		}
+	}
+
+	if !foundCredentialDB || !foundTokenDB || !foundBenignDB {
+		t.Fatal("expected sqlite seed pack to include actionable credential dbs and a benign negative case")
+	}
+	if !foundCorrelated {
+		t.Fatal("expected sqlite correlation seed pack to include a correlated high-confidence sqlite anchor")
+	}
+}
+
 func TestGenerateZIPSeedPackIncludesPositiveAndNegativeCases(t *testing.T) {
 	t.Parallel()
 
 	files, err := Generate(GenerateOptions{
 		CountPerCategory: 24,
-		MaxFiles:         500,
+		MaxFiles:         900,
 		SeedPrefix:       "SnablrLab",
 		RandomSeed:       20260318,
 	})
@@ -372,6 +661,8 @@ func TestGenerateZIPSeedPackIncludesPositiveAndNegativeCases(t *testing.T) {
 	foundCorrelated := false
 	foundActionable := false
 	foundConfigOnly := false
+	foundPrivateKeyBundle := false
+	foundWinCredBundle := false
 	foundBinaryNoise := false
 	foundNestedNoise := false
 	foundOversized := false
@@ -392,6 +683,14 @@ func TestGenerateZIPSeedPackIncludesPositiveAndNegativeCases(t *testing.T) {
 		case "old-config-bundle.zip":
 			if file.ExpectedClass == seedClassConfigOnly && strings.Contains(file.ExpectedPath, ".zip!") {
 				foundConfigOnly = true
+			}
+		case "ssh-recovery.zip":
+			if file.ExpectedClass == seedClassCorrelatedHighConfidence && strings.HasSuffix(file.ExpectedPath, "ssh-recovery.zip!keys/id_rsa") {
+				foundPrivateKeyBundle = true
+			}
+		case "profile-backup.zip":
+			if file.ExpectedClass == seedClassCorrelatedHighConfidence && strings.HasSuffix(file.ExpectedPath, "profile-backup.zip!Users/Alice/AppData/Roaming/Microsoft/Credentials/ABCD1234") {
+				foundWinCredBundle = true
 			}
 		case "binary-media-bundle.zip":
 			if file.IntendedAs == "filler/noise" {
@@ -417,6 +716,12 @@ func TestGenerateZIPSeedPackIncludesPositiveAndNegativeCases(t *testing.T) {
 	if !foundConfigOnly {
 		t.Fatal("expected zip seed pack to include config-only archive case")
 	}
+	if !foundPrivateKeyBundle {
+		t.Fatal("expected zip seed pack to include private key archive correlation case")
+	}
+	if !foundWinCredBundle {
+		t.Fatal("expected zip seed pack to include windows credential-store archive correlation case")
+	}
 	if !foundBinaryNoise {
 		t.Fatal("expected zip seed pack to include binary-only negative archive case")
 	}
@@ -433,7 +738,7 @@ func TestGeneratedZIPSeedProducesArchiveFindings(t *testing.T) {
 
 	files, err := Generate(GenerateOptions{
 		CountPerCategory: 24,
-		MaxFiles:         500,
+		MaxFiles:         900,
 		SeedPrefix:       "SnablrLab",
 		RandomSeed:       20260318,
 	})
@@ -483,12 +788,122 @@ func TestGeneratedZIPSeedProducesArchiveFindings(t *testing.T) {
 	}
 }
 
+func TestGeneratedZIPSeedProducesPrivateKeyArchiveFindings(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 24,
+		MaxFiles:         900,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260323,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	var archiveSeed *SeedFile
+	for i := range files {
+		file := &files[i]
+		if file.Category == "zip-archives" && file.ExpectedPath != "" && strings.EqualFold(file.Filename, "ssh-recovery.zip") {
+			archiveSeed = file
+			break
+		}
+	}
+	if archiveSeed == nil {
+		t.Fatal("expected generated private key zip archive seed")
+	}
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := scanner.NewEngine(scanner.Options{}, manager, nil, logx.New("error"))
+	meta := scanner.FileMetadata{
+		FilePath:  FullPath(*archiveSeed),
+		Name:      archiveSeed.Filename,
+		Extension: ".zip",
+		Size:      int64(len(archiveSeed.Content)),
+	}
+	evaluation := engine.Evaluate(meta, archiveSeed.Content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected findings from generated private key zip seed, got %#v", evaluation)
+	}
+
+	foundExpectedPath := false
+	foundOVPN := false
+	for _, finding := range evaluation.Findings {
+		if finding.FilePath == archiveSeed.ExpectedPath && finding.ArchivePath == FullPath(*archiveSeed) && finding.ArchiveMemberPath == "keys/id_rsa" {
+			foundExpectedPath = true
+		}
+		if finding.FilePath == FullPath(*archiveSeed)+"!vpn/client-admin.ovpn" {
+			foundOVPN = true
+		}
+	}
+	if !foundExpectedPath || !foundOVPN {
+		t.Fatalf("expected private key and ovpn archive member findings, got %#v", evaluation.Findings)
+	}
+}
+
+func TestGeneratedZIPSeedProducesWindowsCredentialStoreArchiveFindings(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 24,
+		MaxFiles:         900,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260324,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	var archiveSeed *SeedFile
+	for i := range files {
+		file := &files[i]
+		if file.Category == "zip-archives" && file.ExpectedPath != "" && strings.EqualFold(file.Filename, "profile-backup.zip") {
+			archiveSeed = file
+			break
+		}
+	}
+	if archiveSeed == nil {
+		t.Fatal("expected generated windows credential-store zip archive seed")
+	}
+
+	engine := scanner.NewEngine(scanner.Options{}, &rules.Manager{}, nil, logx.New("error"))
+	meta := scanner.FileMetadata{
+		FilePath:  FullPath(*archiveSeed),
+		Name:      archiveSeed.Filename,
+		Extension: ".zip",
+		Size:      int64(len(archiveSeed.Content)),
+	}
+	evaluation := engine.Evaluate(meta, archiveSeed.Content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected findings from generated windows credential-store zip seed, got %#v", evaluation)
+	}
+
+	foundExpectedPath := false
+	foundProtect := false
+	for _, finding := range evaluation.Findings {
+		if finding.FilePath == archiveSeed.ExpectedPath && finding.ArchivePath == FullPath(*archiveSeed) && finding.ArchiveMemberPath == "Users/Alice/AppData/Roaming/Microsoft/Credentials/ABCD1234" {
+			foundExpectedPath = true
+		}
+		if strings.Contains(finding.FilePath, "Microsoft/Protect") {
+			foundProtect = true
+		}
+	}
+	if !foundExpectedPath || !foundProtect {
+		t.Fatalf("expected windows credential-store archive member findings, got %#v", evaluation.Findings)
+	}
+}
+
 func TestGeneratedOversizedZIPSeedIsSkippedByDefault(t *testing.T) {
 	t.Parallel()
 
 	files, err := Generate(GenerateOptions{
 		CountPerCategory: 24,
-		MaxFiles:         500,
+		MaxFiles:         900,
 		SeedPrefix:       "SnablrLab",
 		RandomSeed:       20260318,
 	})
@@ -519,5 +934,60 @@ func TestGeneratedOversizedZIPSeedIsSkippedByDefault(t *testing.T) {
 	evaluation := engine.Evaluate(meta, oversized.Content)
 	if !evaluation.Skipped || !strings.Contains(evaluation.SkipReason, "automatic inspection limit") {
 		t.Fatalf("expected oversized zip seed to be skipped by default, got %#v", evaluation)
+	}
+}
+
+func TestGeneratedSQLiteSeedProducesFindings(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 24,
+		MaxFiles:         900,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260325,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	var sqliteSeed *SeedFile
+	for i := range files {
+		file := &files[i]
+		if file.Category == "sqlite-databases" && strings.EqualFold(file.Filename, "customers-prod.sqlite") {
+			sqliteSeed = file
+			break
+		}
+	}
+	if sqliteSeed == nil {
+		t.Fatal("expected generated sqlite seed")
+	}
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := scanner.NewEngine(scanner.Options{}, manager, nil, logx.New("error"))
+	meta := scanner.FileMetadata{
+		FilePath:  FullPath(*sqliteSeed),
+		Name:      sqliteSeed.Filename,
+		Extension: ".sqlite",
+		Size:      int64(len(sqliteSeed.Content)),
+	}
+	evaluation := engine.Evaluate(meta, sqliteSeed.Content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected findings from generated sqlite seed, got %#v", evaluation)
+	}
+
+	foundSQLitePath := false
+	for _, finding := range evaluation.Findings {
+		if finding.FilePath == sqliteSeed.ExpectedPath && finding.DatabaseFilePath == FullPath(*sqliteSeed) {
+			foundSQLitePath = true
+			break
+		}
+	}
+	if !foundSQLitePath {
+		t.Fatalf("expected sqlite composite finding path %q, got %#v", sqliteSeed.ExpectedPath, evaluation.Findings)
 	}
 }

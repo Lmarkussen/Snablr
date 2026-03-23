@@ -4,14 +4,18 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	_ "github.com/mattn/go-sqlite3"
 	"snablr/internal/archiveinspect"
 	"snablr/internal/dbinspect"
 	"snablr/internal/rules"
+	"snablr/internal/sqliteinspect"
 	"snablr/pkg/logx"
 )
 
@@ -421,6 +425,439 @@ func TestEngineEvaluatePromotesSecretStoreBackupArtifactFinding(t *testing.T) {
 	}
 }
 
+func TestEngineEvaluateDetectsExtensionlessPrivateKeyArtifact(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	meta := FileMetadata{
+		Host:      "fs01",
+		Share:     "Users",
+		FilePath:  "Users/Alice/.ssh/id_rsa",
+		Name:      "id_rsa",
+		Extension: "",
+		Size:      4096,
+	}
+
+	evaluation := engine.Evaluate(meta, nil)
+	if len(evaluation.Findings) != 1 {
+		t.Fatalf("expected one private key artifact finding, got %#v", evaluation.Findings)
+	}
+
+	finding := evaluation.Findings[0]
+	if finding.RuleID != "filename.private_key_artifacts" {
+		t.Fatalf("expected private key artifact rule, got %#v", finding)
+	}
+	if finding.Category != "crypto" || finding.Severity != "critical" {
+		t.Fatalf("expected critical crypto finding, got %#v", finding)
+	}
+	if finding.TriageClass != "actionable" || !finding.Actionable {
+		t.Fatalf("expected actionable private key finding, got %#v", finding)
+	}
+}
+
+func TestEngineEvaluateValidatesExtensionlessPrivateKeyHeader(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	meta := FileMetadata{
+		Host:      "fs01",
+		Share:     "Users",
+		FilePath:  "Users/Alice/.ssh/id_rsa",
+		Name:      "id_rsa",
+		Extension: "",
+		Size:      4096,
+	}
+	content := []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nLAB_ONLY_SYNTHETIC_PRIVATE_KEY\n-----END OPENSSH PRIVATE KEY-----\n")
+
+	evaluation := engine.Evaluate(meta, content)
+	if len(evaluation.Findings) != 1 {
+		t.Fatalf("expected one correlated private key finding, got %#v", evaluation.Findings)
+	}
+
+	finding := evaluation.Findings[0]
+	if finding.Confidence != "high" || finding.ConfidenceScore < 70 {
+		t.Fatalf("expected high-confidence private key finding, got %#v", finding)
+	}
+	foundFilename := false
+	foundValidated := false
+	for _, ruleID := range finding.MatchedRuleIDs {
+		if ruleID == "filename.private_key_artifacts" {
+			foundFilename = true
+		}
+		if ruleID == "keyinspect.content.private_key_header" {
+			foundValidated = true
+		}
+	}
+	if !foundFilename || !foundValidated {
+		t.Fatalf("expected filename and validated key matches, got %#v", finding.MatchedRuleIDs)
+	}
+	if !hasTag(finding.Tags, "validated:private-key-header") {
+		t.Fatalf("expected validated private key tag, got %#v", finding.Tags)
+	}
+}
+
+func TestEngineEvaluateDetectsClientAuthArtifacts(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	for _, meta := range []FileMetadata{
+		{
+			FilePath:  "VPN/branch-admin.ovpn",
+			Name:      "branch-admin.ovpn",
+			Extension: ".ovpn",
+			Size:      1024,
+		},
+		{
+			FilePath:  "Users/Alice/Documents/client-admin.ppk",
+			Name:      "client-admin.ppk",
+			Extension: ".ppk",
+			Size:      1024,
+		},
+	} {
+		evaluation := engine.Evaluate(meta, nil)
+		if len(evaluation.Findings) != 1 {
+			t.Fatalf("expected one client-auth finding for %s, got %#v", meta.FilePath, evaluation.Findings)
+		}
+		finding := evaluation.Findings[0]
+		if finding.RuleID != "extension.client_auth_artifacts" {
+			t.Fatalf("expected client-auth extension rule, got %#v", finding)
+		}
+		if finding.Category != "remote-access" || finding.Severity != "high" {
+			t.Fatalf("expected high remote-access finding, got %#v", finding)
+		}
+	}
+}
+
+func TestSupportingSSHFilesStayLowerPriorityThanPrivateKeys(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	privateKey := engine.Evaluate(FileMetadata{
+		FilePath:  "Users/Alice/.ssh/id_rsa",
+		Name:      "id_rsa",
+		Extension: "",
+		Size:      1024,
+	}, nil)
+	support := engine.Evaluate(FileMetadata{
+		FilePath:  "Users/Alice/.ssh/known_hosts",
+		Name:      "known_hosts",
+		Extension: "",
+		Size:      1024,
+	}, nil)
+
+	if len(privateKey.Findings) != 1 || len(support.Findings) != 1 {
+		t.Fatalf("expected single findings, got private=%#v support=%#v", privateKey.Findings, support.Findings)
+	}
+	if severityRank(privateKey.Findings[0].Severity) <= severityRank(support.Findings[0].Severity) {
+		t.Fatalf("expected private key to rank above supporting SSH artifact, got private=%#v support=%#v", privateKey.Findings[0], support.Findings[0])
+	}
+}
+
+func TestEngineEvaluateDetectsWindowsImageBackupPath(t *testing.T) {
+	t.Parallel()
+
+	engine := NewEngine(Options{}, &rules.Manager{}, nil, logx.New("error"))
+	meta := FileMetadata{
+		Host:      "fs01",
+		Share:     "Backups",
+		FilePath:  `Backups\SystemState\WindowsImageBackup\DC01\Backup 2025-01-01\C\Windows\System32\config\SAM`,
+		Name:      "SAM",
+		Extension: "",
+		Size:      2048,
+	}
+
+	evaluation := engine.Evaluate(meta, nil)
+	if len(evaluation.Findings) != 1 {
+		t.Fatalf("expected one backup path finding, got %#v", evaluation.Findings)
+	}
+	finding := evaluation.Findings[0]
+	if finding.RuleID != "backupinspect.path.windowsimagebackup" {
+		t.Fatalf("unexpected finding: %#v", finding)
+	}
+	if finding.Category != "backup-exposure" || finding.Confidence != "high" {
+		t.Fatalf("expected high-confidence backup-exposure finding, got %#v", finding)
+	}
+	if !hasTag(finding.Tags, "artifact:backup-family") || !hasTag(finding.Tags, "backup-family:windowsimagebackup") {
+		t.Fatalf("expected backup-family tags, got %#v", finding.Tags)
+	}
+}
+
+func TestEngineEvaluateDetectsRegBackBackupVariant(t *testing.T) {
+	t.Parallel()
+
+	engine := NewEngine(Options{}, &rules.Manager{}, nil, logx.New("error"))
+	meta := FileMetadata{
+		FilePath:  `Archive/SystemCopies/Windows/System32/config/RegBack/SECURITY.old`,
+		Name:      "SECURITY.old",
+		Extension: ".old",
+		Size:      2048,
+	}
+
+	evaluation := engine.Evaluate(meta, nil)
+	if len(evaluation.Findings) != 1 {
+		t.Fatalf("expected one backup path finding, got %#v", evaluation.Findings)
+	}
+	if evaluation.Findings[0].RuleID != "backupinspect.path.regback" {
+		t.Fatalf("unexpected finding: %#v", evaluation.Findings[0])
+	}
+}
+
+func TestEngineEvaluateDetectsFirefoxCredentialStoreArtifact(t *testing.T) {
+	t.Parallel()
+
+	engine := NewEngine(Options{}, &rules.Manager{}, nil, logx.New("error"))
+	meta := FileMetadata{
+		Host:      "fs01",
+		Share:     "Profiles",
+		FilePath:  `Users\Alice\AppData\Roaming\Mozilla\Firefox\Profiles\abcd.default-release\logins.json`,
+		Name:      "logins.json",
+		Extension: ".json",
+		Size:      512,
+	}
+
+	evaluation := engine.Evaluate(meta, nil)
+	if len(evaluation.Findings) != 1 {
+		t.Fatalf("expected one browser credential-store finding, got %#v", evaluation.Findings)
+	}
+	finding := evaluation.Findings[0]
+	if finding.RuleID != "browsercredinspect.firefox.logins" {
+		t.Fatalf("unexpected finding: %#v", finding)
+	}
+	if finding.Category != "browser-credentials" || finding.TriageClass != "weak-review" || finding.Actionable {
+		t.Fatalf("expected weak-review browser finding, got %#v", finding)
+	}
+}
+
+func TestEngineEvaluateDetectsChromiumCredentialStoreBackupVariant(t *testing.T) {
+	t.Parallel()
+
+	engine := NewEngine(Options{}, &rules.Manager{}, nil, logx.New("error"))
+	meta := FileMetadata{
+		FilePath:  `Archive/ProfileCopies/Bob/AppData/Local/Google/Chrome/User Data/Default/Login Data`,
+		Name:      "Login Data",
+		Extension: "",
+		Size:      512,
+	}
+
+	evaluation := engine.Evaluate(meta, nil)
+	if len(evaluation.Findings) != 1 {
+		t.Fatalf("expected one browser credential-store finding, got %#v", evaluation.Findings)
+	}
+	if evaluation.Findings[0].RuleID != "browsercredinspect.chromium.login_data" {
+		t.Fatalf("unexpected finding: %#v", evaluation.Findings[0])
+	}
+}
+
+func TestEngineEvaluateDetectsWindowsCredentialStorePath(t *testing.T) {
+	t.Parallel()
+
+	engine := NewEngine(Options{}, &rules.Manager{}, nil, logx.New("error"))
+	meta := FileMetadata{
+		Host:      "fs01",
+		Share:     "Profiles",
+		FilePath:  `Users\Alice\AppData\Roaming\Microsoft\Credentials\A1B2C3D4`,
+		Name:      "A1B2C3D4",
+		Extension: "",
+		Size:      256,
+	}
+
+	evaluation := engine.Evaluate(meta, nil)
+	if len(evaluation.Findings) != 1 {
+		t.Fatalf("expected one windows credential-store finding, got %#v", evaluation.Findings)
+	}
+	finding := evaluation.Findings[0]
+	if finding.RuleID != "wincredinspect.path.credentials" {
+		t.Fatalf("unexpected finding: %#v", finding)
+	}
+	if finding.Category != "windows-credentials" || finding.Confidence != "high" {
+		t.Fatalf("expected high-confidence windows-credentials finding, got %#v", finding)
+	}
+	if !hasTag(finding.Tags, "credstore:path-exact") || !hasTag(finding.Tags, "credstore:type:credentials") {
+		t.Fatalf("expected credential-store tags, got %#v", finding.Tags)
+	}
+}
+
+func TestEngineEvaluateDetectsWindowsCredentialStoreBackupVariant(t *testing.T) {
+	t.Parallel()
+
+	engine := NewEngine(Options{}, &rules.Manager{}, nil, logx.New("error"))
+	meta := FileMetadata{
+		FilePath:  `Archive/ProfileCopy/Bob/AppData/Local/Microsoft/Vault/0A1B2C3D/Policy.vpol`,
+		Name:      "Policy.vpol",
+		Extension: ".vpol",
+		Size:      256,
+	}
+
+	evaluation := engine.Evaluate(meta, nil)
+	if len(evaluation.Findings) != 1 {
+		t.Fatalf("expected one vault path finding, got %#v", evaluation.Findings)
+	}
+	if evaluation.Findings[0].RuleID != "wincredinspect.path.vault" {
+		t.Fatalf("unexpected finding: %#v", evaluation.Findings[0])
+	}
+}
+
+func TestEngineEvaluateDetectsSQLiteInspectionFinding(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	content := buildSQLiteDBFixture(t, []string{
+		`CREATE TABLE users (id INTEGER, username TEXT, password TEXT)`,
+		`INSERT INTO users VALUES (1, 'svc_finance', 'Synthet!cPass2025')`,
+	})
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	meta := FileMetadata{
+		Host:      "fs01",
+		Share:     "Apps",
+		FilePath:  "Apps/finance.sqlite",
+		Name:      "finance.sqlite",
+		Extension: ".sqlite",
+		Size:      int64(len(content)),
+	}
+
+	evaluation := engine.Evaluate(meta, content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected sqlite findings, got %#v", evaluation)
+	}
+
+	found := false
+	for _, finding := range evaluation.Findings {
+		if finding.DatabaseTable == "users" && finding.DatabaseColumn == "password" {
+			found = true
+			if finding.FilePath != "Apps/finance.sqlite::users.password" {
+				t.Fatalf("expected composite sqlite path, got %#v", finding)
+			}
+			if finding.DatabaseFilePath != "Apps/finance.sqlite" {
+				t.Fatalf("expected database file path, got %#v", finding)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected sqlite password finding, got %#v", evaluation.Findings)
+	}
+}
+
+func TestEngineEvaluateSkipsLargeSQLiteByDefault(t *testing.T) {
+	t.Parallel()
+
+	content := buildSQLiteDBFixture(t, []string{
+		`CREATE TABLE users (id INTEGER, username TEXT, password TEXT)`,
+		`INSERT INTO users VALUES (1, 'svc_finance', 'Synthet!cPass2025')`,
+	})
+	engine := NewEngine(Options{
+		SQLite: sqliteinspect.Options{
+			Enabled:       true,
+			AutoDBMaxSize: 64,
+			MaxDBSize:     64,
+		},
+	}, &rules.Manager{}, nil, logx.New("error"))
+	meta := FileMetadata{
+		FilePath:  "Apps/finance.sqlite",
+		Name:      "finance.sqlite",
+		Extension: ".sqlite",
+		Size:      4096,
+	}
+
+	evaluation := engine.Evaluate(meta, content)
+	if !evaluation.Skipped || !strings.Contains(evaluation.SkipReason, "automatic inspection limit") {
+		t.Fatalf("expected oversized sqlite to skip by default, got %#v", evaluation)
+	}
+}
+
+func TestEngineEvaluateAllowsConfiguredLargeSQLite(t *testing.T) {
+	t.Parallel()
+
+	content := buildSQLiteDBFixture(t, []string{
+		`CREATE TABLE users (id INTEGER, username TEXT, password TEXT)`,
+		`INSERT INTO users VALUES (1, 'svc_finance', 'Synthet!cPass2025')`,
+	})
+	engine := NewEngine(Options{
+		SQLite: sqliteinspect.Options{
+			Enabled:         true,
+			AutoDBMaxSize:   64,
+			AllowLargeDBs:   true,
+			MaxDBSize:       8192,
+			MaxRowsPerTable: 2,
+		},
+	}, &rules.Manager{}, nil, logx.New("error"))
+	meta := FileMetadata{
+		FilePath:  "Apps/finance.sqlite",
+		Name:      "finance.sqlite",
+		Extension: ".sqlite",
+		Size:      4096,
+	}
+
+	evaluation := engine.Evaluate(meta, content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected configured large sqlite to be inspected, got %#v", evaluation)
+	}
+}
+
+func TestEngineEvaluatesZIPArchiveWithWindowsCredentialStorePaths(t *testing.T) {
+	t.Parallel()
+
+	engine := NewEngine(Options{}, &rules.Manager{}, nil, logx.New("error"))
+	content := buildZIPFixture(t, map[string][]byte{
+		"Users/Alice/AppData/Roaming/Microsoft/Credentials/ABCD1234":       []byte("synthetic credstore marker"),
+		"Users/Alice/AppData/Roaming/Microsoft/Protect/S-1-5-21/masterkey": []byte("synthetic protect marker"),
+		"docs/readme.txt": []byte("synthetic notes"),
+	})
+	meta := FileMetadata{
+		FilePath:  "Archive/profile-backup.zip",
+		Name:      "profile-backup.zip",
+		Extension: ".zip",
+		Size:      int64(len(content)),
+	}
+
+	evaluation := engine.Evaluate(meta, content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected archive findings, got %#v", evaluation)
+	}
+
+	foundCreds := false
+	foundProtect := false
+	for _, finding := range evaluation.Findings {
+		switch finding.FilePath {
+		case "Archive/profile-backup.zip!Users/Alice/AppData/Roaming/Microsoft/Credentials/ABCD1234":
+			foundCreds = true
+		case "Archive/profile-backup.zip!Users/Alice/AppData/Roaming/Microsoft/Protect/S-1-5-21/masterkey":
+			foundProtect = true
+		}
+	}
+	if !foundCreds || !foundProtect {
+		t.Fatalf("expected archive member path findings for credential-store paths, got %#v", evaluation.Findings)
+	}
+}
+
 func TestEngineSuppressesPlaceholderSecretAssignments(t *testing.T) {
 	t.Parallel()
 
@@ -669,10 +1106,12 @@ func TestEngineHonorsArchiveInspectionLimits(t *testing.T) {
 	if len(evaluation.Findings) == 0 {
 		t.Fatalf("expected at least one finding, got %#v", evaluation)
 	}
+	memberPaths := make(map[string]struct{})
 	for _, finding := range evaluation.Findings {
-		if !strings.Contains(finding.FilePath, "one.env") {
-			t.Fatalf("expected later archive members to stay unread after limits, got %#v", evaluation.Findings)
-		}
+		memberPaths[finding.ArchiveMemberPath] = struct{}{}
+	}
+	if len(memberPaths) != 1 {
+		t.Fatalf("expected only one archive member to be inspected after limits, got %#v", evaluation.Findings)
 	}
 }
 
@@ -713,6 +1152,49 @@ func TestWorkerPoolLoadsArchiveContentOnce(t *testing.T) {
 	}
 }
 
+func TestEngineEvaluatesZIPArchiveWithPrivateKeyAndClientAuthMembers(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	content := buildZIPFixture(t, map[string][]byte{
+		"keys/id_rsa":     []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nLAB_ONLY_SYNTHETIC\n-----END OPENSSH PRIVATE KEY-----\n"),
+		"vpn/client.ovpn": []byte("client\nauth-user-pass creds.txt\nremote vpn.lab.example.invalid 1194\n"),
+		"ssh/known_hosts": []byte("vpn.lab.example.invalid ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnly\n"),
+		"docs/readme.txt": []byte("synthetic notes"),
+	})
+	meta := FileMetadata{
+		FilePath:  "Archive/ssh-recovery.zip",
+		Name:      "ssh-recovery.zip",
+		Extension: ".zip",
+		Size:      int64(len(content)),
+	}
+
+	evaluation := engine.Evaluate(meta, content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected findings from archive-contained private key artifacts, got %#v", evaluation)
+	}
+
+	foundPrivateKey := false
+	foundOVPN := false
+	for _, finding := range evaluation.Findings {
+		switch finding.FilePath {
+		case "Archive/ssh-recovery.zip!keys/id_rsa":
+			foundPrivateKey = true
+		case "Archive/ssh-recovery.zip!vpn/client.ovpn":
+			foundOVPN = true
+		}
+	}
+	if !foundPrivateKey || !foundOVPN {
+		t.Fatalf("expected archive member findings for private key and ovpn, got %#v", evaluation.Findings)
+	}
+}
+
 type captureFindingSink struct{}
 
 func newCaptureFindingSink() *captureFindingSink {
@@ -747,6 +1229,39 @@ func buildZIPFixture(t *testing.T, members map[string][]byte) []byte {
 		t.Fatalf("Close returned error: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func buildSQLiteDBFixture(t *testing.T, statements []string) []byte {
+	t.Helper()
+
+	tmpFile, err := os.CreateTemp("", "snablr-scanner-sqlite-*.db")
+	if err != nil {
+		t.Fatalf("CreateTemp returned error: %v", err)
+	}
+	tmpPath := tmpFile.Name()
+	_ = tmpFile.Close()
+	defer os.Remove(tmpPath)
+
+	db, err := sql.Open("sqlite3", tmpPath)
+	if err != nil {
+		t.Fatalf("sql.Open returned error: %v", err)
+	}
+	defer db.Close()
+
+	for _, stmt := range statements {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("Exec(%q) returned error: %v", stmt, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	content, err := os.ReadFile(tmpPath)
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	return content
 }
 
 func archiveOptionsForTests(mutate func(*archiveinspect.Options)) archiveinspect.Options {

@@ -4,6 +4,35 @@ Snablr ships with a defensive default rule pack that is meant to be useful out o
 
 This guide covers the fastest ways to improve signal quality while keeping the default rules intact.
 
+## Start With Explicit Suppression, Not Rule Surgery
+
+For live environments, the safest first tuning step is usually an explicit suppression rule, not editing the shipped detection logic.
+
+Use suppression when:
+
+- a finding is real but operationally expected
+- a known internal application keeps producing the same reviewed result
+- a copied gold image or migration bundle contains credential-store artifacts you already track separately
+
+Recommended order:
+
+1. review the finding and confirm it is benign in context
+2. add the narrowest suppression rule that fits
+3. scope it with host/share/path/rule where possible
+4. keep the suppression reason concrete and auditable
+
+Good suppression examples:
+
+- exact path + rule ID
+- path subtree + share + rule ID
+- exact fingerprint for a single recurring finding
+
+Avoid broad suppression such as:
+
+- entire categories across the environment
+- generic path fragments without additional scope
+- wildcard-like “hide all config findings” behavior
+
 ## Tune Filename Keywords
 
 Broad filename keywords can become noisy quickly because naming conventions vary across teams and business units.
@@ -164,3 +193,14 @@ snablr rules test-dir --rules configs/rules/default --fixtures testdata/rules/fi
 ```
 
 Tune in small steps. If you disable a rule, document why. If you add local keywords, keep them specific enough that another operator can understand why a file matched.
+
+## Recommended Live-Environment Workflow
+
+1. start with `examples/config.production.yaml`
+2. run the `default` profile first
+3. review top access paths and suppressed findings together
+4. add suppression rules for reviewed known-benign patterns
+5. use the `validation` profile when you want tighter inspection bounds and extra diagnostics while calibrating
+6. reserve the `aggressive` profile for bounded follow-up scans when the default profile leaves obvious review gaps
+
+Keep organization-specific suppression rules in a separate overlay file so local calibration does not leak into the shipped defaults.

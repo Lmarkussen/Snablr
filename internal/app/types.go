@@ -4,6 +4,7 @@ type ScanOptions struct {
 	ConfigPath                 string
 	Targets                    []string
 	TargetsFile                string
+	Profile                    string
 	Username                   string
 	Password                   string
 	Share                      []string

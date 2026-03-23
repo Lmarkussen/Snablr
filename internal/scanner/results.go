@@ -70,6 +70,10 @@ type Finding struct {
 	ArchivePath         string              `json:"archive_path,omitempty"`
 	ArchiveMemberPath   string              `json:"archive_member_path,omitempty"`
 	ArchiveLocalInspect bool                `json:"archive_local_inspect,omitempty"`
+	DatabaseFilePath    string              `json:"database_file_path,omitempty"`
+	DatabaseTable       string              `json:"database_table,omitempty"`
+	DatabaseColumn      string              `json:"database_column,omitempty"`
+	DatabaseRowContext  string              `json:"database_row_context,omitempty"`
 	DFSNamespacePath    string              `json:"dfs_namespace_path,omitempty"`
 	DFSLinkPath         string              `json:"dfs_link_path,omitempty"`
 	SignalType          string              `json:"signal_type,omitempty"`

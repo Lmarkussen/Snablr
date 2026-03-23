@@ -15,6 +15,7 @@ Example profiles live under:
 - `examples/config.basic.yaml`
 - `examples/config.domain.yaml`
 - `examples/config.targeted.yaml`
+- `examples/config.production.yaml`
 
 ## Configuration Precedence
 
@@ -48,6 +49,8 @@ The config file is grouped into:
 - `app`
 - `scan`
 - `archives`
+- `sqlite`
+- `suppression`
 - `rules`
 - `output`
 
@@ -177,6 +180,9 @@ Larger values increase coverage but also increase I/O and memory pressure.
 
 ### Runtime Control
 
+- `profile`
+  Explicit scan profile. Supported values are `default`, `validation`, and `aggressive`.
+
 - `baseline`
   Path to a previous JSON result used for comparison during the current scan
 - `seed_manifest`
@@ -195,6 +201,24 @@ Resume behavior:
 - file completion is keyed by path plus file metadata
 - resumed scans reprocess files whose size or modified timestamp changed
 - this avoids the earlier path-only skip behavior for changed files without adding heavy content hashing by default
+
+### Scan Profiles
+
+Profiles set predictable bounded-inspection behavior without requiring many ad hoc flags.
+
+- `default`
+  Balanced production profile. Recommended for everyday live-environment scans.
+- `validation`
+  Conservative review-oriented profile. Uses tighter archive and SQLite limits and enables validation diagnostics.
+- `aggressive`
+  Broader bounded-inspection profile. Still local-side and bounded, but allows larger archive and SQLite inspection limits.
+
+Profile notes:
+
+- profiles only tune existing bounded-inspection and diagnostics settings
+- they do not add new detection families
+- CLI flags still override the active profile for the current run
+- the selected profile is recorded in console, JSON, and HTML output
 
 ## `archives`
 
@@ -249,6 +273,129 @@ Behavior:
 - nested archives are skipped
 - remote scans never unpack archives on the target side; the outer file is read and inspected locally
 - archive findings are reported with both the outer archive path and inner member path
+
+## `sqlite`
+
+The `sqlite` section controls limited offline SQLite inspection.
+
+Phase 1 support is intentionally narrow:
+
+- `.sqlite`, `.sqlite3`, `.db`, and `.db3` candidates only
+- SQLite header validation before inspection
+- local read-only inspection only
+- bounded schema and row sampling
+- no live DB access
+- no full-database dumping
+
+Example:
+
+```yaml
+sqlite:
+  enabled: true
+  auto_db_max_size: 5242880
+  allow_large_dbs: false
+  max_db_size: 5242880
+  max_tables: 8
+  max_rows_per_table: 5
+  max_cell_bytes: 256
+  max_total_bytes: 16384
+  max_interesting_columns: 4
+```
+
+Fields:
+
+- `enabled`
+  Turn SQLite inspection on or off.
+- `auto_db_max_size`
+  SQLite files at or below this size are inspected automatically.
+- `allow_large_dbs`
+  Allow inspection above the automatic limit when `max_db_size` is set high enough.
+- `max_db_size`
+  Absolute SQLite file size ceiling for inspection.
+- `max_tables`
+  Maximum number of interesting tables sampled from one database.
+- `max_rows_per_table`
+  Maximum number of sampled rows per interesting table.
+- `max_cell_bytes`
+  Maximum bytes read from one interesting cell value.
+- `max_total_bytes`
+  Maximum total bytes processed across all sampled SQLite cell values in one database.
+- `max_interesting_columns`
+  Maximum number of high-signal columns sampled per table.
+
+Behavior notes:
+
+- Snablr prioritizes table names such as `users`, `credentials`, `tokens`, `accounts`, `config`, and `settings`
+- Snablr prioritizes column names such as `password`, `secret`, `token`, `api_key`, `connection_string`, and `dsn`
+- placeholder-like values stay suppressed
+- SQLite findings are reported with a combined path such as `app.db::users.password`
+- remote scans never inspect SQLite on the target side; the database file is read and inspected locally
+
+## `suppression`
+
+The `suppression` section controls explicit allowlisting for known-benign findings in live environments.
+
+Example:
+
+```yaml
+suppression:
+  file: examples/suppressions.production.yaml
+  sample_limit: 15
+  rules:
+    - id: allowlist-payroll-config-review
+      description: Suppress reviewed payroll app findings in a known path family.
+      reason: Known internal application config reviewed and accepted.
+      enabled: true
+      shares: [Finance]
+      rule_ids: [content.password_assignment_indicators]
+      path_prefixes: [Apps/Payroll/]
+      path_contains: [internal-payroll]
+```
+
+Fields:
+
+- `file`
+  Optional external YAML overlay that contributes additional suppression rules.
+- `sample_limit`
+  Maximum number of suppressed sample findings to include in JSON and HTML summaries.
+- `rules`
+  Inline suppression rules.
+
+Suppression rule fields:
+
+- `id`
+  Required stable identifier used in reports and audit summaries.
+- `description`
+  Optional operator-facing description.
+- `reason`
+  Required explanation of why the suppression exists.
+- `enabled`
+  Enables or disables the rule.
+- `hosts`
+  Match only findings from specific hosts.
+- `shares`
+  Match only findings from specific shares.
+- `rule_ids`
+  Match only findings from specific rule IDs.
+- `categories`
+  Match only findings from specific categories.
+- `exact_paths`
+  Match only an exact normalized finding path.
+- `path_prefixes`
+  Match a normalized finding path subtree.
+- `path_contains`
+  Match known application or deployment context fragments in the normalized finding path.
+- `fingerprints`
+  Match exact normalized finding fingerprints for stable cross-run allowlisting.
+- `tags`
+  Match findings carrying specific tags.
+
+Matching behavior:
+
+- match lists are ORed within a field
+- different populated fields are ANDed together
+- suppressed findings are hidden from the primary output, but they remain visible in a separate suppression summary
+- suppression happens before correlation reporting so known-benign findings do not inflate access-path summaries
 
 ## `rules`
 
@@ -373,6 +520,16 @@ Use it when:
 - you want to validate a high-value share quickly
 - you want to limit work with share/path filters
 - you want a narrower triage run instead of a broad environment sweep
+
+### Production Live-Environment Scan
+
+File:
+- `examples/config.production.yaml`
+
+Use it when:
+- you want the recommended balanced production profile
+- you want resumable JSON, HTML, CSV, and Markdown output
+- you want a clean suppression overlay for reviewed benign findings
 
 ## CLI Override Examples
 

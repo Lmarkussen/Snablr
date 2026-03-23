@@ -1,0 +1,24 @@
+sample_limit: 15
+rules:
+  - id: allowlist-payroll-config-review
+    description: Suppress a known benign internal payroll config pattern after manual review.
+    reason: Known internal application config reviewed and accepted by operations.
+    enabled: true
+    shares: [Finance]
+    rule_ids: [content.password_assignment_indicators]
+    path_prefixes:
+      - Apps/Payroll/
+    path_contains:
+      - internal-payroll
+
+  - id: allowlist-golden-profile-copy
+    description: Suppress copied default browser profile artifacts in a controlled gold image bundle.
+    reason: Golden image browser profile copy is expected in this environment and tracked separately.
+    enabled: true
+    path_prefixes:
+      - Images/GoldenProfiles/
+    rule_ids:
+      - browsercredinspect.firefox.logins
+      - browsercredinspect.firefox.key4
+      - browsercredinspect.chromium.login_data
+      - browsercredinspect.chromium.cookies

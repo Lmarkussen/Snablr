@@ -22,6 +22,11 @@ func augmentFindingsForReporting(findings []scanner.Finding) []scanner.Finding {
 	}
 
 	synthetic := buildADCorrelatedFindings(out)
+	synthetic = append(synthetic, buildPrivateKeyCorrelatedFindings(out)...)
+	synthetic = append(synthetic, buildBrowserCredentialStoreCorrelatedFindings(out)...)
+	synthetic = append(synthetic, buildWindowsCredentialStoreCorrelatedFindings(out)...)
+	synthetic = append(synthetic, buildBackupCorrelatedFindings(out)...)
+	synthetic = append(synthetic, buildSQLiteCorrelatedFindings(out)...)
 	for _, finding := range synthetic {
 		key := correlationFindingKey(finding)
 		if _, ok := existing[key]; ok {

@@ -179,6 +179,21 @@ func correlateGroup(meta FileMetadata, group []Finding) Finding {
 		correlationContribution = 8
 		reasons = append(reasons, "multiple independent signal types increased confidence")
 	}
+	if groupHasTag(group, "artifact:private-key") && groupHasTag(group, "validated:private-key-header") {
+		score += 8
+		correlationContribution += 8
+		reasons = append(reasons, "validated private key structure confirmed the exposed private key artifact")
+	}
+	if groupHasTag(group, "credstore:path-exact") {
+		score += 10
+		correlationContribution += 10
+		reasons = append(reasons, "exact Windows credential-store path matched a known DPAPI credential storage location")
+	}
+	if groupHasTag(group, "artifact:backup-family") {
+		score += 10
+		correlationContribution += 10
+		reasons = append(reasons, "exact backup or restore path matched a known Windows system-state storage family")
+	}
 	if score > 100 {
 		score = 100
 	}

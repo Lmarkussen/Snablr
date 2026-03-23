@@ -103,6 +103,10 @@ Common finding fields:
 - `archive_path`
 - `archive_member_path`
 - `archive_local_inspect`
+- `database_file_path`
+- `database_table`
+- `database_column`
+- `database_row_context`
 - `dfs_namespace_path`
 - `dfs_link_path`
 - `from_sysvol`
@@ -126,6 +130,7 @@ The HTML report is the main post-scan review artifact. It is standalone, portabl
 It includes:
 
 - summary cards
+- access-path summaries for correlated high-value clusters
 - scan timing and metric summaries
 - severity summary
 - category summary
@@ -135,6 +140,10 @@ It includes:
 - inline filtering
 - severity, confidence, source, AD-share, and priority badges
 - rule explanation and remediation guidance
+- synthetic high-confidence correlation findings when strongly related artifacts co-occur, such as `NTDS.DIT + SYSTEM` or a private key with nearby client-auth artifacts
+- synthetic high-confidence correlation findings when DPAPI `Protect` material co-occurs with `Credentials` or `Vault` paths under the same profile context
+- synthetic high-confidence backup exposure findings when multiple credential-relevant system artifacts co-occur under the same exact backup family
+- synthetic browser credential-store exposure findings when exact paired browser profile artifacts co-occur under the same normalized browser profile context
 - diff summary when a baseline is provided
 
 Use HTML when you need:
@@ -220,6 +229,59 @@ Category summary helps you answer:
 
 This is often the fastest way to prioritize remediation work.
 
+### 3.5. Review Top Access Paths
+
+The top access-path section is a concise operator summary built from already-correlated findings.
+It is ranked so you can act on the most likely compromise routes first.
+
+Typical entries include:
+
+- AD compromise paths
+- system-state backup exposure
+- Windows credential-store exposure
+- browser credential-store exposure
+- private key or client-auth bundles
+- database or app credential clusters
+- archive-derived credential clusters
+
+Each card tells you:
+
+- what kind of access path was identified
+- the exploitability score and priority tier
+- why it matters
+- which host/share it came from
+- the primary anchor path
+- how complete the artifact set looks
+- the related artifacts that caused promotion
+
+Ranking notes:
+
+- ranking is deterministic and based on already-correlated findings
+- stronger known combinations such as `NTDS.dit + SYSTEM` sort above weaker paired profile artifacts
+- archive-derived clusters are identified explicitly, but they still keep their underlying access-path type in context
+
+### 3.6. Review Suppressed Findings
+
+The suppressed-findings section is an audit view for explicit allowlist matches.
+
+It shows:
+
+- how many findings were suppressed
+- which suppression rules matched
+- why those suppressions exist
+- sample suppressed findings with host, share, path, and finding rule
+
+Important behavior:
+
+- suppressed findings are hidden from the main visible finding list
+- they do not disappear silently
+- suppression is applied before correlated access-path summaries are built, so known-benign findings do not inflate ranked access paths
+- suppression is explicit and config-driven; Snablr does not hide findings through undocumented heuristics
+
+This section is meant to answer the practical question:
+
+- "What are the most likely routes to real access?"
+
 ### 4. Read A Finding Row
 
 Each finding row typically gives you:
@@ -228,6 +290,7 @@ Each finding row typically gives you:
 - host and share location
 - file path
 - archive path and inner member path when the evidence came from inside a `.zip`
+- database file, table, column, and row context when the evidence came from bounded SQLite inspection
 - rule name and category
 - match snippet
 - rule explanation
@@ -246,9 +309,30 @@ Interpretation tips:
 Archive finding notes:
 
 - archive-derived findings use a combined path like `loot.zip!configs/web.config`
+- private key and client-auth findings inside inspected `.zip` files use the same combined path format, for example `ssh-recovery.zip!keys/id_rsa`
+- Windows profile credential-store findings inside inspected `.zip` files use the same combined path format, for example `profile-backup.zip!Users/Alice/AppData/Roaming/Microsoft/Credentials/ABCD1234`
 - JSON also preserves `archive_path` and `archive_member_path` separately
 - `archive_local_inspect: true` means the outer archive was inspected locally by Snablr after being read, rather than unpacked on the remote target
 - the confidence breakdown tells you why a finding stayed low-value or was promoted
+
+SQLite finding notes:
+
+- SQLite-derived findings use a combined path like `app.db::users.password`
+- JSON also preserves `database_file_path`, `database_table`, `database_column`, and `database_row_context` separately
+- these findings come from bounded local SQLite sampling, not full database dumping
+- report-time correlation may promote a SQLite finding when nearby config or backup evidence reinforces it
+
+Backup exposure notes:
+
+- exact backup-family paths use the normal finding flow and category summaries
+- when multiple hive or AD database artifacts co-occur under the same exact backup family, the HTML report also surfaces an access-path summary such as `System-state backup exposure`
+- the confidence breakdown for those findings explains the backup-family contribution separately from the correlation contribution
+
+Browser credential-store notes:
+
+- standalone browser profile artifacts are intentionally low-visibility because Snablr does not parse or decrypt browser stores in this phase
+- when exact paired artifacts such as Firefox `logins.json + key4.db` or Chromium `Login Data + Cookies` co-occur under the same normalized browser profile context, the report can surface a correlated access-path summary
+- these findings explain that credential or session extraction may be possible, but that Snablr did not perform extraction itself
 
 ### 5. Use Filters And Groups
 

@@ -1,0 +1,71 @@
+app:
+  name: snablr
+  log_level: info
+  banner_path: internal/ui/assets/snablr.txt
+
+scan:
+  profile: default
+  targets: []
+  targets_file: ""
+  username: "EXAMPLE\\snablr"
+  password: "REPLACE_ME"
+  share: []
+  exclude_share:
+    - IPC$
+  path: []
+  exclude_path:
+    - Archive/Temp/
+    - Users/Default/AppData/Local/Temp/
+  max_depth: 0
+  worker_count: 0
+  max_file_size: 10485760
+  no_ldap: false
+  domain: "example.local"
+  dc: ""
+  base_dn: ""
+  discover_dfs: true
+  prioritize_ad_shares: true
+  only_ad_shares: false
+  max_scan_time: "90m"
+  checkpoint_file: "state/production-scan.json"
+  resume: true
+  skip_reachability_check: false
+  reachability_timeout_seconds: 3
+
+archives:
+  enabled: true
+  auto_zip_max_size: 10485760
+  allow_large_zips: false
+  max_zip_size: 10485760
+  max_members: 64
+  max_member_bytes: 524288
+  max_total_uncompressed_bytes: 4194304
+  inspect_extensionless_text: true
+
+sqlite:
+  enabled: true
+  auto_db_max_size: 5242880
+  allow_large_dbs: false
+  max_db_size: 5242880
+  max_tables: 8
+  max_rows_per_table: 5
+  max_cell_bytes: 256
+  max_total_bytes: 16384
+  max_interesting_columns: 4
+
+suppression:
+  file: examples/suppressions.production.yaml
+  sample_limit: 15
+  rules: []
+
+rules:
+  rules_directory: ""
+  fail_on_invalid: false
+
+output:
+  output_format: all
+  json_out: output/production/results.json
+  html_out: output/production/report.html
+  csv_out: output/production/findings.csv
+  md_out: output/production/summary.md
+  pretty: true

@@ -67,6 +67,7 @@ func runScan(args []string) error {
 	configPath := fs.String("config", "configs/config.yaml", "Path to the YAML config file")
 	targets := fs.String("targets", "", "Comma-separated target hosts")
 	targetsFile := fs.String("targets-file", "", "Path to file containing target hosts")
+	profile := fs.String("profile", "", "Scan profile: default, validation, or aggressive")
 
 	var username string
 	var password string
@@ -121,6 +122,7 @@ func runScan(args []string) error {
 		ConfigPath:                 *configPath,
 		Targets:                    parseTargets(*targets),
 		TargetsFile:                *targetsFile,
+		Profile:                    *profile,
 		Username:                   username,
 		Password:                   password,
 		Share:                      append([]string{}, shareFilters...),

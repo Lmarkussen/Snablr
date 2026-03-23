@@ -90,6 +90,46 @@ func TestLoadAppliesArchiveDefaultsAndHonorsExplicitDisable(t *testing.T) {
 	}
 }
 
+func TestLoadAppliesProfileBeforeExplicitOverrides(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "configs", "config.yaml"), "scan:\n  profile: validation\narchives:\n  max_members: 99\n")
+
+	cfg, err := Load(filepath.Join(root, "configs", "config.yaml"))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Scan.Profile != "validation" {
+		t.Fatalf("expected validation profile, got %#v", cfg.Scan.Profile)
+	}
+	if !cfg.Scan.ValidationMode {
+		t.Fatalf("expected validation profile to enable validation mode, got %#v", cfg.Scan)
+	}
+	if cfg.Archives.MaxMembers != 99 {
+		t.Fatalf("expected explicit config override to win after profile application, got %#v", cfg.Archives)
+	}
+}
+
+func TestLoadMergesSuppressionOverlay(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "configs", "config.yaml"), "suppression:\n  file: suppressions.yaml\n  rules:\n    - id: inline-rule\n      reason: inline\n      enabled: true\n      exact_paths: [Users/Alice/Desktop/passwords.txt]\n")
+	writeFile(t, filepath.Join(root, "configs", "suppressions.yaml"), "sample_limit: 3\nrules:\n  - id: overlay-rule\n    reason: overlay\n    enabled: true\n    rule_ids: [content.synthetic_password]\n")
+
+	cfg, err := Load(filepath.Join(root, "configs", "config.yaml"))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Suppression.SampleLimit != 3 {
+		t.Fatalf("expected suppression overlay sample limit, got %#v", cfg.Suppression)
+	}
+	if len(cfg.Suppression.Rules) != 2 {
+		t.Fatalf("expected inline and overlay suppression rules, got %#v", cfg.Suppression.Rules)
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	mkdirAll(t, filepath.Dir(path))

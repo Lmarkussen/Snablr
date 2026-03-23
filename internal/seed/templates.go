@@ -56,6 +56,71 @@ func defaultTemplates() []templateSpec {
 			possible("remote-access.cfg", "config-kv", "medium", []string{"filename", "extension"}, []string{"vpn"}, []string{"vpn-config-review"}),
 			noise("vpn-readme.md", "readme-noise", "low", []string{"noise"}, []string{"noise-review"}),
 		}, renderVariant),
+		newSpec("private-keys", []string{
+			"Users/Alice/.ssh", "IT/Admin/Keys", "VPN/Profiles", "Archive/Legacy/Auth",
+		}, []templateVariant{
+			classify(triage(likely("id_rsa", "openssh-private-key", "high", []string{"content", "filename"}, []string{"crypto", "keys", "remote-access"}, []string{"private-key-artifact-review", "private-key-header-validation"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("id_ed25519", "openssh-private-key", "high", []string{"content", "filename"}, []string{"crypto", "keys", "remote-access"}, []string{"private-key-artifact-review", "private-key-header-validation"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("identity", "rsa-private-key", "high", []string{"content", "filename"}, []string{"crypto", "keys", "remote-access"}, []string{"private-key-artifact-review", "private-key-header-validation"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("client-admin.ppk", "ppk-artifact", "high", []string{"filename", "extension"}, []string{"remote-access", "vpn", "client-auth"}, []string{"client-auth-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("branch-admin.ovpn", "ovpn-config", "high", []string{"filename", "extension"}, []string{"remote-access", "vpn", "client-auth"}, []string{"client-auth-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(possible("authorized_keys", "authorized-keys", "medium", []string{"filename"}, []string{"remote-access", "ssh", "context"}, []string{"ssh-support-review"}), seedTriageWeakReview), seedClassWeakReview, "medium", false),
+			classify(triage(possible("known_hosts", "known-hosts", "medium", []string{"filename"}, []string{"remote-access", "ssh", "context"}, []string{"ssh-support-review"}), seedTriageWeakReview), seedClassWeakReview, "medium", false),
+			noise("ssh-notes.txt", "notes-benign", "low", []string{"noise"}, []string{"noise-review"}),
+		}, renderVariant),
+		newSpec("private-key-correlation", []string{
+			"Recovery/Keys",
+		}, []templateVariant{
+			classify(triage(likely("id_rsa", "openssh-private-key", "high", []string{"content", "filename", "correlation", "path"}, []string{"crypto", "keys", "remote-access"}, []string{"private-key-artifact-review", "private-key-header-validation"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
+			classify(triage(likely("client-admin.ovpn", "ovpn-config", "high", []string{"filename", "extension"}, []string{"remote-access", "vpn", "client-auth"}, []string{"client-auth-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(possible("authorized_keys", "authorized-keys", "medium", []string{"filename"}, []string{"remote-access", "ssh", "context"}, []string{"ssh-support-review"}), seedTriageWeakReview), seedClassWeakReview, "medium", false),
+			noise("readme.txt", "readme-noise", "low", []string{"noise"}, []string{"noise-review"}),
+		}, renderVariant),
+		newSpec("windows-credential-stores", []string{
+			"Users/Alice/AppData/Roaming/Microsoft/Credentials",
+			"Users/Alice/AppData/Local/Microsoft/Vault/4BF4C442",
+			"Users/Alice/AppData/Roaming/Microsoft/Protect/S-1-5-21-111-222-333-1001",
+			"Archive/ProfileCopies/Bob/AppData/Local/Microsoft/Vault/7AC4A290",
+			"Backups/UserMigrations/Charlie/AppData/Roaming/Microsoft/Credentials",
+			"Backups/UserMigrations/Charlie/AppData/Roaming/Microsoft/Protect/S-1-5-21-444-555-666-1003",
+		}, []templateVariant{
+			classify(triage(likely("A1B2C3D4", "win-credstore-marker", "high", []string{"filename", "path"}, []string{"windows", "dpapi", "credentials"}, []string{"windows-credential-store-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("Policy.vpol", "win-credstore-marker", "high", []string{"filename", "path"}, []string{"windows", "dpapi", "vault"}, []string{"windows-credential-store-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("Preferred", "win-credstore-marker", "high", []string{"filename", "path"}, []string{"windows", "dpapi", "protect"}, []string{"windows-credential-store-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			noise("readme.txt", "readme-noise", "low", []string{"noise"}, []string{"noise-review"}),
+		}, renderVariant),
+		newSpec("windows-credential-correlation", []string{
+			"Users/David/AppData/Roaming/Microsoft/Credentials",
+			"Users/David/AppData/Roaming/Microsoft/Protect/S-1-5-21-777-888-999-1004",
+			"Users/David/AppData/Local/Microsoft/Vault/9F00AB12",
+		}, []templateVariant{
+			classify(triage(likely("C0FFEEC0", "win-credstore-marker", "high", []string{"filename", "path", "correlation"}, []string{"windows", "dpapi", "credentials"}, []string{"windows-credential-store-review"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
+			classify(triage(likely("masterkey", "win-credstore-marker", "high", []string{"filename", "path"}, []string{"windows", "dpapi", "protect"}, []string{"windows-credential-store-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("Policy.vpol", "win-credstore-marker", "high", []string{"filename", "path"}, []string{"windows", "dpapi", "vault"}, []string{"windows-credential-store-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			noise("notes.txt", "notes-benign", "low", []string{"noise"}, []string{"noise-review"}),
+		}, renderVariant),
+		newSpec("browser-credential-stores", []string{
+			"Users/Alice/AppData/Roaming/Mozilla/Firefox/Profiles/abcd.default-release",
+			"Users/Bob/AppData/Local/Google/Chrome/User Data/Default",
+			"Archive/ProfileCopies/Charlie/AppData/Local/Microsoft/Edge/User Data/Profile 1",
+			"Archive/ProfileCopies/Charlie/AppData/Roaming/Mozilla/Firefox/Profiles/efgh.default-release",
+		}, []templateVariant{
+			classify(triage(likely("logins.json", "browser-login-json", "medium", []string{"filename", "path"}, []string{"browser", "firefox", "credentials"}, []string{"browser-credential-store-review"}), seedTriageWeakReview), seedClassWeakReview, "medium", false),
+			classify(triage(likely("key4.db", "browser-key-store", "medium", []string{"filename", "path"}, []string{"browser", "firefox", "credentials"}, []string{"browser-credential-store-review"}), seedTriageWeakReview), seedClassWeakReview, "medium", false),
+			classify(triage(likely("Login Data", "browser-login-db", "medium", []string{"filename", "path"}, []string{"browser", "chromium", "credentials"}, []string{"browser-credential-store-review"}), seedTriageWeakReview), seedClassWeakReview, "medium", false),
+			classify(triage(likely("Cookies", "browser-cookie-db", "low", []string{"filename", "path"}, []string{"browser", "chromium", "sessions"}, []string{"browser-credential-store-review"}), seedTriageWeakReview), seedClassWeakReview, "medium", false),
+			noise("Login Data.txt", "notes-benign", "low", []string{"noise"}, []string{"noise-review"}),
+			noise("logins.json.bak", "notes-benign", "low", []string{"noise"}, []string{"noise-review"}),
+		}, renderVariant),
+		newSpec("browser-credential-correlation", []string{
+			"Users/David/AppData/Roaming/Mozilla/Firefox/Profiles/ijkl.default-release",
+			"Users/David/AppData/Local/Google/Chrome/User Data/Default",
+		}, []templateVariant{
+			classify(triage(likely("logins.json", "browser-login-json", "medium", []string{"filename", "path", "correlation"}, []string{"browser", "firefox", "credentials"}, []string{"browser-credential-store-review"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
+			classify(triage(likely("key4.db", "browser-key-store", "medium", []string{"filename", "path"}, []string{"browser", "firefox", "credentials"}, []string{"browser-credential-store-review"}), seedTriageWeakReview), seedClassWeakReview, "medium", false),
+			classify(triage(likely("Login Data", "browser-login-db", "medium", []string{"filename", "path", "correlation"}, []string{"browser", "chromium", "credentials"}, []string{"browser-credential-store-review"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
+			classify(triage(likely("Cookies", "browser-cookie-db", "low", []string{"filename", "path"}, []string{"browser", "chromium", "sessions"}, []string{"browser-credential-store-review"}), seedTriageWeakReview), seedClassWeakReview, "medium", false),
+		}, renderVariant),
 		newSpec("keepass", []string{
 			"Users/Alice/Desktop", "Users/Bob/Documents", "Users/Charlie/Downloads", "IT/Admin",
 		}, []templateVariant{
@@ -83,6 +148,20 @@ func defaultTemplates() []templateSpec {
 		newSpec("database", []string{
 			"SQL", "SQL/Backups", "Web/Configs", "Deploy", "IT/Scripts", "Archive/Legacy/App1/Config", "Backups/Daily",
 		}, dbTemplateVariants(), renderVariant),
+		newSpec("sqlite-databases", []string{
+			"Apps/FinancePortal", "Apps/LegacyService", "Users/Alice/AppData/Local", "Temp/Cache",
+		}, []templateVariant{
+			archiveInnerPath(classify(triage(likely("customers-prod.sqlite", "sqlite-credential-db", "high", []string{"content", "validated"}, []string{"database", "sqlite", "credentials"}, []string{"sqlite-inspection"}), seedTriageActionable), seedClassActionable, "high", false), "::users.password"),
+			archiveInnerPath(classify(triage(likely("session-store.db", "sqlite-token-db", "high", []string{"content", "validated"}, []string{"database", "sqlite", "credentials"}, []string{"sqlite-inspection"}), seedTriageActionable), seedClassActionable, "high", false), "::sessions.token"),
+			classify(triage(noise("telemetry-cache.db", "sqlite-benign-db", "low", []string{"database", "sqlite", "noise"}, []string{"sqlite-inspection"}), seedTriageConfigOnly), seedClassConfigOnly, "low", false),
+		}, renderVariant),
+		newSpec("sqlite-correlation", []string{
+			"Apps/PayrollPortal",
+		}, []templateVariant{
+			archiveInnerPath(classify(triage(likely("payroll-cache.sqlite3", "sqlite-correlation-db", "high", []string{"content", "validated", "correlation"}, []string{"database", "sqlite", "credentials"}, []string{"sqlite-inspection"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true), "::accounts.password"),
+			classify(triage(likely(".env", "db-env", "high", []string{"content", "filename", "extension"}, []string{"configuration", "database", "credentials"}, []string{"database-connection-strings", "hardcoded-secret-indicators"}), seedTriageActionable), seedClassActionable, "high", false),
+			noise("readme.txt", "readme-noise", "low", []string{"noise"}, []string{"noise-review"}),
+		}, renderVariant),
 		newSpec("zip-archives", []string{
 			"Deploy", "Archive/Legacy/App1/Config", "Backups/Monthly", "IT/Admin", "Finance/Exports", "Old",
 		}, archiveTemplateVariants(), renderArchiveVariant),
@@ -106,6 +185,25 @@ func defaultTemplates() []templateSpec {
 			classify(triage(likely("NTDS.DIT", "secret-store-marker", "high", []string{"filename", "correlation", "path"}, []string{"credentials", "secret-store", "active-directory"}, []string{"secret-store-artifact-review"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
 			classify(triage(likely("SYSTEM", "secret-store-marker", "high", []string{"filename"}, []string{"credentials", "secret-store", "windows"}, []string{"secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
 			noise("readme.txt", "readme-noise", "low", []string{"noise"}, []string{"noise-review"}),
+		}, renderVariant),
+		newSpec("backup-exposure", []string{
+			"Backups/SystemState/WindowsImageBackup/DC01/Backup 2025-01-01/C/Windows/System32/config",
+			"Recovery/System Volume Information/restore-point-17/Windows/System32/config",
+			"Archive/SystemCopies/Windows/System32/config/RegBack",
+			"Archive/WindowsImageBackup-Notes",
+		}, []templateVariant{
+			classify(triage(likely("SAM", "secret-store-marker", "high", []string{"filename", "path"}, []string{"backup", "windows", "secret-store"}, []string{"backup-exposure-review", "secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("SYSTEM", "secret-store-marker", "high", []string{"filename", "path"}, []string{"backup", "windows", "secret-store"}, []string{"backup-exposure-review", "secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("SECURITY.old", "secret-store-marker", "high", []string{"filename", "path"}, []string{"backup", "windows", "secret-store"}, []string{"backup-exposure-review", "secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			noise("readme.txt", "readme-noise", "low", []string{"noise"}, []string{"noise-review"}),
+		}, renderVariant),
+		newSpec("backup-exposure-correlation", []string{
+			"Backups/SystemState/WindowsImageBackup/DC02/Backup 2025-02-14/C/Windows/System32/config",
+		}, []templateVariant{
+			classify(triage(likely("NTDS.DIT.bak", "secret-store-marker", "high", []string{"filename", "path", "correlation"}, []string{"backup", "windows", "secret-store", "active-directory"}, []string{"backup-exposure-review", "secret-store-artifact-review"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
+			classify(triage(likely("SYSTEM.bak", "secret-store-marker", "high", []string{"filename", "path"}, []string{"backup", "windows", "secret-store"}, []string{"backup-exposure-review", "secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("SECURITY.bak", "secret-store-marker", "high", []string{"filename", "path"}, []string{"backup", "windows", "secret-store"}, []string{"backup-exposure-review", "secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			noise("notes.txt", "notes-benign", "low", []string{"noise"}, []string{"noise-review"}),
 		}, renderVariant),
 		newSpec("cloud", []string{
 			"IT/Admin", "Deploy", "Web/Configs", "Archive",
@@ -203,7 +301,7 @@ func dbTemplateVariants() []templateVariant {
 		classify(triage(likely("db-prod.backup.bak", "db-backup-marker", "high", []string{"filename", "extension"}, []string{"backups", "database"}, []string{"backup-export-naming"}), seedTriageActionable), seedClassActionable, "high", false),
 		classify(triage(likely("billing-archive.dump", "db-backup-marker", "high", []string{"filename", "extension"}, []string{"backups", "database"}, []string{"backup-export-naming"}), seedTriageActionable), seedClassActionable, "high", false),
 		classify(triage(likely("oracle-finance-export.dmp", "db-backup-marker", "high", []string{"filename", "extension"}, []string{"backups", "database"}, []string{"backup-export-naming"}), seedTriageActionable), seedClassActionable, "high", false),
-		classify(triage(likely("customers-prod.sqlite", "db-local-artifact", "medium", []string{"filename", "extension"}, []string{"database", "artifacts"}, []string{"database-artifact-review"}), seedTriageActionable), seedClassActionable, "medium", false),
+		classify(triage(likely("customers-prod.sqlite", "sqlite-credential-db", "high", []string{"content", "validated"}, []string{"database", "sqlite", "credentials"}, []string{"sqlite-inspection"}), seedTriageActionable), seedClassActionable, "high", false),
 		classify(triage(likely("finance-legacy.mdb", "db-local-artifact", "medium", []string{"filename", "extension"}, []string{"database", "artifacts"}, []string{"database-artifact-review"}), seedTriageActionable), seedClassActionable, "medium", false),
 		classify(triage(likely("schema-export.sql", "db-sql-dump", "high", []string{"content", "filename", "extension"}, []string{"database", "credentials"}, []string{"database-connection-strings"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
 		classify(triage(likely("database.yml", "db-yaml-config-only", "medium", []string{"filename", "extension"}, []string{"configuration", "database"}, []string{"config-file-review"}), seedTriageConfigOnly), seedClassConfigOnly, "low", false),
@@ -222,6 +320,8 @@ func archiveTemplateVariants() []templateVariant {
 		archiveInnerPath(classify(triage(likely("legacy-configs.zip", "zip-web-config", "high", []string{"content", "filename", "extension"}, []string{"archives", "configuration", "credentials"}, []string{"archive-review", "hardcoded-secret-indicators"}), seedTriageActionable), seedClassActionable, "high", false), "configs/web.config"),
 		archiveInnerPath(classify(triage(possible("deployment-recovery.zip", "zip-unattended", "high", []string{"content", "filename", "extension"}, []string{"archives", "deployment", "credentials"}, []string{"archive-review", "unattended-install"}), seedTriageActionable), seedClassActionable, "high", false), "answers/unattended.xml"),
 		archiveInnerPath(classify(triage(possible("old-config-bundle.zip", "zip-config-only", "medium", []string{"filename", "extension"}, []string{"archives", "configuration"}, []string{"archive-review", "config-file-review"}), seedTriageConfigOnly), seedClassConfigOnly, "low", false), "configs/database.yml"),
+		archiveInnerPath(classify(triage(likely("ssh-recovery.zip", "zip-private-key-bundle", "high", []string{"content", "filename", "extension", "correlation"}, []string{"archives", "crypto", "keys", "remote-access"}, []string{"archive-review", "private-key-artifact-review", "private-key-header-validation"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true), "keys/id_rsa"),
+		archiveInnerPath(classify(triage(likely("profile-backup.zip", "zip-wincred-profile", "high", []string{"filename", "path", "correlation"}, []string{"archives", "windows", "dpapi", "credentials"}, []string{"archive-review", "windows-credential-store-review"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true), "Users/Alice/AppData/Roaming/Microsoft/Credentials/ABCD1234"),
 		noise("binary-media-bundle.zip", "zip-binary-only", "low", []string{"archives", "noise"}, []string{"archive-review"}),
 		noise("nested-export-bundle.zip", "zip-nested-archive", "low", []string{"archives", "noise"}, []string{"archive-review"}),
 		noise("oversized-config-export.zip", "zip-oversized", "low", []string{"archives", "noise"}, []string{"archive-review"}),
@@ -630,6 +730,8 @@ func renderVariant(ctx renderContext, variant templateVariant) []byte {
 			"backup_label="+backupFilenameValue(ctx),
 			"encryption_password_ref="+backupPasswordValue(ctx),
 		)
+	case "sqlite-credential-db", "sqlite-token-db", "sqlite-benign-db", "sqlite-correlation-db":
+		return renderSQLiteSeed(variant.ContentStyle, ctx)
 	case "db-local-artifact":
 		return text(
 			"SYNTHETIC LOCAL DATABASE FILE",
@@ -642,6 +744,88 @@ func renderVariant(ctx renderContext, variant templateVariant) []byte {
 			"Synthetic database migration checklist.",
 			"Contains placeholders and operational notes only.",
 			"No real credentials or infrastructure details are present.",
+		)
+	case "openssh-private-key":
+		return text(
+			"-----BEGIN OPENSSH PRIVATE KEY-----",
+			"b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAlwAAAAdzc2gtcnNhAAAAAwEAAQAAAIEA",
+			"LAB_ONLY_SYNTHETIC_PRIVATE_KEY_"+strings.ReplaceAll(ctx.Token, "_", ""),
+			"-----END OPENSSH PRIVATE KEY-----",
+		)
+	case "rsa-private-key":
+		return text(
+			"-----BEGIN RSA PRIVATE KEY-----",
+			"MIIEpAIBAAKCAQEA"+strings.ReplaceAll(ctx.Token, "_", ""),
+			"LAB_ONLY_SYNTHETIC_RSA_PRIVATE_KEY",
+			"-----END RSA PRIVATE KEY-----",
+		)
+	case "ppk-artifact":
+		return text(
+			"PuTTY-User-Key-File-3: ssh-ed25519",
+			"Encryption: none",
+			"Comment: synthetic-"+ctx.Label+"-"+ctx.Persona,
+			"Public-Lines: 2",
+			"AAAAC3NzaC1lZDI1NTE5AAAAI"+strings.ReplaceAll(ctx.Token, "_", ""),
+			"Private-Lines: 2",
+			"AAAAIHN5bnRoZXRpY19wcmtleV9vbmx5X2RvX25vdF91c2U=",
+		)
+	case "ovpn-config":
+		return text(
+			"client",
+			"dev tun",
+			"proto udp",
+			"remote vpn-"+ctx.Label+".example.invalid 1194",
+			"auth-user-pass creds.txt",
+			"key client.key",
+			"cert client.crt",
+			"remote-cert-tls server",
+			"setenv SAFE_NOTE SYNTHETIC_ONLY_DO_NOT_USE",
+		)
+	case "authorized-keys":
+		return text(
+			"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI"+strings.ReplaceAll(ctx.Token, "_", "")+" synthetic-"+ctx.Persona,
+			"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ"+strings.ReplaceAll(ctx.Token, "_", "")+" synthetic-backup",
+		)
+	case "known-hosts":
+		return text(
+			"vpn-"+ctx.Label+".example.invalid ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI"+strings.ReplaceAll(ctx.Token, "_", ""),
+			"jump-"+ctx.Label+".example.invalid ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ"+strings.ReplaceAll(ctx.Token, "_", ""),
+		)
+	case "win-credstore-marker":
+		return text(
+			"SYNTHETIC WINDOWS CREDENTIAL STORE MARKER",
+			"Purpose: validate exact Windows credential-store path coverage only.",
+			"Contains no usable secrets or decryptable material.",
+		)
+	case "browser-login-json":
+		return mustJSON(map[string]any{
+			"logins": []map[string]any{
+				{
+					"hostname":          "https://portal.example.invalid",
+					"encryptedUsername": "LAB_ONLY_SYNTHETIC_BROWSER_BLOB",
+					"encryptedPassword": "LAB_ONLY_SYNTHETIC_BROWSER_BLOB",
+					"timeCreated":       "1700000000000",
+				},
+			},
+			"nextId": 2,
+		})
+	case "browser-key-store":
+		return text(
+			"SYNTHETIC FIREFOX KEY STORE MARKER",
+			"Purpose: validate exact Firefox profile artifact detection only.",
+			"Contains no usable browser secrets.",
+		)
+	case "browser-login-db":
+		return text(
+			"SYNTHETIC CHROMIUM LOGIN DATA MARKER",
+			"Purpose: validate exact Chromium-family profile artifact detection only.",
+			"Contains no usable browser credentials.",
+		)
+	case "browser-cookie-db":
+		return text(
+			"SYNTHETIC CHROMIUM COOKIES MARKER",
+			"Purpose: validate exact Chromium-family session-store artifact detection only.",
+			"Contains no usable browser cookies.",
 		)
 	case "secret-store-marker":
 		return text(
@@ -720,6 +904,18 @@ func archiveMembersForVariant(ctx renderContext, variant templateVariant) []arch
 		return []archiveMemberTemplate{
 			{Path: "configs/database.yml", ContentStyle: "db-yaml-config-only"},
 			{Path: "docs/notes.txt", ContentStyle: "notes-benign"},
+		}
+	case "zip-private-key-bundle":
+		return []archiveMemberTemplate{
+			{Path: "keys/id_rsa", ContentStyle: "openssh-private-key"},
+			{Path: "vpn/client-admin.ovpn", ContentStyle: "ovpn-config"},
+			{Path: "ssh/known_hosts", ContentStyle: "known-hosts"},
+		}
+	case "zip-wincred-profile":
+		return []archiveMemberTemplate{
+			{Path: "Users/Alice/AppData/Roaming/Microsoft/Credentials/ABCD1234", ContentStyle: "win-credstore-marker"},
+			{Path: "Users/Alice/AppData/Roaming/Microsoft/Protect/S-1-5-21-111-222-333-1001/masterkey", ContentStyle: "win-credstore-marker"},
+			{Path: "Users/Alice/AppData/Local/Microsoft/Vault/4BF4C442/Policy.vpol", ContentStyle: "win-credstore-marker"},
 		}
 	case "zip-binary-only":
 		return []archiveMemberTemplate{

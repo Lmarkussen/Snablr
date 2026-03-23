@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"snablr/internal/config"
 	"snablr/internal/diff"
 	"snablr/internal/scanner"
 	"snablr/internal/seed"
@@ -185,6 +186,255 @@ func sampleSystemHiveFinding() scanner.Finding {
 	}
 }
 
+func samplePrivateKeyFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:             "keyinspect.content.private_key_header",
+		RuleName:           "Validated Private Key Header",
+		Severity:           "critical",
+		Confidence:         "high",
+		RuleConfidence:     "high",
+		ConfidenceScore:    78,
+		Category:           "crypto",
+		TriageClass:        "actionable",
+		Actionable:         true,
+		FilePath:           "Users/Alice/.ssh/id_rsa",
+		Share:              "Users",
+		Host:               "fs01",
+		SignalType:         "validated",
+		Match:              "-----BEGIN OPENSSH PRIVATE KEY-----",
+		MatchedText:        "-----BEGIN OPENSSH PRIVATE KEY-----",
+		MatchReason:        "file contents contained text that matches the rule.",
+		MatchedRuleIDs:     []string{"filename.private_key_artifacts", "keyinspect.content.private_key_header"},
+		MatchedSignalTypes: []string{"filename", "validated"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "filename", RuleID: "filename.private_key_artifacts", RuleName: "Private Key Artifacts", Match: "id_rsa", Confidence: "high", Weight: 18, Reason: "exact private key artifact was identified"},
+			{SignalType: "validated", RuleID: "keyinspect.content.private_key_header", RuleName: "Validated Private Key Header", Match: "-----BEGIN OPENSSH PRIVATE KEY-----", Confidence: "high", Weight: 28, Reason: "validated private key header was identified"},
+		},
+		Tags: []string{"crypto", "keys", "remote-access", "artifact:private-key", "validated:private-key-header"},
+	}
+}
+
+func sampleClientAuthFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:             "extension.client_auth_artifacts",
+		RuleName:           "Client Auth Artifact Extensions",
+		Severity:           "high",
+		Confidence:         "high",
+		RuleConfidence:     "high",
+		ConfidenceScore:    52,
+		Category:           "remote-access",
+		TriageClass:        "actionable",
+		Actionable:         true,
+		FilePath:           "Users/Alice/.ssh/client-admin.ovpn",
+		Share:              "Users",
+		Host:               "fs01",
+		SignalType:         "extension",
+		Match:              ".ovpn",
+		MatchedText:        ".ovpn",
+		MatchReason:        "file extension matched an extension-based heuristic covered by the rule.",
+		MatchedRuleIDs:     []string{"extension.client_auth_artifacts"},
+		MatchedSignalTypes: []string{"extension"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "extension", RuleID: "extension.client_auth_artifacts", RuleName: "Client Auth Artifact Extensions", Match: ".ovpn", Confidence: "high", Weight: 18, Reason: "client-auth artifact extension was identified"},
+		},
+		Tags: []string{"remote-access", "vpn", "client-auth"},
+	}
+}
+
+func sampleWindowsCredentialsFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:             "wincredinspect.path.credentials",
+		RuleName:           "Windows Credentials Store Path",
+		Severity:           "high",
+		Confidence:         "high",
+		RuleConfidence:     "high",
+		ConfidenceScore:    70,
+		Category:           "windows-credentials",
+		TriageClass:        "actionable",
+		Actionable:         true,
+		FilePath:           "Users/Alice/AppData/Roaming/Microsoft/Credentials/A1B2C3D4",
+		Share:              "Profiles",
+		Host:               "fs01",
+		SignalType:         "validated",
+		Match:              "/microsoft/credentials/",
+		MatchedText:        "Users/Alice/AppData/Roaming/Microsoft/Credentials/A1B2C3D4",
+		MatchReason:        "path matched an exact Windows credential-store location covered by the built-in artifact inspector.",
+		MatchedRuleIDs:     []string{"wincredinspect.path.credentials"},
+		MatchedSignalTypes: []string{"validated", "path"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "validated", RuleID: "wincredinspect.path.credentials", RuleName: "Windows Credentials Store Path", Match: "/microsoft/credentials/", Confidence: "high", Weight: 40, Reason: "exact Windows Credentials store path was identified"},
+			{SignalType: "path", Weight: 12, Reason: "path matched an exact Windows credential-store family under AppData/Microsoft"},
+		},
+		Tags: []string{"windows", "dpapi", "artifact:windows-credstore", "credstore:path-exact", "credstore:type:credentials"},
+	}
+}
+
+func sampleWindowsProtectFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:             "wincredinspect.path.protect",
+		RuleName:           "Windows DPAPI Protect Path",
+		Severity:           "medium",
+		Confidence:         "high",
+		RuleConfidence:     "high",
+		ConfidenceScore:    70,
+		Category:           "windows-credentials",
+		TriageClass:        "actionable",
+		Actionable:         true,
+		FilePath:           "Users/Alice/AppData/Roaming/Microsoft/Protect/S-1-5-21/masterkey",
+		Share:              "Profiles",
+		Host:               "fs01",
+		SignalType:         "validated",
+		Match:              "/microsoft/protect/",
+		MatchedText:        "Users/Alice/AppData/Roaming/Microsoft/Protect/S-1-5-21/masterkey",
+		MatchReason:        "path matched an exact Windows credential-store location covered by the built-in artifact inspector.",
+		MatchedRuleIDs:     []string{"wincredinspect.path.protect"},
+		MatchedSignalTypes: []string{"validated", "path"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "validated", RuleID: "wincredinspect.path.protect", RuleName: "Windows DPAPI Protect Path", Match: "/microsoft/protect/", Confidence: "high", Weight: 40, Reason: "exact Windows DPAPI Protect path was identified"},
+			{SignalType: "path", Weight: 12, Reason: "path matched an exact Windows credential-store family under AppData/Microsoft"},
+		},
+		Tags: []string{"windows", "dpapi", "artifact:windows-credstore", "credstore:path-exact", "credstore:type:protect", "credstore:type:dpapi-protect"},
+	}
+}
+
+func sampleFirefoxLoginsFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:             "browsercredinspect.firefox.logins",
+		RuleName:           "Firefox Saved Logins Artifact",
+		Severity:           "medium",
+		Confidence:         "medium",
+		RuleConfidence:     "high",
+		ConfidenceScore:    34,
+		Category:           "browser-credentials",
+		TriageClass:        "weak-review",
+		Actionable:         false,
+		FilePath:           "Users/Alice/AppData/Roaming/Mozilla/Firefox/Profiles/abcd.default-release/logins.json",
+		Share:              "Profiles",
+		Host:               "fs01",
+		SignalType:         "validated",
+		Match:              "logins.json",
+		MatchedText:        "users/alice/appdata/roaming/mozilla/firefox/profiles/abcd.default-release/logins.json",
+		MatchReason:        "path matched an exact browser credential-store artifact covered by the built-in artifact inspector.",
+		MatchedRuleIDs:     []string{"browsercredinspect.firefox.logins"},
+		MatchedSignalTypes: []string{"validated", "path"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "validated", RuleID: "browsercredinspect.firefox.logins", RuleName: "Firefox Saved Logins Artifact", Match: "logins.json", Confidence: "high", Weight: 40, Reason: "exact browser credential-store artifact was identified"},
+			{SignalType: "path", Weight: 12, Reason: "path matched an exact browser profile credential-store family such as Firefox Profiles or Chromium User Data"},
+		},
+		Tags: []string{"browser", "firefox", "artifact:browser-credstore", "browsercred:type:firefox-logins"},
+	}
+}
+
+func sampleFirefoxKey4Finding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:             "browsercredinspect.firefox.key4",
+		RuleName:           "Firefox Key Store Artifact",
+		Severity:           "medium",
+		Confidence:         "medium",
+		RuleConfidence:     "high",
+		ConfidenceScore:    34,
+		Category:           "browser-credentials",
+		TriageClass:        "weak-review",
+		Actionable:         false,
+		FilePath:           "Users/Alice/AppData/Roaming/Mozilla/Firefox/Profiles/abcd.default-release/key4.db",
+		Share:              "Profiles",
+		Host:               "fs01",
+		SignalType:         "validated",
+		Match:              "key4.db",
+		MatchedText:        "users/alice/appdata/roaming/mozilla/firefox/profiles/abcd.default-release/key4.db",
+		MatchReason:        "path matched an exact browser credential-store artifact covered by the built-in artifact inspector.",
+		MatchedRuleIDs:     []string{"browsercredinspect.firefox.key4"},
+		MatchedSignalTypes: []string{"validated", "path"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "validated", RuleID: "browsercredinspect.firefox.key4", RuleName: "Firefox Key Store Artifact", Match: "key4.db", Confidence: "high", Weight: 40, Reason: "exact browser credential-store artifact was identified"},
+			{SignalType: "path", Weight: 12, Reason: "path matched an exact browser profile credential-store family such as Firefox Profiles or Chromium User Data"},
+		},
+		Tags: []string{"browser", "firefox", "artifact:browser-credstore", "browsercred:type:firefox-key4"},
+	}
+}
+
+func sampleBackupPathFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:             "backupinspect.path.windowsimagebackup",
+		RuleName:           "WindowsImageBackup Exposure Path",
+		Severity:           "high",
+		Confidence:         "high",
+		RuleConfidence:     "high",
+		ConfidenceScore:    62,
+		Category:           "backup-exposure",
+		TriageClass:        "actionable",
+		Actionable:         true,
+		FilePath:           "Backups/SystemState/WindowsImageBackup/DC01/Backup 2025-01-01/C/Windows/System32/config/SAM",
+		Share:              "Backups",
+		Host:               "fs01",
+		SignalType:         "validated",
+		Match:              "/windowsimagebackup/",
+		MatchedText:        "Backups/SystemState/WindowsImageBackup/DC01/Backup 2025-01-01/C/Windows/System32/config/SAM",
+		MatchReason:        "path matched an exact backup or system-state storage family covered by the built-in artifact inspector.",
+		MatchedRuleIDs:     []string{"backupinspect.path.windowsimagebackup"},
+		MatchedSignalTypes: []string{"validated", "path"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "validated", RuleID: "backupinspect.path.windowsimagebackup", RuleName: "WindowsImageBackup Exposure Path", Match: "/windowsimagebackup/", Confidence: "high", Weight: 40, Reason: "exact WindowsImageBackup family was identified"},
+			{SignalType: "path", Weight: 12, Reason: "path matched an exact backup or copied system-state family"},
+		},
+		Tags: []string{"backup", "windows", "artifact:backup-family", "backup-family:windowsimagebackup"},
+	}
+}
+
+func sampleBackupNTDSFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:             "filename.ad_database_backup_artifacts",
+		RuleName:           "AD Database Backup Artifacts",
+		Severity:           "critical",
+		Confidence:         "low",
+		RuleConfidence:     "high",
+		ConfidenceScore:    18,
+		Category:           "credentials",
+		TriageClass:        "actionable",
+		Actionable:         true,
+		FilePath:           "Backups/SystemState/WindowsImageBackup/DC01/Backup 2025-01-01/C/Windows/System32/config/NTDS.DIT.bak",
+		Share:              "Backups",
+		Host:               "fs01",
+		SignalType:         "filename",
+		Match:              "NTDS.DIT.bak",
+		MatchedText:        "NTDS.DIT.bak",
+		MatchReason:        "filename matched a heuristic naming pattern covered by the rule.",
+		MatchedRuleIDs:     []string{"filename.ad_database_backup_artifacts"},
+		MatchedSignalTypes: []string{"filename"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "filename", RuleID: "filename.ad_database_backup_artifacts", RuleName: "AD Database Backup Artifacts", Match: "NTDS.DIT.bak", Confidence: "high", Weight: 18, Reason: "exact AD database backup artifact was identified"},
+		},
+		Tags: []string{"credentials", "secret-store", "active-directory"},
+	}
+}
+
+func sampleBackupSystemFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:             "filename.windows_hive_backup_artifacts",
+		RuleName:           "Windows Hive Backup Artifacts",
+		Severity:           "critical",
+		Confidence:         "low",
+		RuleConfidence:     "high",
+		ConfidenceScore:    18,
+		Category:           "credentials",
+		TriageClass:        "actionable",
+		Actionable:         true,
+		FilePath:           "Backups/SystemState/WindowsImageBackup/DC01/Backup 2025-01-01/C/Windows/System32/config/SYSTEM.bak",
+		Share:              "Backups",
+		Host:               "fs01",
+		SignalType:         "filename",
+		Match:              "SYSTEM.bak",
+		MatchedText:        "SYSTEM.bak",
+		MatchReason:        "filename matched a heuristic naming pattern covered by the rule.",
+		MatchedRuleIDs:     []string{"filename.windows_hive_backup_artifacts"},
+		MatchedSignalTypes: []string{"filename"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "filename", RuleID: "filename.windows_hive_backup_artifacts", RuleName: "Windows Hive Backup Artifacts", Match: "SYSTEM.bak", Confidence: "high", Weight: 18, Reason: "exact SYSTEM hive backup artifact was identified"},
+		},
+		Tags: []string{"credentials", "secret-store", "windows"},
+	}
+}
+
 func sampleConfigOnlyFinding() scanner.Finding {
 	return scanner.Finding{
 		RuleID:            "filename.sensitive_config_names",
@@ -343,6 +593,79 @@ func TestJSONWriterGeneratesStructuredReport(t *testing.T) {
 	}
 }
 
+func sampleSQLiteFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:            "sqliteinspect.credentials.sensitive_value",
+		RuleName:          "SQLite-Stored Sensitive Value",
+		Severity:          "high",
+		Confidence:        "high",
+		RuleConfidence:    "high",
+		ConfidenceScore:   74,
+		ConfidenceReasons: []string{"bounded SQLite inspection sampled an interesting table and column", "value quality checks indicate the value looks usable rather than placeholder data"},
+		Category:          "credentials",
+		TriageClass:       "actionable",
+		Actionable:        true,
+		Correlated:        false,
+		ConfidenceBreakdown: scanner.ConfidenceBreakdown{
+			BaseScore:                   74,
+			FinalScore:                  74,
+			ContentSignalStrength:       18,
+			HeuristicSignalContribution: 10,
+			ValueQualityScore:           18,
+			ValueQualityLabel:           "high",
+			ValueQualityReason:          "bounded SQLite inspection found a plausible non-placeholder secret",
+			PathContextContribution:     8,
+		},
+		FilePath:           "Apps/payroll-cache.sqlite3::accounts.password",
+		DatabaseFilePath:   "Apps/payroll-cache.sqlite3",
+		DatabaseTable:      "accounts",
+		DatabaseColumn:     "password",
+		DatabaseRowContext: "username=svc_payroll",
+		Share:              "Apps",
+		ShareType:          "disk",
+		Host:               "fs01",
+		Source:             "smb",
+		SignalType:         "validated",
+		Match:              "Apps/payroll-cache.sqlite3::accounts.password",
+		MatchedText:        "Synthet!cPass2025",
+		Snippet:            "Apps/payroll-cache.sqlite3::accounts.password -> Synthet!cPass2025",
+		Context:            "SQLite table: accounts\nColumn: password\nRow context: username=svc_payroll",
+		MatchReason:        "bounded SQLite inspection found a strong secret-like value in an interesting table/column pair.",
+		RuleExplanation:    "SQLite findings are promoted only for bounded samples from interesting tables and columns.",
+		MatchedRuleIDs:     []string{"sqliteinspect.credentials.sensitive_value"},
+		MatchedSignalTypes: []string{"validated"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "validated", RuleID: "sqliteinspect.credentials.sensitive_value", RuleName: "SQLite-Stored Sensitive Value", Match: "accounts.password", Confidence: "high", Weight: 24, Reason: "bounded SQLite inspection found a strong secret-like value"},
+		},
+		Tags: []string{"database", "sqlite", "db:type:sqlite-row"},
+	}
+}
+
+func sampleSQLiteSupportFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:             "dbinspect.access.dsn",
+		RuleName:           "Validated Database DSN Credentials",
+		Severity:           "high",
+		Confidence:         "high",
+		RuleConfidence:     "high",
+		ConfidenceScore:    70,
+		Category:           "database-access",
+		TriageClass:        "actionable",
+		Actionable:         true,
+		FilePath:           "Apps/.env",
+		Share:              "Apps",
+		ShareType:          "disk",
+		Host:               "fs01",
+		Source:             "smb",
+		SignalType:         "validated",
+		Match:              "DB_CONNECTION",
+		MatchedText:        "postgresql://svc_payroll:Synthet!cPass2025@sql01.lab.invalid/payroll",
+		MatchedRuleIDs:     []string{"dbinspect.access.dsn"},
+		MatchedSignalTypes: []string{"validated"},
+		Tags:               []string{"database", "db:source:config"},
+	}
+}
+
 func TestAugmentFindingsForReportingAddsADCorrelation(t *testing.T) {
 	t.Parallel()
 
@@ -409,6 +732,370 @@ func TestJSONWriterIncludesADCorrelationFinding(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected correlated AD finding in JSON report, got %#v", report.Findings)
+	}
+}
+
+func TestAugmentFindingsForReportingBuildsPrivateKeyCorrelation(t *testing.T) {
+	t.Parallel()
+
+	augmented := augmentFindingsForReporting([]scanner.Finding{
+		samplePrivateKeyFinding(),
+		sampleClientAuthFinding(),
+	})
+
+	found := false
+	for _, finding := range augmented {
+		if finding.RuleID != privateKeyCorrelationRuleID {
+			continue
+		}
+		found = true
+		if finding.Category != "remote-access" || !finding.Correlated || !finding.Actionable {
+			t.Fatalf("unexpected correlated private key finding: %#v", finding)
+		}
+		if finding.FilePath != samplePrivateKeyFinding().FilePath || finding.Confidence != "high" {
+			t.Fatalf("expected private key anchor and high confidence, got %#v", finding)
+		}
+	}
+	if !found {
+		t.Fatalf("expected correlated private key finding in augmented results, got %#v", augmented)
+	}
+}
+
+func TestJSONWriterIncludesPrivateKeyCorrelationFinding(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer := NewJSONWriter(&buf, nil, true)
+	if err := writer.WriteFinding(samplePrivateKeyFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.WriteFinding(sampleClientAuthFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	var report jsonReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+
+	found := false
+	for _, finding := range report.Findings {
+		if finding.RuleID != privateKeyCorrelationRuleID {
+			continue
+		}
+		found = true
+		if finding.Category != "remote-access" || !finding.Correlated || finding.SignalType != "correlation" {
+			t.Fatalf("unexpected correlated JSON finding: %#v", finding)
+		}
+	}
+	if !found {
+		t.Fatalf("expected correlated private key finding in JSON report, got %#v", report.Findings)
+	}
+}
+
+func TestAugmentFindingsForReportingBuildsWindowsCredentialStoreCorrelation(t *testing.T) {
+	t.Parallel()
+
+	augmented := augmentFindingsForReporting([]scanner.Finding{
+		sampleWindowsCredentialsFinding(),
+		sampleWindowsProtectFinding(),
+	})
+
+	found := false
+	for _, finding := range augmented {
+		if finding.RuleID != windowsCredCorrelationRuleID {
+			continue
+		}
+		found = true
+		if finding.Category != "windows-credentials" || !finding.Correlated || !finding.Actionable {
+			t.Fatalf("unexpected correlated windows credential-store finding: %#v", finding)
+		}
+	}
+	if !found {
+		t.Fatalf("expected correlated windows credential-store finding in augmented results, got %#v", augmented)
+	}
+}
+
+func TestAugmentFindingsForReportingBuildsBrowserCredentialStoreCorrelation(t *testing.T) {
+	t.Parallel()
+
+	augmented := augmentFindingsForReporting([]scanner.Finding{
+		sampleFirefoxLoginsFinding(),
+		sampleFirefoxKey4Finding(),
+	})
+
+	found := false
+	for _, finding := range augmented {
+		if finding.RuleID != browserCredCorrelationRuleID {
+			continue
+		}
+		found = true
+		if finding.Category != "browser-credentials" || !finding.Correlated || !finding.Actionable {
+			t.Fatalf("unexpected correlated browser finding: %#v", finding)
+		}
+	}
+	if !found {
+		t.Fatalf("expected correlated browser credential-store finding in augmented results, got %#v", augmented)
+	}
+}
+
+func TestAugmentFindingsForReportingBuildsBackupCorrelation(t *testing.T) {
+	t.Parallel()
+
+	augmented := augmentFindingsForReporting([]scanner.Finding{
+		sampleBackupNTDSFinding(),
+		sampleBackupSystemFinding(),
+		sampleBackupPathFinding(),
+	})
+
+	found := false
+	for _, finding := range augmented {
+		if finding.RuleID != backupCorrelationRuleID {
+			continue
+		}
+		found = true
+		if finding.Category != "backup-exposure" || !finding.Correlated || !finding.Actionable {
+			t.Fatalf("unexpected correlated backup finding: %#v", finding)
+		}
+		if finding.FilePath != sampleBackupNTDSFinding().FilePath || finding.Confidence != "high" {
+			t.Fatalf("expected NTDS anchor and high confidence, got %#v", finding)
+		}
+	}
+	if !found {
+		t.Fatalf("expected correlated backup finding in augmented results, got %#v", augmented)
+	}
+}
+
+func TestJSONWriterIncludesAccessPathSummaries(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer := NewJSONWriter(&buf, nil, true)
+	for _, finding := range []scanner.Finding{
+		sampleBackupNTDSFinding(),
+		sampleBackupSystemFinding(),
+		sampleBackupPathFinding(),
+	} {
+		if err := writer.WriteFinding(finding); err != nil {
+			t.Fatalf("WriteFinding returned error: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	var report jsonReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+
+	if len(report.AccessPaths) == 0 {
+		t.Fatalf("expected access path summaries in JSON report, got %#v", report)
+	}
+	found := false
+	for _, item := range report.AccessPaths {
+		if item.RuleID != backupCorrelationRuleID {
+			continue
+		}
+		found = true
+		if item.Label != "System-state backup exposure" || item.PrimaryPath == "" {
+			t.Fatalf("unexpected backup access path summary: %#v", item)
+		}
+		if item.PriorityTier != "high" || item.ExploitabilityScore < 90 || item.Rank <= 0 {
+			t.Fatalf("expected ranked high-priority backup access path summary, got %#v", item)
+		}
+		if len(item.RelatedArtifacts) == 0 {
+			t.Fatalf("expected related artifacts in access path summary, got %#v", item)
+		}
+	}
+	if !found {
+		t.Fatalf("expected backup access path summary in JSON report, got %#v", report.AccessPaths)
+	}
+}
+
+func TestJSONWriterIncludesBrowserAccessPathSummary(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer := NewJSONWriter(&buf, nil, true)
+	for _, finding := range []scanner.Finding{
+		sampleFirefoxLoginsFinding(),
+		sampleFirefoxKey4Finding(),
+	} {
+		if err := writer.WriteFinding(finding); err != nil {
+			t.Fatalf("WriteFinding returned error: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	var report jsonReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+
+	found := false
+	for _, item := range report.AccessPaths {
+		if item.RuleID != browserCredCorrelationRuleID {
+			continue
+		}
+		found = true
+		if item.Label != "Browser credential-store exposure" || item.PrimaryPath == "" {
+			t.Fatalf("unexpected browser access path summary: %#v", item)
+		}
+		if item.PriorityTier != "medium" || item.ExploitabilityScore <= 0 || item.Rank <= 0 {
+			t.Fatalf("expected ranked browser access path summary, got %#v", item)
+		}
+	}
+	if !found {
+		t.Fatalf("expected browser access path summary in JSON report, got %#v", report.AccessPaths)
+	}
+}
+
+func TestSuppressionWriterSuppressesConfiguredFindingsAndReportsSummary(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	base := NewJSONWriter(&buf, nil, true)
+	sink := WrapWithSuppression(base, config.SuppressionConfig{
+		SampleLimit: 5,
+		Rules: []config.SuppressionRule{
+			{
+				ID:           "suppress-synthetic-password",
+				Reason:       "known benign synthetic example",
+				Enabled:      true,
+				RuleIDs:      []string{"content.synthetic_password"},
+				PathPrefixes: []string{"Policies/"},
+			},
+		},
+	})
+	SetScanProfile(sink, "default")
+
+	if err := sink.WriteFinding(sampleFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := sink.WriteFinding(sampleHeuristicFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := sink.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	var report jsonReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+	if report.Profile != "default" {
+		t.Fatalf("expected profile to be recorded, got %#v", report.Profile)
+	}
+	if len(report.Findings) != 1 || report.Findings[0].RuleID != sampleHeuristicFinding().RuleID {
+		t.Fatalf("expected suppressed finding to be omitted from visible findings, got %#v", report.Findings)
+	}
+	if report.Suppression == nil || report.Suppression.TotalSuppressed != 1 {
+		t.Fatalf("expected suppression summary, got %#v", report.Suppression)
+	}
+	if len(report.Suppression.Rules) != 1 || report.Suppression.Rules[0].ID != "suppress-synthetic-password" {
+		t.Fatalf("expected suppression rule summary, got %#v", report.Suppression)
+	}
+	if len(report.Suppression.Samples) != 1 || report.Suppression.Samples[0].FilePath != sampleFinding().FilePath {
+		t.Fatalf("expected suppression sample for hidden finding, got %#v", report.Suppression)
+	}
+}
+
+func TestHTMLWriterRendersSuppressionSummary(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	base, err := NewHTMLWriter(&buf, nil)
+	if err != nil {
+		t.Fatalf("NewHTMLWriter returned error: %v", err)
+	}
+	sink := WrapWithSuppression(base, config.SuppressionConfig{
+		SampleLimit: 5,
+		Rules: []config.SuppressionRule{
+			{
+				ID:          "suppress-heuristic-password-export",
+				Reason:      "known benign export naming",
+				Enabled:     true,
+				ExactPaths:  []string{"Users/Alice/Desktop/passwords.txt"},
+				RuleIDs:     []string{"filename.password_export"},
+				Shares:      []string{"Users"},
+				Hosts:       []string{"fs01"},
+			},
+		},
+	})
+	SetScanProfile(sink, "validation")
+	if err := sink.WriteFinding(sampleHeuristicFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := sink.WriteFinding(sampleFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := sink.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"Profile", "validation", "Suppressed Findings", "suppress-heuristic-password-export", "known benign export naming", "Users/Alice/Desktop/passwords.txt"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected html output to contain %q", want)
+		}
+	}
+	if strings.Contains(out, "Password Export Filename") {
+		t.Fatalf("expected suppressed finding to be omitted from visible html findings, got %s", out)
+	}
+}
+
+func TestAccessPathSummariesRankByExploitability(t *testing.T) {
+	t.Parallel()
+
+	summaries := buildAccessPathSummaries(augmentFindingsForReporting([]scanner.Finding{
+		sampleFirefoxLoginsFinding(),
+		sampleFirefoxKey4Finding(),
+		sampleBackupNTDSFinding(),
+		sampleBackupSystemFinding(),
+		sampleBackupPathFinding(),
+		sampleNTDSFinding(),
+		sampleSystemHiveFinding(),
+	}))
+
+	if len(summaries) < 3 {
+		t.Fatalf("expected multiple ranked access path summaries, got %#v", summaries)
+	}
+	if summaries[0].Type != "ad-compromise-path" || summaries[0].PriorityTier != "high" {
+		t.Fatalf("expected AD compromise path to rank first, got %#v", summaries[0])
+	}
+	backupIndex := -1
+	browserIndex := -1
+	for i, item := range summaries {
+		switch item.Type {
+		case "backup-exposure-path":
+			if backupIndex == -1 {
+				backupIndex = i
+			}
+		case "browser-credential-store-exposure":
+			if browserIndex == -1 {
+				browserIndex = i
+			}
+		}
+	}
+	if backupIndex == -1 || browserIndex == -1 {
+		t.Fatalf("expected backup and browser access path summaries, got %#v", summaries)
+	}
+	if backupIndex >= browserIndex {
+		t.Fatalf("expected backup exposure path to rank above browser exposure, got backup=%d browser=%d summaries=%#v", backupIndex, browserIndex, summaries)
+	}
+	if summaries[backupIndex].ExploitabilityScore <= summaries[browserIndex].ExploitabilityScore {
+		t.Fatalf("expected backup exposure score to exceed browser exposure score, got backup=%#v browser=%#v", summaries[backupIndex], summaries[browserIndex])
+	}
+	for i, item := range summaries {
+		if item.Rank != i+1 {
+			t.Fatalf("expected rank %d for item %#v", i+1, item)
+		}
 	}
 }
 
@@ -786,6 +1473,113 @@ func TestHTMLWriterRendersADCorrelationFinding(t *testing.T) {
 	}
 }
 
+func TestHTMLWriterRendersPrivateKeyCorrelationFinding(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer, err := NewHTMLWriter(&buf, nil)
+	if err != nil {
+		t.Fatalf("NewHTMLWriter returned error: %v", err)
+	}
+	if err := writer.WriteFinding(samplePrivateKeyFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.WriteFinding(sampleClientAuthFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"correlation.remote_access.private_key_bundle", "Private Key Exposure Path", "client-admin.ovpn", "id_rsa"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected html output to contain %q", want)
+		}
+	}
+}
+
+func TestHTMLWriterRendersWindowsCredentialStoreCorrelationFinding(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer, err := NewHTMLWriter(&buf, nil)
+	if err != nil {
+		t.Fatalf("NewHTMLWriter returned error: %v", err)
+	}
+	if err := writer.WriteFinding(sampleWindowsCredentialsFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.WriteFinding(sampleWindowsProtectFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"correlation.windows.dpapi_credential_store", "Windows DPAPI Credential Store Exposure Path", "windows-credentials"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected html output to contain %q", want)
+		}
+	}
+}
+
+func TestHTMLWriterRendersBrowserAccessPathSummary(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer, err := NewHTMLWriter(&buf, nil)
+	if err != nil {
+		t.Fatalf("NewHTMLWriter returned error: %v", err)
+	}
+	if err := writer.WriteFinding(sampleFirefoxLoginsFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.WriteFinding(sampleFirefoxKey4Finding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"Top Access Paths", "Browser credential-store exposure", "Browser Credential Store Exposure Path", "logins.json", "key4.db", "score", "priority"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected html output to contain %q", want)
+		}
+	}
+}
+
+func TestHTMLWriterRendersBackupAccessPathSummary(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer, err := NewHTMLWriter(&buf, nil)
+	if err != nil {
+		t.Fatalf("NewHTMLWriter returned error: %v", err)
+	}
+	for _, finding := range []scanner.Finding{
+		sampleBackupNTDSFinding(),
+		sampleBackupSystemFinding(),
+		sampleBackupPathFinding(),
+	} {
+		if err := writer.WriteFinding(finding); err != nil {
+			t.Fatalf("WriteFinding returned error: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"Top Access Paths", "System-state backup exposure", "AD compromise path", "WindowsImageBackup", "score", "priority"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected html output to contain %q", want)
+		}
+	}
+}
+
 func TestHTMLWriterRendersArchiveMetadata(t *testing.T) {
 	t.Parallel()
 
@@ -803,6 +1597,64 @@ func TestHTMLWriterRendersArchiveMetadata(t *testing.T) {
 
 	out := buf.String()
 	for _, want := range []string{"Deploy/loot.zip!configs/web.config", "Archive Member", "configs/web.config", "Archive Inspection", "local"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected html output to contain %q", want)
+		}
+	}
+}
+
+func TestJSONWriterIncludesSQLiteMetadataAndCorrelation(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer := NewJSONWriter(&buf, nil, true)
+	if err := writer.WriteFinding(sampleSQLiteFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.WriteFinding(sampleSQLiteSupportFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	var report jsonReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+
+	foundSQLite := false
+	foundCorrelation := false
+	for _, finding := range report.Findings {
+		if finding.DatabaseFilePath == "Apps/payroll-cache.sqlite3" && finding.DatabaseTable == "accounts" && finding.DatabaseColumn == "password" {
+			foundSQLite = true
+		}
+		if finding.RuleID == "correlation.database.sqlite_exposure" {
+			foundCorrelation = true
+		}
+	}
+	if !foundSQLite || !foundCorrelation {
+		t.Fatalf("expected sqlite metadata and correlation finding, got %#v", report.Findings)
+	}
+}
+
+func TestHTMLWriterRendersSQLiteMetadata(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer, err := NewHTMLWriter(&buf, nil)
+	if err != nil {
+		t.Fatalf("NewHTMLWriter returned error: %v", err)
+	}
+	if err := writer.WriteFinding(sampleSQLiteFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"Database File", "payroll-cache.sqlite3", "Database Table", "accounts", "Database Column", "password", "Database Row Context", "username=svc_payroll"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected html output to contain %q", want)
 		}

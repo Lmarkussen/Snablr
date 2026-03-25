@@ -11,7 +11,7 @@ rules:
     name: Password Assignment Indicators
     description: Detect likely hardcoded password assignments in human-readable configuration and script files.
     type: content
-    pattern: '(?im)\b(password|passwd|pwd)\b\s*[:=]\s*["'']?[^\s"'';]{4,}'
+    pattern: '(?im)\b(password|passord|passwd|pwd)\b\s*[:=]\s*["'']?[^\s"'';]{4,}'
     case_sensitive: false
     severity: high
     tags: [credentials, passwords, remediation]
@@ -65,7 +65,7 @@ rules:
     name: Note-Style Credential Pair Indicators
     description: Detect account-like labels followed by secret-like values in human-written notes, lists, and text files.
     type: content
-    pattern: '(?im)^(?:[A-Za-z][A-Za-z0-9._@-]{1,32})\s*[:=]\s*\S{6,64}$'
+    pattern: '(?im)^(?:(?:[A-Za-z][A-Za-z0-9._@-]{1,32})|(?:domain administrator)|(?:domene administrator))\s*[:=]\s*\S{6,64}$'
     case_sensitive: false
     severity: high
     confidence: medium
@@ -85,7 +85,7 @@ rules:
     name: Password Note Value Indicators
     description: Detect password-note phrasing followed by a password-like value in text notes or exports.
     type: content
-    pattern: '(?im)\bpassword\b(?:\s+is|\s*[:=]|\s+)\S{4,64}$'
+    pattern: '(?im)\b(password|passord)\b(?:\s+is|\s*[:=]|\s+)\S{4,64}$'
     case_sensitive: false
     severity: high
     confidence: medium

@@ -1,6 +1,7 @@
 package output
 
 import (
+	"context"
 	"sort"
 	"strings"
 
@@ -34,15 +35,15 @@ type suppressionRuleCount struct {
 }
 
 type suppressedFinding struct {
-	Host                   string                 `json:"host,omitempty"`
-	Share                  string                 `json:"share,omitempty"`
-	FilePath               string                 `json:"file_path,omitempty"`
-	RuleID                 string                 `json:"rule_id,omitempty"`
-	Category               string                 `json:"category,omitempty"`
+	Host                   string                  `json:"host,omitempty"`
+	Share                  string                  `json:"share,omitempty"`
+	FilePath               string                  `json:"file_path,omitempty"`
+	RuleID                 string                  `json:"rule_id,omitempty"`
+	Category               string                  `json:"category,omitempty"`
 	Fingerprint            diff.FindingFingerprint `json:"fingerprint,omitempty"`
-	SuppressionID          string                 `json:"suppression_id"`
-	SuppressionDescription string                 `json:"suppression_description,omitempty"`
-	SuppressionReason      string                 `json:"suppression_reason,omitempty"`
+	SuppressionID          string                  `json:"suppression_id"`
+	SuppressionDescription string                  `json:"suppression_description,omitempty"`
+	SuppressionReason      string                  `json:"suppression_reason,omitempty"`
 }
 
 type suppressionWriter struct {
@@ -166,6 +167,43 @@ func (s *suppressionWriter) SetScanProfile(profile string) {
 	if aware, ok := s.inner.(ScanProfileAware); ok {
 		aware.SetScanProfile(profile)
 	}
+}
+
+func (s *suppressionWriter) SetTargetTotal(total int) {
+	if aware, ok := s.inner.(LiveProgressAware); ok {
+		aware.SetTargetTotal(total)
+	}
+}
+
+func (s *suppressionWriter) SetCurrentHost(host string) {
+	if aware, ok := s.inner.(LiveProgressAware); ok {
+		aware.SetCurrentHost(host)
+	}
+}
+
+func (s *suppressionWriter) MarkTargetProcessed() {
+	if aware, ok := s.inner.(LiveProgressAware); ok {
+		aware.MarkTargetProcessed()
+	}
+}
+
+func (s *suppressionWriter) SetStatus(status string) {
+	if aware, ok := s.inner.(LiveProgressAware); ok {
+		aware.SetStatus(status)
+	}
+}
+
+func (s *suppressionWriter) SetCancelFunc(cancel context.CancelFunc) {
+	if aware, ok := s.inner.(ScanCancelAware); ok {
+		aware.SetCancelFunc(cancel)
+	}
+}
+
+func (s *suppressionWriter) WasCanceledByUser() bool {
+	if aware, ok := s.inner.(ScanCancelAware); ok {
+		return aware.WasCanceledByUser()
+	}
+	return false
 }
 
 func (s *suppressionWriter) suppressedFinding(f scanner.Finding) (suppressedFinding, bool) {

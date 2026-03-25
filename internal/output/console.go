@@ -40,6 +40,9 @@ func (c *ConsoleWriter) WriteFinding(f scanner.Finding) error {
 
 	c.summary.RecordFinding(f)
 	c.findings = append(c.findings, f)
+	if !isPrimaryLiveFinding(f) {
+		return nil
+	}
 	return c.writeFindingLocked(f)
 }
 

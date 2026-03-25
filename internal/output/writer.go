@@ -1,8 +1,10 @@
 package output
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +16,7 @@ import (
 	"snablr/internal/diff"
 	"snablr/internal/metrics"
 	"snablr/internal/scanner"
+	"snablr/internal/ui"
 )
 
 const timeFormat = "2006-01-02 15:04:05 MST"
@@ -137,12 +140,36 @@ func (s *summaryCollector) Snapshot() summarySnapshot {
 	}
 }
 
+func (s *summaryCollector) LiveSnapshot() summarySnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return summarySnapshot{
+		StartedAt:     s.startedAt,
+		EndedAt:       s.endedAt,
+		HostsScanned:  len(s.hosts),
+		SharesScanned: len(s.shares),
+		FilesScanned:  s.filesScanned,
+		MatchesFound:  s.matchesFound,
+		SkippedFiles:  s.skippedFiles,
+		ReadErrors:    s.readErrors,
+	}
+}
+
 func NewWriter(cfg config.OutputConfig) (scanner.FindingSink, error) {
 	sinks := make([]scanner.FindingSink, 0, 5)
+	useTUI := !cfg.NoTUI && ui.ShouldShowProgress(cfg.Format)
 
 	switch strings.ToLower(cfg.Format) {
 	case "console":
-		sinks = append(sinks, NewConsoleWriter(os.Stdout, nopCloser{}))
+		if useTUI {
+			tuiWriter, err := NewTUIWriter(os.Stdout, nopCloser{})
+			if err != nil {
+				return nil, err
+			}
+			sinks = append(sinks, tuiWriter)
+		} else {
+			sinks = append(sinks, NewConsoleWriter(os.Stdout, nopCloser{}))
+		}
 	case "json":
 		file, err := createOutputFile(cfg.JSONOut)
 		if err != nil {
@@ -161,7 +188,15 @@ func NewWriter(cfg config.OutputConfig) (scanner.FindingSink, error) {
 		}
 		sinks = append(sinks, htmlWriter)
 	case "all":
-		sinks = append(sinks, NewConsoleWriter(os.Stdout, nopCloser{}))
+		if useTUI {
+			tuiWriter, err := NewTUIWriter(os.Stdout, nopCloser{})
+			if err != nil {
+				return nil, err
+			}
+			sinks = append(sinks, tuiWriter)
+		} else {
+			sinks = append(sinks, NewConsoleWriter(os.Stdout, nopCloser{}))
+		}
 
 		jsonFile, err := createOutputFile(cfg.JSONOut)
 		if err != nil {
@@ -280,6 +315,41 @@ func (m *MultiWriter) SetValidationMode(enabled bool) {
 	m.broadcastValidationMode(func(aware ValidationModeAware) { aware.SetValidationMode(enabled) })
 }
 
+func (m *MultiWriter) SetTargetTotal(total int) {
+	m.broadcastLiveProgress(func(aware LiveProgressAware) { aware.SetTargetTotal(total) })
+}
+
+func (m *MultiWriter) SetCurrentHost(host string) {
+	m.broadcastLiveProgress(func(aware LiveProgressAware) { aware.SetCurrentHost(host) })
+}
+
+func (m *MultiWriter) MarkTargetProcessed() {
+	m.broadcastLiveProgress(func(aware LiveProgressAware) { aware.MarkTargetProcessed() })
+}
+
+func (m *MultiWriter) SetStatus(status string) {
+	m.broadcastLiveProgress(func(aware LiveProgressAware) { aware.SetStatus(status) })
+}
+
+func (m *MultiWriter) SetCancelFunc(cancel context.CancelFunc) {
+	m.broadcastCancel(func(aware ScanCancelAware) { aware.SetCancelFunc(cancel) })
+}
+
+func (m *MultiWriter) WasCanceledByUser() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sink := range m.sinks {
+		aware, ok := sink.(ScanCancelAware)
+		if !ok {
+			continue
+		}
+		if aware.WasCanceledByUser() {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *MultiWriter) RecordSuppressedFinding(event scanner.SuppressedFinding) {
 	m.broadcastValidationObserver(func(observer scanner.ValidationObserver) { observer.RecordSuppressedFinding(event) })
 }
@@ -388,6 +458,30 @@ func (m *MultiWriter) broadcastValidationMode(fn func(ValidationModeAware)) {
 	}
 }
 
+func (m *MultiWriter) broadcastLiveProgress(fn func(LiveProgressAware)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sink := range m.sinks {
+		aware, ok := sink.(LiveProgressAware)
+		if !ok {
+			continue
+		}
+		fn(aware)
+	}
+}
+
+func (m *MultiWriter) broadcastCancel(fn func(ScanCancelAware)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sink := range m.sinks {
+		aware, ok := sink.(ScanCancelAware)
+		if !ok {
+			continue
+		}
+		fn(aware)
+	}
+}
+
 func (m *MultiWriter) broadcastValidationObserver(fn func(scanner.ValidationObserver)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -436,6 +530,42 @@ func uncPath(f scanner.Finding) string {
 		path = `\` + path
 	}
 	return fmt.Sprintf(`\\%s\%s%s`, valueOrDash(f.Host), valueOrDash(f.Share), path)
+}
+
+func remoteFilePath(f scanner.Finding) string {
+	switch {
+	case strings.TrimSpace(f.ArchivePath) != "":
+		return strings.TrimSpace(f.ArchivePath)
+	case strings.TrimSpace(f.DatabaseFilePath) != "":
+		return strings.TrimSpace(f.DatabaseFilePath)
+	default:
+		path := strings.TrimSpace(f.FilePath)
+		if idx := strings.Index(path, "!"); idx >= 0 {
+			path = path[:idx]
+		}
+		if idx := strings.Index(path, "::"); idx >= 0 {
+			path = path[:idx]
+		}
+		return path
+	}
+}
+
+func downloadHref(f scanner.Finding) string {
+	host := strings.TrimSpace(f.Host)
+	share := strings.TrimSpace(f.Share)
+	path := strings.TrimSpace(remoteFilePath(f))
+	if host == "" || share == "" || path == "" {
+		return ""
+	}
+	parts := []string{host, share}
+	for _, part := range strings.Split(strings.ReplaceAll(path, `\`, "/"), "/") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		parts = append(parts, url.PathEscape(part))
+	}
+	return "file://" + strings.Join(parts, "/")
 }
 
 func valueOrDash(value string) string {

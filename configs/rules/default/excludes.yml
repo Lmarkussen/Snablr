@@ -76,9 +76,9 @@ rules:
   # Safe default: large archives and VM images are often expensive and noisy for first-pass triage.
   - id: skip.large_archive_and_vm_extensions
     name: Large Archive And VM Extensions
-    description: Skip large archive and virtual disk formats by default; .zip files are handled separately by the archive inspector.
+    description: Skip large archive and virtual disk formats by default; .zip, .tar, .tar.gz, and .tgz files are handled separately by the archive inspector.
     type: extension
-    pattern: '^(\.7z|\.gz|\.iso|\.ova|\.ovf|\.rar|\.tar|\.tgz|\.vhd|\.vhdx|\.vmdk)$'
+    pattern: '^(\.7z|\.gz|\.iso|\.ova|\.ovf|\.rar|\.vhd|\.vhdx|\.vmdk)$'
     case_sensitive: false
     severity: low
     tags: [skip, archives, vm-disks]

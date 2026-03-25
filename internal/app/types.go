@@ -31,6 +31,7 @@ type ScanOptions struct {
 	SkipReachabilityCheck      bool
 	ReachabilityTimeoutSeconds int
 	OutputFormat               string
+	NoTUI                      bool
 	JSONOut                    string
 	HTMLOut                    string
 	CSVOut                     string

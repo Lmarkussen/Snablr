@@ -579,6 +579,35 @@
 	      overflow-wrap: anywhere;
 	      word-break: break-word;
 	    }
+	    .finding-path-row {
+	      margin-top: 14px;
+	      display: flex;
+	      gap: 10px;
+	      align-items: stretch;
+	    }
+	    .finding-path-row .finding-path {
+	      margin-top: 0;
+	      flex: 1 1 auto;
+	      min-width: 0;
+	    }
+	    .download-link {
+	      flex: 0 0 auto;
+	      display: inline-flex;
+	      align-items: center;
+	      justify-content: center;
+	      padding: 12px 14px;
+	      border-radius: 12px;
+	      border: 1px solid var(--line);
+	      background: rgba(248, 251, 255, 0.96);
+	      color: #183153;
+	      font-size: 0.82rem;
+	      font-weight: 700;
+	      text-decoration: none;
+	      white-space: nowrap;
+	    }
+	    .download-link:hover {
+	      background: #fff;
+	    }
 	    .finding-body {
 	      display: grid;
 	      gap: 14px;
@@ -1412,7 +1441,12 @@
 	                </div>
 	              </div>
 	            </header>
-	            <div class="finding-path" title="{{ uncPath .Finding }}">{{ uncPath .Finding }}</div>
+	            <div class="finding-path-row">
+	              <div class="finding-path" title="{{ uncPath .Finding }}">{{ uncPath .Finding }}</div>
+	              {{- if downloadHref .Finding }}
+	              <a class="download-link" href="{{ downloadHref .Finding }}" download title="Open or download the underlying remote file">Download</a>
+	              {{- end }}
+	            </div>
 	            <div class="finding-body">
 	              <section class="finding-panel">
 	                <span class="panel-title">Finding Summary</span>
@@ -1614,49 +1648,6 @@
 	              </section>
 	              {{- end }}
 	            </div>
-	            <details class="evidence-toggle">
-	              <summary>Show Evidence</summary>
-	              <div class="evidence-grid">
-	                <section class="evidence-section">
-	                  <strong>Matched Text</strong>
-	                  {{- if displayMatch .Finding }}
-	                  <pre class="evidence-block">{{ displayMatch .Finding }}</pre>
-	                  {{- else }}
-	                  <div class="muted">No matched text was captured.</div>
-	                  {{- end }}
-	                </section>
-	                <section class="evidence-section">
-	                  <strong>Context</strong>
-	                  {{- if displayContext .Finding }}
-	                  <pre class="evidence-block">{{ displayContext .Finding }}</pre>
-	                  {{- else }}
-	                  <div class="muted">No surrounding context was captured.</div>
-	                  {{- end }}
-	                  {{- if .Finding.LineNumber }}
-	                  <div style="margin-top:10px;"><strong>Line Number:</strong> {{ .Finding.LineNumber }}</div>
-	                  {{- end }}
-	                </section>
-	                <section class="evidence-section">
-	                  <strong>Raw Supporting Signals</strong>
-	                  {{- if .Finding.SupportingSignals }}
-	                  <ul class="raw-signal-list">
-	                    {{- range .Finding.SupportingSignals }}
-	                    <li>
-	                      <div><span class="badge {{ signalClass .SignalType }}">{{ signalLabel .SignalType }}</span>{{ if .RuleName }} <strong>{{ .RuleName }}</strong>{{ end }}</div>
-	                      {{- if .RuleID }}<div class="muted">Rule ID: {{ .RuleID }}</div>{{ end -}}
-	                      {{- if .Match }}<div class="finding-text">Match: {{ .Match }}</div>{{ end -}}
-	                      {{- if .Confidence }}<div class="muted">Confidence: {{ .Confidence }}</div>{{ end -}}
-	                      {{- if .Weight }}<div class="muted">Weight: {{ .Weight }}</div>{{ end -}}
-	                      {{- if .Reason }}<div class="finding-text">{{ .Reason }}</div>{{ end -}}
-	                    </li>
-	                    {{- end }}
-	                  </ul>
-	                  {{- else }}
-	                  <div class="muted">No supporting signals were recorded.</div>
-	                  {{- end }}
-	                </section>
-	              </div>
-	            </details>
 	          </article>
 	          {{- end }}
 	        </div>

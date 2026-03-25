@@ -17,6 +17,7 @@ Snablr is intended for authorized defensive security work only. Run it only agai
 - Built-in database artifact and connection-material inspection for common enterprise formats
 - Limited local-only SQLite inspection for bounded credential, token, and connection-material review
 - High-signal private key and client-auth artifact coverage, including exact extensionless SSH private key names
+- High-signal AWS shared-profile artifact coverage for `.aws/credentials` and `.aws/config`, including real credential bundle validation
 - Exact Windows credential-store path coverage for `Credentials`, `Vault`, and `Protect` profile families
 - Exact Windows backup-exposure path coverage for `WindowsImageBackup`, `System Volume Information`, `RegBack`, and Windows repair hive families
 - Exact browser profile credential-store artifact coverage for Firefox and Chromium-family profile stores
@@ -25,11 +26,11 @@ Snablr is intended for authorized defensive security work only. Run it only agai
 - Prioritized scan planning for high-value targets, shares, and paths
 - Concurrent file scanning with adaptive worker scaling
 - Checkpoint and resume support for longer scans
-- Console, JSON, HTML, CSV, and Markdown output formats
+- Bubble Tea live terminal UI for interactive console scans, plus JSON, HTML, CSV, and Markdown outputs
 - Structured HTML report filtering, confidence breakdowns, and seeded validation summaries
 - Explicit suppression and allowlisting with auditable suppressed-finding summaries
 - Deterministic scan profiles for default, validation, and aggressive bounded-inspection modes
-- Ranked top access-path summaries for correlated AD, backup, credential-store, private-key, browser, and app/database exposure clusters
+- Ranked top access-path summaries for correlated AD, backup, AWS credential profile, credential-store, private-key, browser, and app/database exposure clusters
 - Baseline and diff mode for repeated scans and change tracking
 - Synthetic lab seeding and manifest-based verification with `snablr-seed`
 
@@ -190,6 +191,15 @@ What this does:
 4. enumerates accessible shares
 5. scans matching files with the active rule set
 6. writes findings to console, JSON, and HTML
+
+Live console note:
+
+- interactive terminal scans now open a two-pane TUI
+- the left pane shows finding metadata, scan progress, and current activity
+- the right pane shows evidence and detail for the currently selected finding
+- evidence is intentionally kept out of the left pane so raw secrets do not scroll by in the live finding list
+- default live output is filtered to primary findings only; weaker supporting artifacts remain available for correlation and in exported reports
+- pass `--no-tui` if you want the old plain stdout console output in an interactive terminal
 
 Archive note:
 

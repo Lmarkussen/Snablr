@@ -49,23 +49,52 @@ In that example, Snablr writes:
 
 Console output is designed for live terminal triage.
 
-It includes:
+When stdout/stderr are attached to an interactive terminal, Snablr now uses a Bubble Tea TUI instead of line-by-line stdout printing.
 
-- severity
-- host
-- share
-- share type and description when available
-- file path
-- rule name and category
-- match text or snippet
-- concise explanation and remediation notes
-- source context such as DFS, SYSVOL, or NETLOGON
+Layout:
+
+- left pane
+  finding stream, scan progress, and current activity
+- right pane
+  evidence and detail for the currently selected finding
+
+The separation is deliberate:
+
+- the left pane shows metadata only
+- raw evidence, snippets, matched values, archive member context, and SQLite row context stay in the right pane
+- by default, the live findings pane shows primary findings only
+- low-value supporting artifacts such as generic config/script hits or supporting-only metadata observations remain available to correlation and exported reports, but they do not flood the default live stream
+
+Controls:
+
+- `up` / `down`
+- `j` / `k`
+- `g` / `G`
+- `PgUp` / `PgDn`
+- `q` warns during an active scan
+
+Implementation note:
+
+- the live TUI consumes bounded writer state on a timer instead of receiving one blocking UI event per finding
+- this keeps the scan path from stalling if the terminal UI falls behind under heavy finding volume
+- the TUI exits automatically when the scan completes
 
 Use console when you want:
 
 - immediate feedback during a scan
 - interactive review while watching progress
-- simple operator-friendly output without opening a report file
+- evidence inspection without exposing raw matched content in the scrolling findings list
+
+If the scan is not attached to an interactive terminal, Snablr falls back to the plain line-oriented console writer.
+
+The same visibility rule applies there:
+
+- default live console output shows primary findings only
+- supporting/contextual observations are retained for correlation, JSON, and HTML output
+
+If you want the old plain stdout console output even in an interactive terminal, run the scan with:
+
+- `--no-tui`
 
 ## JSON Output
 
@@ -144,6 +173,7 @@ It includes:
 - synthetic high-confidence correlation findings when DPAPI `Protect` material co-occurs with `Credentials` or `Vault` paths under the same profile context
 - synthetic high-confidence backup exposure findings when multiple credential-relevant system artifacts co-occur under the same exact backup family
 - synthetic browser credential-store exposure findings when exact paired browser profile artifacts co-occur under the same normalized browser profile context
+- synthetic AWS credential profile findings when exact `.aws/credentials` and `.aws/config` artifacts co-occur under the same normalized profile context
 - diff summary when a baseline is provided
 
 Use HTML when you need:
@@ -289,7 +319,7 @@ Each finding row typically gives you:
 - severity and confidence
 - host and share location
 - file path
-- archive path and inner member path when the evidence came from inside a `.zip`
+- archive path and inner member path when the evidence came from inside a supported archive such as `.zip`, `.tar`, `.tar.gz`, `.tgz`, or Office Open XML containers
 - database file, table, column, and row context when the evidence came from bounded SQLite inspection
 - rule name and category
 - match snippet
@@ -309,8 +339,9 @@ Interpretation tips:
 Archive finding notes:
 
 - archive-derived findings use a combined path like `loot.zip!configs/web.config`
-- private key and client-auth findings inside inspected `.zip` files use the same combined path format, for example `ssh-recovery.zip!keys/id_rsa`
-- Windows profile credential-store findings inside inspected `.zip` files use the same combined path format, for example `profile-backup.zip!Users/Alice/AppData/Roaming/Microsoft/Credentials/ABCD1234`
+- tar-derived findings use the same combined path format, for example `deploy-configs.tar.gz!app/.env`
+- private key and client-auth findings inside inspected archives use the same combined path format, for example `ops-recovery.tgz!keys/id_rsa`
+- Windows profile credential-store findings inside inspected archives use the same combined path format, for example `profile-backup.zip!Users/Alice/AppData/Roaming/Microsoft/Credentials/ABCD1234`
 - JSON also preserves `archive_path` and `archive_member_path` separately
 - `archive_local_inspect: true` means the outer archive was inspected locally by Snablr after being read, rather than unpacked on the remote target
 - the confidence breakdown tells you why a finding stayed low-value or was promoted

@@ -19,11 +19,13 @@ import (
 	"snablr/internal/rules"
 	"snablr/internal/scanner"
 	"snablr/internal/sqliteinspect"
+	"snablr/internal/wiminspect"
 	"snablr/pkg/logx"
 )
 
 func LoadConfig(path string) (Config, error) {
 	cfg := Config{Archives: config.Default().Archives}
+	cfg.WIM = config.Default().WIM
 	cfg.SQLite = config.Default().SQLite
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -56,10 +58,22 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 			AutoZIPMaxSize:           resolved.Archives.AutoZIPMaxSize,
 			AllowLargeZIPs:           resolved.Archives.AllowLargeZIPs,
 			MaxZIPSize:               resolved.Archives.MaxZIPSize,
+			AutoTARMaxSize:           resolved.Archives.AutoTARMaxSize,
+			AllowLargeTARs:           resolved.Archives.AllowLargeTARs,
+			MaxTARSize:               resolved.Archives.MaxTARSize,
 			MaxMembers:               resolved.Archives.MaxMembers,
 			MaxMemberBytes:           resolved.Archives.MaxMemberBytes,
 			MaxTotalUncompressed:     resolved.Archives.MaxTotalUncompressed,
 			InspectExtensionlessText: resolved.Archives.InspectExtensionlessText,
+		},
+		WIM: wiminspect.Options{
+			Enabled:        resolved.WIM.Enabled,
+			AutoWIMMaxSize: resolved.WIM.AutoWIMMaxSize,
+			AllowLargeWIMs: resolved.WIM.AllowLargeWIMs,
+			MaxWIMSize:     resolved.WIM.MaxWIMSize,
+			MaxMembers:     resolved.WIM.MaxMembers,
+			MaxMemberBytes: resolved.WIM.MaxMemberBytes,
+			MaxTotalBytes:  resolved.WIM.MaxTotalBytes,
 		},
 		SQLite:   sqliteOptions(resolved.SQLite),
 		Recorder: recorder,
@@ -205,6 +219,20 @@ func benchmarkReadLimit(cfg Config) int64 {
 		}
 		if cfg.Archives.AllowLargeZIPs && cfg.Archives.MaxZIPSize > limit {
 			limit = cfg.Archives.MaxZIPSize
+		}
+		if cfg.Archives.AutoTARMaxSize > limit {
+			limit = cfg.Archives.AutoTARMaxSize
+		}
+		if cfg.Archives.AllowLargeTARs && cfg.Archives.MaxTARSize > limit {
+			limit = cfg.Archives.MaxTARSize
+		}
+	}
+	if cfg.WIM.Enabled {
+		if cfg.WIM.AutoWIMMaxSize > limit {
+			limit = cfg.WIM.AutoWIMMaxSize
+		}
+		if cfg.WIM.AllowLargeWIMs && cfg.WIM.MaxWIMSize > limit {
+			limit = cfg.WIM.MaxWIMSize
 		}
 	}
 	if cfg.SQLite.Enabled {

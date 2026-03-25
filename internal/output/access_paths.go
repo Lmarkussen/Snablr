@@ -9,24 +9,24 @@ import (
 )
 
 type accessPathSummary struct {
-	Rank               int      `json:"rank"`
-	RuleID             string   `json:"rule_id"`
-	Type               string   `json:"type"`
-	BaseType           string   `json:"base_type,omitempty"`
-	Label              string   `json:"label"`
-	WhyItMatters       string   `json:"why_it_matters"`
-	AccessHint         string   `json:"access_hint,omitempty"`
-	Severity           string   `json:"severity"`
-	Confidence         string   `json:"confidence"`
-	Category           string   `json:"category"`
-	Host               string   `json:"host,omitempty"`
-	Share              string   `json:"share,omitempty"`
-	PrimaryPath        string   `json:"primary_path"`
-	ExploitabilityScore int     `json:"exploitability_score"`
-	PriorityTier       string   `json:"priority_tier"`
-	Completeness       string   `json:"completeness,omitempty"`
-	ArchiveDerived     bool     `json:"archive_derived,omitempty"`
-	RelatedArtifacts   []string `json:"related_artifacts,omitempty"`
+	Rank                int      `json:"rank"`
+	RuleID              string   `json:"rule_id"`
+	Type                string   `json:"type"`
+	BaseType            string   `json:"base_type,omitempty"`
+	Label               string   `json:"label"`
+	WhyItMatters        string   `json:"why_it_matters"`
+	AccessHint          string   `json:"access_hint,omitempty"`
+	Severity            string   `json:"severity"`
+	Confidence          string   `json:"confidence"`
+	Category            string   `json:"category"`
+	Host                string   `json:"host,omitempty"`
+	Share               string   `json:"share,omitempty"`
+	PrimaryPath         string   `json:"primary_path"`
+	ExploitabilityScore int      `json:"exploitability_score"`
+	PriorityTier        string   `json:"priority_tier"`
+	Completeness        string   `json:"completeness,omitempty"`
+	ArchiveDerived      bool     `json:"archive_derived,omitempty"`
+	RelatedArtifacts    []string `json:"related_artifacts,omitempty"`
 }
 
 func buildAccessPathSummaries(findings []scanner.Finding) []accessPathSummary {
@@ -136,6 +136,15 @@ func accessPathClassification(ruleID string, finding scanner.Finding) accessPath
 			AccessHint:   "offline extraction of domain credential material",
 			Completeness: "complete",
 			Score:        95,
+		}
+	case awsProfileCorrelationRuleID:
+		return accessPathClass{
+			Type:         "cloud-credential-path",
+			Label:        "AWS credential profile",
+			Why:          "AWS shared credentials paired with shared config indicate likely reusable CLI or API access material.",
+			AccessHint:   "direct AWS CLI or API access using exposed shared-profile credentials",
+			Completeness: "paired",
+			Score:        88,
 		}
 	case windowsCredCorrelationRuleID:
 		match := strings.ToLower(strings.TrimSpace(finding.Match))

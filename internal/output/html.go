@@ -86,6 +86,7 @@ func NewHTMLWriter(w io.Writer, closer io.Closer) (*HTMLWriter, error) {
 		"signalMatchLabel":  signalMatchLabel,
 		"truncatePath":      truncatePath,
 		"uncPath":           uncPath,
+		"downloadHref":      safeDownloadHref,
 		"valueOrDash":       valueOrDash,
 		"displayMatch":      displayMatch,
 		"displayContext":    displayContext,
@@ -534,6 +535,10 @@ func sortedMapKeys(values map[string]struct{}) []string {
 		return strings.ToLower(out[i]) < strings.ToLower(out[j])
 	})
 	return out
+}
+
+func safeDownloadHref(f scanner.Finding) template.URL {
+	return template.URL(downloadHref(f))
 }
 
 func buildSeveritySummaries(findings []scanner.Finding) []severitySummary {

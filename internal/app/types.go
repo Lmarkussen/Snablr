@@ -36,6 +36,7 @@ type ScanOptions struct {
 	HTMLOut                    string
 	CSVOut                     string
 	MDOut                      string
+	CredsOut                   string
 	LogLevel                   string
 }
 

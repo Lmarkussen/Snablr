@@ -17,6 +17,7 @@ Snablr is intended for authorized defensive security work only. Run it only agai
 - Built-in database artifact and connection-material inspection for common enterprise formats
 - Limited local-only SQLite inspection for bounded credential, token, and connection-material review
 - High-signal private key and client-auth artifact coverage, including exact extensionless SSH private key names
+- Correlated PKCS#12 certificate bundle exposure when `.pfx` or `.p12` artifacts appear with nearby password evidence
 - High-signal AWS shared-profile artifact coverage for `.aws/credentials` and `.aws/config`, including real credential bundle validation
 - Exact Windows credential-store path coverage for `Credentials`, `Vault`, and `Protect` profile families
 - Exact Windows backup-exposure path coverage for `WindowsImageBackup`, `System Volume Information`, `RegBack`, and Windows repair hive families
@@ -302,6 +303,7 @@ Optional sidecar exports:
 
 - `--csv-out`
 - `--md-out`
+- `--creds-out`
 
 If you do not provide output paths, the defaults from your config file are used. If you override them on the CLI, Snablr writes to the paths you provide.
 

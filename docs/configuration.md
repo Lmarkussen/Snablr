@@ -448,6 +448,7 @@ output:
   html_out: output/report.html
   csv_out: output/findings.csv
   md_out: output/summary.md
+  creds_out: output/creds.txt
   pretty: true
 ```
 
@@ -463,6 +464,8 @@ Fields:
   Optional CSV sidecar path
 - `md_out`
   Optional Markdown sidecar path
+- `creds_out`
+  Optional curated credential export path. This writes only primary, high-signal findings with usable credential material into a readable `creds.txt`-style file.
 - `pretty`
   Pretty-print JSON output
 
@@ -499,6 +502,7 @@ Optional sidecar exports:
 
 - `csv_out`
 - `md_out`
+- `creds_out`
 
 These can be used together with any primary mode.
 

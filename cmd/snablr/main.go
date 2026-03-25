@@ -110,6 +110,7 @@ func runScan(args []string) error {
 	htmlOut := fs.String("html-out", "", "Path to HTML report file")
 	csvOut := fs.String("csv-out", "", "Path to CSV findings export file")
 	mdOut := fs.String("md-out", "", "Path to Markdown summary export file")
+	credsOut := fs.String("creds-out", "", "Path to curated creds.txt export file")
 	logLevel := fs.String("log-level", "", "Log level: debug, info, warn, error")
 
 	if err := fs.Parse(args); err != nil {
@@ -155,6 +156,7 @@ func runScan(args []string) error {
 		HTMLOut:                    *htmlOut,
 		CSVOut:                     *csvOut,
 		MDOut:                      *mdOut,
+		CredsOut:                   *credsOut,
 		LogLevel:                   *logLevel,
 	})
 }

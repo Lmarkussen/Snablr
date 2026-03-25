@@ -2,12 +2,16 @@ package output
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"snablr/internal/scanner"
 )
 
 const privateKeyCorrelationRuleID = "correlation.remote_access.private_key_bundle"
+const certificateBundleCorrelationRuleID = "correlation.remote_access.certificate_bundle"
+
+var syntheticTierDirPattern = regexp.MustCompile(`(?i)^tier-\d+$`)
 
 func buildPrivateKeyCorrelatedFindings(findings []scanner.Finding) []scanner.Finding {
 	type bucketKey struct {
@@ -31,7 +35,7 @@ func buildPrivateKeyCorrelatedFindings(findings []scanner.Finding) []scanner.Fin
 		key := bucketKey{
 			host:  strings.ToLower(strings.TrimSpace(finding.Host)),
 			share: strings.ToLower(strings.TrimSpace(finding.Share)),
-			dir:   strings.ToLower(strings.TrimSpace(filepath.ToSlash(filepath.Dir(finding.FilePath)))),
+			dir:   strings.ToLower(strings.TrimSpace(remoteAccessDirectoryContext(finding))),
 		}
 		if key.host == "" || key.share == "" || key.dir == "" {
 			continue
@@ -73,6 +77,58 @@ func buildPrivateKeyCorrelatedFindings(findings []scanner.Finding) []scanner.Fin
 	return out
 }
 
+func buildCertificateCorrelatedFindings(findings []scanner.Finding) []scanner.Finding {
+	type bucketKey struct {
+		host  string
+		share string
+		dir   string
+	}
+
+	type pairBucket struct {
+		certificates []scanner.Finding
+		passwords    []scanner.Finding
+	}
+
+	grouped := make(map[bucketKey]*pairBucket)
+	for _, finding := range findings {
+		family := certificateBundleFamily(finding)
+		if family == "" {
+			continue
+		}
+		key := bucketKey{
+			host:  strings.ToLower(strings.TrimSpace(finding.Host)),
+			share: strings.ToLower(strings.TrimSpace(finding.Share)),
+			dir:   strings.ToLower(strings.TrimSpace(remoteAccessDirectoryContext(finding))),
+		}
+		if key.host == "" || key.share == "" || key.dir == "" {
+			continue
+		}
+		bucket := grouped[key]
+		if bucket == nil {
+			bucket = &pairBucket{}
+			grouped[key] = bucket
+		}
+		switch family {
+		case "certificate":
+			bucket.certificates = append(bucket.certificates, finding)
+		case "password-evidence":
+			bucket.passwords = append(bucket.passwords, finding)
+		}
+	}
+
+	out := make([]scanner.Finding, 0, len(grouped))
+	for _, bucket := range grouped {
+		if len(bucket.certificates) == 0 || len(bucket.passwords) == 0 {
+			continue
+		}
+		out = append(out, newCertificateCorrelatedFinding(
+			selectBestCorrelationAnchor(bucket.certificates),
+			selectBestCorrelationAnchor(bucket.passwords),
+		))
+	}
+	return out
+}
+
 func privateKeyArtifactFamily(f scanner.Finding) string {
 	base := strings.ToLower(strings.TrimSpace(filepath.Base(f.FilePath)))
 	switch {
@@ -100,6 +156,50 @@ func privateKeyArtifactFamily(f scanner.Finding) string {
 	default:
 		return ""
 	}
+}
+
+func certificateBundleFamily(f scanner.Finding) string {
+	base := strings.ToLower(strings.TrimSpace(filepath.Base(f.FilePath)))
+	ext := strings.ToLower(strings.TrimSpace(filepath.Ext(base)))
+	switch ext {
+	case ".pfx", ".p12":
+		if strings.EqualFold(strings.TrimSpace(f.RuleID), "extension.key_and_certificate_extensions") {
+			return "certificate"
+		}
+	}
+
+	switch strings.ToLower(strings.TrimSpace(f.RuleID)) {
+	case "content.password_assignment_indicators", "content.password_note_value_indicators", "content.note_style_credential_pair_indicators":
+		return "password-evidence"
+	default:
+		return ""
+	}
+}
+
+func remoteAccessDirectoryContext(f scanner.Finding) string {
+	if strings.TrimSpace(f.ArchivePath) != "" {
+		memberDir := strings.TrimSpace(filepath.ToSlash(filepath.Dir(f.ArchiveMemberPath)))
+		if memberDir != "." && memberDir != "" {
+			return strings.TrimSpace(filepath.ToSlash(f.ArchivePath)) + "!" + collapseSyntheticTierDir(memberDir)
+		}
+		return strings.TrimSpace(filepath.ToSlash(f.ArchivePath))
+	}
+	return collapseSyntheticTierDir(strings.TrimSpace(filepath.ToSlash(filepath.Dir(f.FilePath))))
+}
+
+func collapseSyntheticTierDir(value string) string {
+	value = strings.TrimSpace(filepath.ToSlash(value))
+	if value == "" || value == "." {
+		return value
+	}
+	base := strings.TrimSpace(filepath.Base(value))
+	if syntheticTierDirPattern.MatchString(base) {
+		parent := strings.TrimSpace(filepath.ToSlash(filepath.Dir(value)))
+		if parent != "" && parent != "." {
+			return parent
+		}
+	}
+	return value
 }
 
 func newPrivateKeyCorrelatedFinding(privateKey, support scanner.Finding, supportKind string) scanner.Finding {
@@ -224,5 +324,110 @@ func newPrivateKeyCorrelatedFinding(privateKey, support scanner.Finding, support
 		MatchedSignalTypes:  []string{"correlation", "filename", "path"},
 		SupportingSignals:   signals,
 		Tags:                allTags,
+	}
+}
+
+func newCertificateCorrelatedFinding(certificate, passwordEvidence scanner.Finding) scanner.Finding {
+	ruleIDs := append([]string{}, certificate.MatchedRuleIDs...)
+	ruleIDs = append(ruleIDs, passwordEvidence.MatchedRuleIDs...)
+	ruleIDs = append(ruleIDs, certificateBundleCorrelationRuleID)
+
+	reasons := uniqueStrings([]string{
+		"PKCS#12 certificate material and nearby password evidence were found together in the same directory context",
+		"paired certificate bundle and password note increase the chance that reusable client-auth material is exposed",
+	})
+
+	signals := []scanner.SupportingSignal{
+		{
+			SignalType: certificate.SignalType,
+			RuleID:     certificate.RuleID,
+			RuleName:   certificate.RuleName,
+			Match:      filepath.Base(certificate.FilePath),
+			Confidence: certificate.Confidence,
+			Weight:     20,
+			Reason:     "exact PKCS#12 certificate bundle artifact was identified",
+		},
+		{
+			SignalType: passwordEvidence.SignalType,
+			RuleID:     passwordEvidence.RuleID,
+			RuleName:   passwordEvidence.RuleName,
+			Match:      passwordEvidence.Match,
+			Confidence: passwordEvidence.Confidence,
+			Weight:     18,
+			Reason:     "nearby password or credential note provides likely import password context for the certificate bundle",
+		},
+		{
+			SignalType: "path",
+			Weight:     12,
+			Reason:     "certificate bundle and password evidence were found in the same host/share/directory context",
+		},
+		{
+			SignalType: "correlation",
+			RuleID:     certificateBundleCorrelationRuleID,
+			RuleName:   "Certificate Access Bundle",
+			Match:      "PKCS#12 bundle + password evidence",
+			Confidence: "high",
+			Weight:     32,
+			Reason:     "paired PKCS#12 material and password evidence strongly suggest reusable client-auth access material",
+		},
+	}
+
+	tags := uniqueStrings(append(append([]string{}, certificate.Tags...), passwordEvidence.Tags...))
+	tags = append(tags, "correlation:certificate-access-bundle", "artifact:pkcs12", "artifact:password-evidence", "artifact:client-auth")
+	context := "Paired artifact context:\n" + certificate.FilePath + "\n" + passwordEvidence.FilePath
+	return scanner.Finding{
+		RuleID:            certificateBundleCorrelationRuleID,
+		RuleName:          "Certificate Access Bundle",
+		Severity:          "critical",
+		Confidence:        "high",
+		RuleConfidence:    "high",
+		ConfidenceScore:   82,
+		ConfidenceReasons: reasons,
+		Category:          "remote-access",
+		TriageClass:       "actionable",
+		Actionable:        true,
+		Correlated:        true,
+		ConfidenceBreakdown: scanner.ConfidenceBreakdown{
+			BaseScore:                   82,
+			FinalScore:                  82,
+			ContentSignalStrength:       18,
+			HeuristicSignalContribution: 20,
+			ValueQualityScore:           0,
+			ValueQualityLabel:           "medium",
+			ValueQualityReason:          "confidence comes from exact PKCS#12 artifact identity plus nearby password evidence",
+			CorrelationContribution:     32,
+			PathContextContribution:     12,
+		},
+		Priority:            maxInt(certificate.Priority, passwordEvidence.Priority),
+		PriorityReason:      firstNonEmpty(certificate.PriorityReason, passwordEvidence.PriorityReason),
+		SharePriority:       maxInt(certificate.SharePriority, passwordEvidence.SharePriority),
+		SharePriorityReason: firstNonEmpty(certificate.SharePriorityReason, passwordEvidence.SharePriorityReason),
+		FilePath:            certificate.FilePath,
+		Share:               certificate.Share,
+		ShareDescription:    certificate.ShareDescription,
+		ShareType:           certificate.ShareType,
+		Host:                certificate.Host,
+		Source:              firstNonEmpty(certificate.Source, passwordEvidence.Source),
+		ArchivePath:         firstNonEmpty(certificate.ArchivePath, passwordEvidence.ArchivePath),
+		ArchiveMemberPath:   firstNonEmpty(certificate.ArchiveMemberPath, passwordEvidence.ArchiveMemberPath),
+		ArchiveLocalInspect: certificate.ArchiveLocalInspect || passwordEvidence.ArchiveLocalInspect,
+		DFSNamespacePath:    firstNonEmpty(certificate.DFSNamespacePath, passwordEvidence.DFSNamespacePath),
+		DFSLinkPath:         firstNonEmpty(certificate.DFSLinkPath, passwordEvidence.DFSLinkPath),
+		SignalType:          "correlation",
+		Match:               "PKCS#12 bundle + password evidence",
+		MatchedText:         context,
+		MatchedTextRedacted: context,
+		Snippet:             "PKCS#12 bundle + password evidence",
+		Context:             context,
+		ContextRedacted:     context,
+		MatchReason:         "cross-file correlation identified PKCS#12 certificate material alongside nearby password evidence.",
+		RuleExplanation:     "This finding is promoted only when a `.pfx` or `.p12` artifact appears with nearby password-oriented evidence in the same directory context.",
+		RuleRemediation:     "Restrict access immediately, remove unnecessary PKCS#12 bundles and nearby password notes from shared storage, and rotate or replace exposed client certificates and passwords.",
+		FromSYSVOL:          certificate.FromSYSVOL || passwordEvidence.FromSYSVOL,
+		FromNETLOGON:        certificate.FromNETLOGON || passwordEvidence.FromNETLOGON,
+		MatchedRuleIDs:      uniqueStrings(ruleIDs),
+		MatchedSignalTypes:  []string{"correlation", "content", "extension", "path"},
+		SupportingSignals:   signals,
+		Tags:                tags,
 	}
 }

@@ -78,6 +78,21 @@ func defaultTemplates() []templateSpec {
 			classify(triage(possible("authorized_keys", "authorized-keys", "medium", []string{"filename"}, []string{"remote-access", "ssh", "context"}, []string{"ssh-support-review"}), seedTriageWeakReview), seedClassWeakReview, "medium", false),
 			noise("readme.txt", "readme-noise", "low", []string{"noise"}, []string{"noise-review"}),
 		}, renderVariant),
+		newSpec("certificate-bundles", []string{
+			"VPN/Profiles", "IT/Admin/Keys", "Archive/Legacy/Auth",
+		}, []templateVariant{
+			classify(triage(likely("corp-admin.pfx", "pkcs12-artifact", "high", []string{"extension", "path"}, []string{"crypto", "remote-access", "certificates", "client-auth"}, []string{"client-auth-artifact-review", "certificate-bundle-review"}), seedTriageActionable), seedClassActionable, "medium", false),
+			classify(triage(likely("branch-admin.p12", "pkcs12-artifact", "high", []string{"extension", "path"}, []string{"crypto", "remote-access", "certificates", "client-auth"}, []string{"client-auth-artifact-review", "certificate-bundle-review"}), seedTriageActionable), seedClassActionable, "medium", false),
+			classify(triage(possible("certificate-passwords.txt", "notes-cert-password", "high", []string{"content", "filename"}, []string{"credentials", "notes", "client-auth"}, []string{"hardcoded-secret-indicators", "certificate-bundle-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			noise("readme.txt", "readme-noise", "low", []string{"noise"}, []string{"noise-review"}),
+		}, renderVariant),
+		newSpec("certificate-correlation", []string{
+			"Recovery/Certificates",
+		}, []templateVariant{
+			classify(triage(likely("corp-admin.pfx", "pkcs12-artifact", "high", []string{"extension", "path", "correlation"}, []string{"crypto", "remote-access", "certificates", "client-auth"}, []string{"client-auth-artifact-review", "certificate-bundle-review"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
+			classify(triage(likely("certificate-passwords.txt", "notes-cert-password", "high", []string{"content", "filename"}, []string{"credentials", "notes", "client-auth"}, []string{"hardcoded-secret-indicators", "certificate-bundle-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			noise("readme.txt", "readme-noise", "low", []string{"noise"}, []string{"noise-review"}),
+		}, renderVariant),
 		newSpec("windows-credential-stores", []string{
 			"Users/Alice/AppData/Roaming/Microsoft/Credentials",
 			"Users/Alice/AppData/Local/Microsoft/Vault/4BF4C442",
@@ -580,6 +595,13 @@ func renderVariant(ctx renderContext, variant templateVariant) []byte {
 			"client_secret="+clientSecretValue(ctx),
 			"lab_note=LAB_ONLY_VALUE_DO_NOT_USE",
 		)
+	case "notes-cert-password":
+		return text(
+			"certificate import notes",
+			"bundle=corp-admin.pfx",
+			"password=CertImport!"+strings.ReplaceAll(ctx.Token, "_", ""),
+			"owner="+serviceAccountValue(ctx),
+		)
 	case "notes-cloud":
 		return text(
 			"cloud migration notes",
@@ -925,6 +947,12 @@ func renderVariant(ctx renderContext, variant templateVariant) []byte {
 			"Purpose: validate exact Chromium-family session-store artifact detection only.",
 			"Contains no usable browser cookies.",
 		)
+	case "pkcs12-artifact":
+		return append([]byte{0x30, 0x82, 0x01, 0x0a, 0x02, 0x82, 0x01, 0x01}, text(
+			"SYNTHETIC PKCS12 BUNDLE",
+			"Purpose: validate exact .pfx/.p12 artifact detection only.",
+			"Contains no usable certificate material.",
+		)...)
 	case "secret-store-marker":
 		return text(
 			"SYNTHETIC SECRET STORE PLACEHOLDER",

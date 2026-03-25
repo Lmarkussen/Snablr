@@ -182,6 +182,15 @@ func accessPathClassification(ruleID string, finding scanner.Finding) accessPath
 			Completeness: "paired",
 			Score:        78,
 		}
+	case certificateBundleCorrelationRuleID:
+		return accessPathClass{
+			Type:         "certificate-client-auth-path",
+			Label:        "Certificate/client-auth bundle",
+			Why:          "PKCS#12 certificate material plus nearby password evidence suggests a reusable client-auth bundle.",
+			AccessHint:   "direct certificate-based VPN, client-auth, or application access using an importable PKCS#12 bundle",
+			Completeness: "paired",
+			Score:        88,
+		}
 	case browserCredCorrelationRuleID:
 		match := strings.ToLower(strings.TrimSpace(finding.Match))
 		completeness := "paired"

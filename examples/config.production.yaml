@@ -68,4 +68,5 @@ output:
   html_out: output/production/report.html
   csv_out: output/production/findings.csv
   md_out: output/production/summary.md
+  creds_out: output/production/creds.txt
   pretty: true

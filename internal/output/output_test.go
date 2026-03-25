@@ -269,6 +269,66 @@ func sampleWindowsCredentialsFinding() scanner.Finding {
 	}
 }
 
+func sampleAWSCredentialsFinding() scanner.Finding {
+	accessKey := strings.Join([]string{"AKIA", "ABCDEFGHIJKLMNOP"}, "")
+	secretKey := strings.Join([]string{"abcdEFGHijklMNOPqrstUVWXyz0123456789/+=", "A"}, "")
+	return scanner.Finding{
+		RuleID:              "awsinspect.content.credentials_bundle",
+		RuleName:            "AWS Credential Bundle",
+		Severity:            "critical",
+		Confidence:          "high",
+		RuleConfidence:      "high",
+		ConfidenceScore:     82,
+		Category:            "credentials",
+		TriageClass:         "actionable",
+		Actionable:          true,
+		FilePath:            "Users/Alice/.aws/credentials",
+		Share:               "Users",
+		Host:                "fs01",
+		SignalType:          "validated",
+		Match:               "aws_access_key_id + aws_secret_access_key",
+		MatchedText:         "aws_access_key_id=" + accessKey + "\naws_secret_access_key=" + secretKey,
+		MatchedTextRedacted: "aws_access_key_id=AKIA********\naws_secret_access_key=abcd********",
+		Snippet:             "aws_access_key_id=AKIA********",
+		Context:             "aws_access_key_id=" + accessKey + "\naws_secret_access_key=" + secretKey,
+		ContextRedacted:     "aws_access_key_id=AKIA********\naws_secret_access_key=abcd********",
+		MatchReason:         "file contents contained text that matches the rule.",
+		MatchedRuleIDs:      []string{"awsinspect.path.credentials", "awsinspect.content.credentials_bundle"},
+		MatchedSignalTypes:  []string{"validated", "content", "path"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "validated", RuleID: "awsinspect.content.credentials_bundle", RuleName: "AWS Credential Bundle", Match: "aws_access_key_id + aws_secret_access_key", Confidence: "high", Weight: 28, Reason: "validated AWS shared-credentials bundle was identified"},
+		},
+		Tags: []string{"aws", "cloud", "artifact:aws-credentials"},
+	}
+}
+
+func sampleAWSConfigFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:             "awsinspect.path.config",
+		RuleName:           "AWS Config Artifact",
+		Severity:           "medium",
+		Confidence:         "medium",
+		RuleConfidence:     "high",
+		ConfidenceScore:    34,
+		Category:           "infrastructure",
+		TriageClass:        "weak-review",
+		Actionable:         false,
+		FilePath:           "Users/Alice/.aws/config",
+		Share:              "Users",
+		Host:               "fs01",
+		SignalType:         "validated",
+		Match:              ".aws/config",
+		MatchedText:        "Users/Alice/.aws/config",
+		MatchReason:        "path matched an exact AWS shared-profile artifact.",
+		MatchedRuleIDs:     []string{"awsinspect.path.config"},
+		MatchedSignalTypes: []string{"validated", "path"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "validated", RuleID: "awsinspect.path.config", RuleName: "AWS Config Artifact", Match: ".aws/config", Confidence: "high", Weight: 18, Reason: "exact AWS shared config artifact was identified"},
+		},
+		Tags: []string{"aws", "cloud", "artifact:aws-config"},
+	}
+}
+
 func sampleWindowsProtectFinding() scanner.Finding {
 	return scanner.Finding{
 		RuleID:             "wincredinspect.path.protect",
@@ -479,6 +539,101 @@ func sampleConfigOnlyFinding() scanner.Finding {
 			{SignalType: "filename", RuleID: "filename.sensitive_config_names", RuleName: "Sensitive Config Names", Match: "appsettings.json", Confidence: "high", Weight: 18, Reason: "filename rule matched \"appsettings.json\" for Detect common config filenames that frequently contain environment settings or embedded secrets."},
 		},
 		Tags: []string{"configuration", "filenames", "triage"},
+	}
+}
+
+func sampleWeakScriptFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:            "extension.script_extensions",
+		RuleName:          "Script Extensions",
+		Severity:          "medium",
+		Confidence:        "medium",
+		RuleConfidence:    "medium",
+		ConfidenceScore:   28,
+		ConfidenceReasons: []string{"heuristic review signal did not include actionable evidence"},
+		Category:          "scripts",
+		TriageClass:       "weak-review",
+		Actionable:        false,
+		Correlated:        false,
+		ConfidenceBreakdown: scanner.ConfidenceBreakdown{
+			BaseScore:                   28,
+			FinalScore:                  28,
+			HeuristicSignalContribution: 28,
+			ValueQualityLabel:           "low",
+			ValueQualityReason:          "confidence comes from script artifact presence without extracted credential evidence",
+		},
+		FilePath:           "IT/Scripts/deploy-users.ps1",
+		Share:              "IT",
+		ShareType:          "disk",
+		Host:               "fs01",
+		Source:             "cli",
+		SignalType:         "extension",
+		Match:              ".ps1",
+		MatchedText:        ".ps1",
+		MatchedRuleIDs:     []string{"extension.script_extensions"},
+		MatchedSignalTypes: []string{"extension"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "extension", RuleID: "extension.script_extensions", RuleName: "Script Extensions", Match: ".ps1", Confidence: "medium", Weight: 18, Reason: "extension rule matched \".ps1\" for generic script review."},
+		},
+		Tags: []string{"scripts", "extensions", "triage"},
+	}
+}
+
+func sampleSSHSupportFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:             "filename.ssh_supporting_artifacts",
+		RuleName:           "SSH Supporting Artifacts",
+		Severity:           "medium",
+		Confidence:         "medium",
+		RuleConfidence:     "medium",
+		ConfidenceScore:    50,
+		Category:           "remote-access",
+		TriageClass:        "actionable",
+		Actionable:         true,
+		Correlated:         true,
+		FilePath:           "IT/Admin/Keys/authorized_keys",
+		Share:              "IT",
+		ShareType:          "disk",
+		Host:               "fs01",
+		Source:             "cli",
+		SignalType:         "filename",
+		Match:              "authorized_keys",
+		MatchedText:        "authorized_keys",
+		MatchedRuleIDs:     []string{"filename.ssh_supporting_artifacts"},
+		MatchedSignalTypes: []string{"filename", "path"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "filename", RuleID: "filename.ssh_supporting_artifacts", RuleName: "SSH Supporting Artifacts", Match: "authorized_keys", Confidence: "medium", Weight: 18, Reason: "filename rule matched \"authorized_keys\" for SSH supporting context."},
+		},
+		Tags: []string{"artifact:ssh-support", "ssh", "remote-access"},
+	}
+}
+
+func sampleBackupExtensionFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:             "extension.database_and_backup_extensions",
+		RuleName:           "Database And Backup Extensions",
+		Severity:           "high",
+		Confidence:         "medium",
+		RuleConfidence:     "medium",
+		ConfidenceScore:    42,
+		Category:           "archives",
+		TriageClass:        "actionable",
+		Actionable:         true,
+		Correlated:         true,
+		FilePath:           "Backups/SystemState/WindowsImageBackup/DC02/NTDS.DIT.bak",
+		Share:              "Backups",
+		ShareType:          "disk",
+		Host:               "fs01",
+		Source:             "cli",
+		SignalType:         "extension",
+		Match:              ".bak",
+		MatchedText:        ".bak",
+		MatchedRuleIDs:     []string{"extension.database_and_backup_extensions"},
+		MatchedSignalTypes: []string{"extension", "path"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "extension", RuleID: "extension.database_and_backup_extensions", RuleName: "Database And Backup Extensions", Match: ".bak", Confidence: "medium", Weight: 18, Reason: "extension rule matched \".bak\" for backup review."},
+		},
+		Tags: []string{"backups", "database", "extensions"},
 	}
 }
 
@@ -842,6 +997,29 @@ func TestAugmentFindingsForReportingBuildsBrowserCredentialStoreCorrelation(t *t
 	}
 }
 
+func TestAugmentFindingsForReportingBuildsAWSCorrelation(t *testing.T) {
+	t.Parallel()
+
+	augmented := augmentFindingsForReporting([]scanner.Finding{
+		sampleAWSCredentialsFinding(),
+		sampleAWSConfigFinding(),
+	})
+
+	found := false
+	for _, finding := range augmented {
+		if finding.RuleID != awsProfileCorrelationRuleID {
+			continue
+		}
+		found = true
+		if finding.Category != "cloud" || !finding.Correlated || !finding.Actionable {
+			t.Fatalf("unexpected correlated AWS finding: %#v", finding)
+		}
+	}
+	if !found {
+		t.Fatalf("expected correlated AWS finding in augmented results, got %#v", augmented)
+	}
+}
+
 func TestAugmentFindingsForReportingBuildsBackupCorrelation(t *testing.T) {
 	t.Parallel()
 
@@ -956,6 +1134,46 @@ func TestJSONWriterIncludesBrowserAccessPathSummary(t *testing.T) {
 	}
 }
 
+func TestJSONWriterIncludesAWSAccessPathSummary(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer := NewJSONWriter(&buf, nil, true)
+	for _, finding := range []scanner.Finding{
+		sampleAWSCredentialsFinding(),
+		sampleAWSConfigFinding(),
+	} {
+		if err := writer.WriteFinding(finding); err != nil {
+			t.Fatalf("WriteFinding returned error: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	var report jsonReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+
+	found := false
+	for _, item := range report.AccessPaths {
+		if item.RuleID != awsProfileCorrelationRuleID {
+			continue
+		}
+		found = true
+		if item.Label != "AWS credential profile" || item.PrimaryPath == "" {
+			t.Fatalf("unexpected AWS access path summary: %#v", item)
+		}
+		if item.PriorityTier != "high" || item.ExploitabilityScore <= 0 || item.Rank <= 0 {
+			t.Fatalf("expected ranked AWS access path summary, got %#v", item)
+		}
+	}
+	if !found {
+		t.Fatalf("expected AWS access path summary in JSON report, got %#v", report.AccessPaths)
+	}
+}
+
 func TestSuppressionWriterSuppressesConfiguredFindingsAndReportsSummary(t *testing.T) {
 	t.Parallel()
 
@@ -1018,13 +1236,13 @@ func TestHTMLWriterRendersSuppressionSummary(t *testing.T) {
 		SampleLimit: 5,
 		Rules: []config.SuppressionRule{
 			{
-				ID:          "suppress-heuristic-password-export",
-				Reason:      "known benign export naming",
-				Enabled:     true,
-				ExactPaths:  []string{"Users/Alice/Desktop/passwords.txt"},
-				RuleIDs:     []string{"filename.password_export"},
-				Shares:      []string{"Users"},
-				Hosts:       []string{"fs01"},
+				ID:         "suppress-heuristic-password-export",
+				Reason:     "known benign export naming",
+				Enabled:    true,
+				ExactPaths: []string{"Users/Alice/Desktop/passwords.txt"},
+				RuleIDs:    []string{"filename.password_export"},
+				Shares:     []string{"Users"},
+				Hosts:      []string{"fs01"},
 			},
 		},
 	})
@@ -1377,9 +1595,14 @@ func TestHTMLWriterRendersStandaloneTriageReport(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, want := range []string{"Snablr Scan Report", "Version", "quickFilter", "severityFilter", "categoryFilter", "confidenceFilter", "sourceFilter", "signalFilter", "scopeFilter", "correlatedOnly", "hideConfigOnly", "hideLowConfidence", "hideNonActionable", "resetFilters", "filterStatus", "Severity Summary", "Category Summary", "Host Summary", "SYSVOL", "Signal Type", "Password Export Filename", "Show Evidence", "Visible Evidence", "Raw Supporting Signals", "password = ReplaceMe123!", "user = alice", "Line Number", "Heuristic file hit", "Config artifact only.", "filename matched a heuristic naming pattern covered by the rule.", "Rule Explanation", "confidence high", "Supporting Signals", "Confidence Breakdown", "Content signal strength", "Value quality:", "Final score:", "Remediation", "data-triage=\"config-only\"", "data-actionable=\"false\""} {
+	for _, want := range []string{"Snablr Scan Report", "Version", "quickFilter", "severityFilter", "categoryFilter", "confidenceFilter", "sourceFilter", "signalFilter", "scopeFilter", "correlatedOnly", "hideConfigOnly", "hideLowConfidence", "hideNonActionable", "resetFilters", "filterStatus", "Severity Summary", "Category Summary", "Host Summary", "SYSVOL", "Signal Type", "Password Export Filename", "Visible Evidence", "password = ReplaceMe123!", "user = alice", "Line Number", "Heuristic file hit", "Config artifact only.", "filename matched a heuristic naming pattern covered by the rule.", "Rule Explanation", "confidence high", "Supporting Signals", "Confidence Breakdown", "Content signal strength", "Value quality:", "Final score:", "Remediation", "Download", "data-triage=\"config-only\"", "data-actionable=\"false\""} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected html output to contain %q", want)
+		}
+	}
+	for _, want := range []string{"Show Evidence", "Raw Supporting Signals"} {
+		if strings.Contains(out, want) {
+			t.Fatalf("expected html output not to contain %q", want)
 		}
 	}
 }
@@ -1596,10 +1819,60 @@ func TestHTMLWriterRendersArchiveMetadata(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, want := range []string{"Deploy/loot.zip!configs/web.config", "Archive Member", "configs/web.config", "Archive Inspection", "local"} {
+	for _, want := range []string{"Deploy/loot.zip!configs/web.config", "Archive Member", "configs/web.config", "Archive Inspection", "local", "Download", "href=\"file://dc01/SYSVOL/Deploy/loot.zip\""} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected html output to contain %q", want)
 		}
+	}
+}
+
+func TestNewWriterNoTUIForcesPlainConsole(t *testing.T) {
+	sink, err := NewWriter(config.OutputConfig{
+		Format: "console",
+		NoTUI:  true,
+	})
+	if err != nil {
+		t.Fatalf("NewWriter returned error: %v", err)
+	}
+	defer sink.Close()
+
+	if _, ok := sink.(*ConsoleWriter); !ok {
+		t.Fatalf("expected plain ConsoleWriter when no_tui is enabled, got %T", sink)
+	}
+}
+
+func TestConsoleWriterOmitsSupportingFindingsFromLiveOutput(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer := NewConsoleWriter(&buf, nil)
+	for _, finding := range []scanner.Finding{
+		sampleConfigOnlyFinding(),
+		sampleWeakScriptFinding(),
+		sampleSSHSupportFinding(),
+		sampleBackupExtensionFinding(),
+		sampleFinding(),
+	} {
+		if err := writer.WriteFinding(finding); err != nil {
+			t.Fatalf("WriteFinding returned error: %v", err)
+		}
+	}
+
+	out := buf.String()
+	if strings.Contains(out, "filename.sensitive_config_names") {
+		t.Fatalf("expected config-only finding to stay out of live console output, got:\n%s", out)
+	}
+	if strings.Contains(out, "extension.script_extensions") {
+		t.Fatalf("expected weak script artifact to stay out of live console output, got:\n%s", out)
+	}
+	if strings.Contains(out, "filename.ssh_supporting_artifacts") {
+		t.Fatalf("expected ssh supporting artifact to stay out of live console output, got:\n%s", out)
+	}
+	if strings.Contains(out, "extension.database_and_backup_extensions") {
+		t.Fatalf("expected generic backup extension artifact to stay out of live console output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "content.synthetic_password") {
+		t.Fatalf("expected actionable finding to remain in live console output, got:\n%s", out)
 	}
 }
 

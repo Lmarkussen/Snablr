@@ -1,8 +1,10 @@
 package seed
 
 import (
+	"archive/tar"
 	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"path"
@@ -165,6 +167,15 @@ func defaultTemplates() []templateSpec {
 		newSpec("zip-archives", []string{
 			"Deploy", "Archive/Legacy/App1/Config", "Backups/Monthly", "IT/Admin", "Finance/Exports", "Old",
 		}, archiveTemplateVariants(), renderArchiveVariant),
+		newSpec("tar-archives", []string{
+			"Backups/Linux", "Archive/Configs", "Deploy/Exports", "Users/Alice/Downloads",
+		}, tarTemplateVariants(), renderTarVariant),
+		newSpec("office-documents", []string{
+			"Docs", "Finance", "Presentations", "Archive/Old", "Projects/Migration",
+		}, officeTemplateVariants(), renderOfficeVariant),
+		newSpec("wim-images", []string{
+			"Images", "Deploy/Media", "Archive/SystemImages", "Backups/InstallMedia",
+		}, wimTemplateVariants(), renderWIMVariant),
 		newSpec("secret-stores", []string{
 			"IT/Admin", "Archive/Legacy", "Backups/Daily", "Old", "Windows/System32/config", "Windows/System32/config/RegBack",
 		}, []templateVariant{
@@ -212,6 +223,22 @@ func defaultTemplates() []templateSpec {
 			likely("aws-migration-notes.txt", "notes-cloud", "high", []string{"content", "filename"}, []string{"cloud", "credentials"}, []string{"cloud-config-exposure", "api-token-exposure"}),
 			possible("aws-config.json", "cloud-json", "medium", []string{"filename", "extension"}, []string{"cloud"}, []string{"cloud-config-exposure"}),
 			noise("cloud-readme.md", "readme-noise", "low", []string{"noise"}, []string{"noise-review"}),
+		}, renderVariant),
+		newSpec("aws-artifacts", []string{
+			"Users/Alice/.aws", "Users/Bob/.aws", "Archive/ProfileCopies/Charlie/.aws", "Backups/UserMigrations/David/.aws",
+		}, []templateVariant{
+			classify(triage(likely("credentials", "aws-credentials-real", "high", []string{"content", "validated", "filename", "path"}, []string{"cloud", "aws", "credentials"}, []string{"aws-credential-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("config", "aws-config-benign", "medium", []string{"filename", "path"}, []string{"cloud", "aws", "configuration"}, []string{"aws-config-artifact-review"}), seedTriageWeakReview), seedClassWeakReview, "medium", false),
+			classify(triage(possible("credentials.bak", "aws-credentials-real", "high", []string{"content", "validated", "filename", "path"}, []string{"cloud", "aws", "credentials"}, []string{"aws-credential-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(possible("config.bak", "aws-config-role", "medium", []string{"filename", "path"}, []string{"cloud", "aws", "configuration"}, []string{"aws-config-artifact-review"}), seedTriageWeakReview), seedClassWeakReview, "medium", false),
+			noise("aws-notes.txt", "aws-notes-benign", "low", []string{"cloud", "noise"}, []string{"noise-review"}),
+		}, renderVariant),
+		newSpec("aws-correlation", []string{
+			"Users/Erin/.aws",
+		}, []templateVariant{
+			classify(triage(likely("credentials", "aws-credentials-real", "high", []string{"content", "validated", "filename", "path", "correlation"}, []string{"cloud", "aws", "credentials"}, []string{"aws-credential-artifact-review"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
+			classify(triage(likely("config", "aws-config-role", "medium", []string{"filename", "path"}, []string{"cloud", "aws", "configuration"}, []string{"aws-config-artifact-review"}), seedTriageWeakReview), seedClassWeakReview, "medium", false),
+			noise("migration-notes.txt", "aws-notes-benign", "low", []string{"cloud", "noise"}, []string{"noise-review"}),
 		}, renderVariant),
 		newSpec("legacy", []string{
 			"Archive/Legacy/App1/Config", "Archive/Legacy/App2/Config", "Old", "Archive",
@@ -325,6 +352,38 @@ func archiveTemplateVariants() []templateVariant {
 		noise("binary-media-bundle.zip", "zip-binary-only", "low", []string{"archives", "noise"}, []string{"archive-review"}),
 		noise("nested-export-bundle.zip", "zip-nested-archive", "low", []string{"archives", "noise"}, []string{"archive-review"}),
 		noise("oversized-config-export.zip", "zip-oversized", "low", []string{"archives", "noise"}, []string{"archive-review"}),
+	}
+}
+
+func officeTemplateVariants() []templateVariant {
+	return []templateVariant{
+		archiveInnerPath(classify(triage(likely("credentials.docx", "office-docx-credentials", "high", []string{"content", "filename", "extension"}, []string{"documents", "office", "credentials"}, []string{"office-document-review", "hardcoded-secret-indicators"}), seedTriageActionable), seedClassActionable, "high", false), "word/document.xml"),
+		archiveInnerPath(classify(triage(likely("db-access.xlsx", "office-xlsx-credentials", "high", []string{"content", "filename", "extension"}, []string{"documents", "office", "database", "credentials"}, []string{"office-document-review", "database-connection-strings"}), seedTriageActionable), seedClassActionable, "high", false), "xl/sharedStrings.xml"),
+		archiveInnerPath(classify(triage(likely("vpn-rollout.pptx", "office-pptx-credentials", "high", []string{"content", "filename", "extension"}, []string{"documents", "office", "remote-access"}, []string{"office-document-review", "api-token-exposure"}), seedTriageActionable), seedClassActionable, "high", false), "ppt/slides/slide1.xml"),
+		noise("quarterly-update.docx", "office-docx-benign", "low", []string{"documents", "office", "noise"}, []string{"office-document-review"}),
+		noise("inventory.xlsx", "office-xlsx-benign", "low", []string{"documents", "office", "noise"}, []string{"office-document-review"}),
+		noise("townhall-notes.pptx", "office-pptx-benign", "low", []string{"documents", "office", "noise"}, []string{"office-document-review"}),
+	}
+}
+
+func tarTemplateVariants() []templateVariant {
+	return []templateVariant{
+		archiveInnerPath(classify(triage(likely("linux-backup.tar", "tar-shadow-backup", "high", []string{"content", "filename", "extension"}, []string{"archives", "linux", "credentials"}, []string{"archive-review", "secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false), "etc/shadow.bak"),
+		archiveInnerPath(classify(triage(likely("deploy-configs.tar.gz", "tar-env-configs", "high", []string{"content", "filename", "extension"}, []string{"archives", "configuration", "database", "credentials"}, []string{"archive-review", "database-connection-strings"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true), "app/.env"),
+		archiveInnerPath(classify(triage(likely("ops-recovery.tgz", "tar-private-key-bundle", "high", []string{"content", "filename", "extension", "correlation"}, []string{"archives", "crypto", "keys", "remote-access"}, []string{"archive-review", "private-key-header-validation"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true), "keys/id_rsa"),
+		classify(triage(noise("binary-drop.tar", "tar-binary-only", "low", []string{"archives", "noise"}, []string{"archive-review"}), seedTriageConfigOnly), seedClassConfigOnly, "low", false),
+		classify(triage(noise("nested-backup.tar.gz", "tar-nested-archive", "low", []string{"archives", "noise"}, []string{"archive-review"}), seedTriageConfigOnly), seedClassConfigOnly, "low", false),
+		classify(triage(noise("oversized-export.tgz", "tar-oversized", "low", []string{"archives", "noise"}, []string{"archive-review"}), seedTriageConfigOnly), seedClassConfigOnly, "low", false),
+	}
+}
+
+func wimTemplateVariants() []templateVariant {
+	return []templateVariant{
+		archiveInnerPath(classify(triage(likely("domain-backup.wim", "wim-ntds-system", "high", []string{"filename", "correlation"}, []string{"wim", "active-directory", "secret-store"}, []string{"wim-artifact-review", "secret-store-artifact-review"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true), "Windows/NTDS/ntds.dit"),
+		archiveInnerPath(classify(triage(likely("repair-media.wim", "wim-hives", "high", []string{"filename"}, []string{"wim", "windows", "secret-store"}, []string{"wim-artifact-review", "secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false), "Windows/System32/config/SAM"),
+		archiveInnerPath(classify(triage(likely("deploy-image.wim", "wim-unattend", "high", []string{"content", "validated"}, []string{"wim", "deployment", "credentials"}, []string{"wim-artifact-review", "unattended-install"}), seedTriageActionable), seedClassActionable, "high", false), "Windows/Panther/unattend.xml"),
+		archiveInnerPath(classify(triage(likely("mdt-capture.wim", "wim-mdt", "high", []string{"content", "validated"}, []string{"wim", "deployment", "mdt"}, []string{"wim-artifact-review", "deployment-config-review"}), seedTriageActionable), seedClassActionable, "high", false), "Deploy/Control/bootstrap.ini"),
+		classify(triage(noise("reference-image.wim", "wim-benign", "low", []string{"wim", "noise"}, []string{"wim-artifact-review"}), seedTriageConfigOnly), seedClassConfigOnly, "low", false),
 	}
 }
 
@@ -528,6 +587,45 @@ func renderVariant(ctx renderContext, variant templateVariant) []byte {
 			"aws_secret_access_key="+secretValue(ctx),
 			"token="+tokenValue(ctx),
 			"note=LAB_ONLY_VALUE_DO_NOT_USE",
+		)
+	case "aws-credentials-real":
+		return text(
+			"[default]",
+			"aws_access_key_id = "+awsAccessKeyIDValue(ctx),
+			"aws_secret_access_key = "+awsSecretAccessKeyValue(ctx),
+			"aws_session_token = "+awsSessionTokenValue(ctx),
+			"",
+			"[ops-admin]",
+			"aws_access_key_id = "+awsAccessKeyIDValue(awsDerivedContext(ctx, "ops")),
+			"aws_secret_access_key = "+awsSecretAccessKeyValue(awsDerivedContext(ctx, "ops")),
+		)
+	case "aws-config-benign":
+		return text(
+			"[default]",
+			"region = eu-north-1",
+			"output = json",
+			"",
+			"[profile audit-readonly]",
+			"region = eu-west-1",
+			"output = table",
+			"cli_pager = ",
+		)
+	case "aws-config-role":
+		return text(
+			"[default]",
+			"region = us-east-1",
+			"output = json",
+			"",
+			"[profile operations-admin]",
+			"role_arn = arn:aws:iam::123456789012:role/OperationsAdmin",
+			"source_profile = default",
+			"region = us-east-1",
+		)
+	case "aws-notes-benign":
+		return text(
+			"AWS migration notes",
+			"Profile cleanup is pending after the test cutover.",
+			"All secrets are supposed to stay in approved secret-management workflows.",
 		)
 	case "notes-benign":
 		return text(
@@ -880,6 +978,18 @@ func renderArchiveVariant(ctx renderContext, variant templateVariant) []byte {
 	return buildArchiveBytes(ctx, archiveMembersForVariant(ctx, variant))
 }
 
+func renderTarVariant(ctx renderContext, variant templateVariant) []byte {
+	return buildTARBytes(ctx, tarMembersForVariant(ctx, variant))
+}
+
+func renderOfficeVariant(ctx renderContext, variant templateVariant) []byte {
+	return buildArchiveBytes(ctx, officeMembersForVariant(ctx, variant))
+}
+
+func renderWIMVariant(ctx renderContext, variant templateVariant) []byte {
+	return buildWIMBytes(ctx, wimMembersForVariant(ctx, variant))
+}
+
 func archiveMembersForVariant(ctx renderContext, variant templateVariant) []archiveMemberTemplate {
 	switch variant.ContentStyle {
 	case "zip-db-env":
@@ -945,6 +1055,126 @@ func archiveMembersForVariant(ctx renderContext, variant templateVariant) []arch
 	}
 }
 
+func tarMembersForVariant(ctx renderContext, variant templateVariant) []archiveMemberTemplate {
+	switch variant.ContentStyle {
+	case "tar-shadow-backup":
+		return []archiveMemberTemplate{
+			{Path: "etc/shadow.bak", Content: []byte("root:$6$synthetic$abcdefghijklmnopqrstuvwx:19000:0:99999:7:::\n")},
+			{Path: "etc/passwd", Content: []byte("root:x:0:0:root:/root:/bin/bash\n")},
+			{Path: "docs/readme.txt", ContentStyle: "readme-noise"},
+		}
+	case "tar-env-configs":
+		return []archiveMemberTemplate{
+			{Path: "app/.env", ContentStyle: "db-env"},
+			{Path: "app/config.ini", ContentStyle: "config-kv"},
+			{Path: "notes/deploy.txt", ContentStyle: "notes-service"},
+		}
+	case "tar-private-key-bundle":
+		return []archiveMemberTemplate{
+			{Path: "keys/id_rsa", ContentStyle: "openssh-private-key"},
+			{Path: "vpn/client-admin.ovpn", ContentStyle: "ovpn-config"},
+			{Path: "ssh/authorized_keys", ContentStyle: "authorized-keys"},
+		}
+	case "tar-binary-only":
+		return []archiveMemberTemplate{
+			{Path: "bin/tool.exe", Content: append([]byte("MZ"), bytes.Repeat([]byte{0x00, 0x02, 0x03, 0x04}, 256)...), Store: true},
+			{Path: "media/logo.png", Content: append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00}, bytes.Repeat([]byte{0x01}, 256)...), Store: true},
+		}
+	case "tar-nested-archive":
+		inner := buildTARBytes(ctx, []archiveMemberTemplate{
+			{Path: "configs/passwords.txt", ContentStyle: "notes-creds"},
+		})
+		return []archiveMemberTemplate{
+			{Path: "nested/inner.tar", Content: inner, Store: true},
+			{Path: "docs/readme.txt", ContentStyle: "readme-noise"},
+		}
+	case "tar-oversized":
+		return []archiveMemberTemplate{
+			{Path: "exports/creds.txt", Content: oversizedArchiveText(ctx, 11*1024*1024), Store: true},
+		}
+	default:
+		return []archiveMemberTemplate{
+			{Path: "docs/readme.txt", ContentStyle: "readme-noise"},
+		}
+	}
+}
+
+func officeMembersForVariant(ctx renderContext, variant templateVariant) []archiveMemberTemplate {
+	switch variant.ContentStyle {
+	case "office-docx-credentials":
+		return append(officeBaseMembers(".docx"), archiveMemberTemplate{
+			Path: "word/document.xml",
+			Content: officeDocumentXML(
+				"Migration credential notes",
+				"service_account="+serviceAccountValue(ctx),
+				"password="+dbPasswordValue(ctx),
+				"client_secret="+clientSecretValue(ctx),
+				mssqlConnectionStringValue(ctx),
+			),
+		})
+	case "office-xlsx-credentials":
+		return append(officeBaseMembers(".xlsx"),
+			archiveMemberTemplate{
+				Path: "xl/sharedStrings.xml",
+				Content: officeSharedStringsXML(
+					"db_user="+dbUserValue(ctx),
+					"db_password="+dbPasswordValue(ctx),
+					"client_secret="+clientSecretValue(ctx),
+					postgresConnectionURLValue(ctx),
+				),
+			},
+			archiveMemberTemplate{
+				Path:    "xl/worksheets/sheet1.xml",
+				Content: officeWorksheetXML(3),
+			},
+		)
+	case "office-pptx-credentials":
+		return append(officeBaseMembers(".pptx"), archiveMemberTemplate{
+			Path: "ppt/slides/slide1.xml",
+			Content: officeSlideXML(
+				"VPN rollout",
+				"remote=vpn-"+ctx.Label+".example.invalid",
+				"shared_secret="+clientSecretValue(ctx),
+				"password="+dbPasswordValue(ctx),
+			),
+		})
+	case "office-docx-benign":
+		return append(officeBaseMembers(".docx"), archiveMemberTemplate{
+			Path: "word/document.xml",
+			Content: officeDocumentXML(
+				"Quarterly update",
+				"Owner: "+personaValue(ctx),
+				"Status: on track",
+			),
+		})
+	case "office-xlsx-benign":
+		return append(officeBaseMembers(".xlsx"),
+			archiveMemberTemplate{
+				Path:    "xl/sharedStrings.xml",
+				Content: officeSharedStringsXML("Q1", "Q2", "Owner", personaValue(ctx)),
+			},
+			archiveMemberTemplate{
+				Path:    "xl/worksheets/sheet1.xml",
+				Content: officeWorksheetXML(4),
+			},
+		)
+	case "office-pptx-benign":
+		return append(officeBaseMembers(".pptx"), archiveMemberTemplate{
+			Path: "ppt/slides/slide1.xml",
+			Content: officeSlideXML(
+				"Town hall",
+				"Agenda",
+				"Synthetic lab presentation only",
+			),
+		})
+	default:
+		return append(officeBaseMembers(".docx"), archiveMemberTemplate{
+			Path:    "word/document.xml",
+			Content: officeDocumentXML("Synthetic document"),
+		})
+	}
+}
+
 func buildArchiveBytes(ctx renderContext, members []archiveMemberTemplate) []byte {
 	var buf bytes.Buffer
 	writer := zip.NewWriter(&buf)
@@ -983,6 +1213,133 @@ func buildArchiveBytes(ctx renderContext, members []archiveMemberTemplate) []byt
 	return buf.Bytes()
 }
 
+func buildTARBytes(ctx renderContext, members []archiveMemberTemplate) []byte {
+	var archiveBuf bytes.Buffer
+	tw := tar.NewWriter(&archiveBuf)
+	for _, member := range members {
+		content := member.Content
+		if content == nil {
+			memberCtx := ctx
+			memberCtx.Filename = path.Base(member.Path)
+			memberCtx.Format = inferFormat(memberCtx.Filename)
+			memberCtx.ContentStyle = member.ContentStyle
+			content = renderVariant(memberCtx, templateVariant{
+				Filename:     memberCtx.Filename,
+				Format:       memberCtx.Format,
+				ContentStyle: member.ContentStyle,
+			})
+		}
+		header := &tar.Header{
+			Name:     strings.TrimPrefix(strings.ReplaceAll(member.Path, `\`, "/"), "./"),
+			Mode:     0o644,
+			Size:     int64(len(content)),
+			ModTime:  archiveTimestamp,
+			Typeflag: tar.TypeReg,
+		}
+		if err := tw.WriteHeader(header); err != nil {
+			panic(fmt.Sprintf("build tar: write header %s: %v", member.Path, err))
+		}
+		if _, err := tw.Write(content); err != nil {
+			panic(fmt.Sprintf("build tar: write %s: %v", member.Path, err))
+		}
+	}
+	if err := tw.Close(); err != nil {
+		panic(fmt.Sprintf("build tar: close: %v", err))
+	}
+
+	if strings.HasSuffix(strings.ToLower(ctx.Filename), ".tar.gz") || strings.HasSuffix(strings.ToLower(ctx.Filename), ".tgz") {
+		var gzipBuf bytes.Buffer
+		gw, err := gzip.NewWriterLevel(&gzipBuf, gzip.NoCompression)
+		if err != nil {
+			panic(fmt.Sprintf("build tar gzip: create: %v", err))
+		}
+		gw.Name = ctx.Filename
+		gw.ModTime = archiveTimestamp
+		if _, err := gw.Write(archiveBuf.Bytes()); err != nil {
+			panic(fmt.Sprintf("build tar gzip: write: %v", err))
+		}
+		if err := gw.Close(); err != nil {
+			panic(fmt.Sprintf("build tar gzip: close: %v", err))
+		}
+		return gzipBuf.Bytes()
+	}
+
+	return archiveBuf.Bytes()
+}
+
+func officeBaseMembers(ext string) []archiveMemberTemplate {
+	switch ext {
+	case ".docx":
+		return []archiveMemberTemplate{
+			{Path: "[Content_Types].xml", Content: []byte(`<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>`)},
+			{Path: "_rels/.rels", Content: []byte(`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`)},
+			{Path: "docProps/core.xml", Content: []byte(`<?xml version="1.0" encoding="UTF-8"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"><dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">Synthetic Office Seed</dc:title></cp:coreProperties>`)},
+		}
+	case ".xlsx":
+		return []archiveMemberTemplate{
+			{Path: "[Content_Types].xml", Content: []byte(`<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>`)},
+			{Path: "_rels/.rels", Content: []byte(`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`)},
+			{Path: "xl/workbook.xml", Content: []byte(`<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"></workbook>`)},
+		}
+	case ".pptx":
+		return []archiveMemberTemplate{
+			{Path: "[Content_Types].xml", Content: []byte(`<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>`)},
+			{Path: "_rels/.rels", Content: []byte(`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`)},
+			{Path: "ppt/presentation.xml", Content: []byte(`<?xml version="1.0" encoding="UTF-8"?><p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"></p:presentation>`)},
+		}
+	default:
+		return nil
+	}
+}
+
+func officeDocumentXML(lines ...string) []byte {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>`)
+	for _, line := range lines {
+		b.WriteString(`<w:p><w:r><w:t>`)
+		b.WriteString(xmlEscape(line))
+		b.WriteString(`</w:t></w:r></w:p>`)
+	}
+	b.WriteString(`</w:body></w:document>`)
+	return []byte(b.String())
+}
+
+func officeSharedStringsXML(values ...string) []byte {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`)
+	for _, value := range values {
+		b.WriteString(`<si><t>`)
+		b.WriteString(xmlEscape(value))
+		b.WriteString(`</t></si>`)
+	}
+	b.WriteString(`</sst>`)
+	return []byte(b.String())
+}
+
+func officeWorksheetXML(sharedStringCount int) []byte {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">`)
+	for idx := 0; idx < sharedStringCount; idx++ {
+		b.WriteString(`<c t="s"><v>`)
+		b.WriteString(fmt.Sprintf("%d", idx))
+		b.WriteString(`</v></c>`)
+	}
+	b.WriteString(`</row></sheetData></worksheet>`)
+	return []byte(b.String())
+}
+
+func officeSlideXML(lines ...string) []byte {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree>`)
+	for _, line := range lines {
+		b.WriteString(`<p:sp><p:txBody><a:p><a:r><a:t>`)
+		b.WriteString(xmlEscape(line))
+		b.WriteString(`</a:t></a:r></a:p></p:txBody></p:sp>`)
+	}
+	b.WriteString(`</p:spTree></p:cSld></p:sld>`)
+	return []byte(b.String())
+}
+
 func oversizedArchiveText(ctx renderContext, size int) []byte {
 	if size <= 0 {
 		return nil
@@ -1012,11 +1369,19 @@ func oversizedArchiveText(ctx renderContext, size int) []byte {
 }
 
 func inferFormat(filename string) string {
-	parts := strings.Split(filename, ".")
-	if len(parts) < 2 {
-		return "txt"
+	lower := strings.ToLower(strings.TrimSpace(filename))
+	switch {
+	case strings.HasSuffix(lower, ".tar.gz"):
+		return "tar.gz"
+	case strings.HasSuffix(lower, ".tgz"):
+		return "tgz"
+	default:
+		parts := strings.Split(filename, ".")
+		if len(parts) < 2 {
+			return "txt"
+		}
+		return strings.ToLower(parts[len(parts)-1])
 	}
-	return strings.ToLower(parts[len(parts)-1])
 }
 
 func accountValue(ctx renderContext) string {
@@ -1054,6 +1419,41 @@ func tokenValue(ctx renderContext) string {
 
 func apiKeyValue(ctx renderContext) string {
 	return "FAKE_API_KEY_" + strings.ReplaceAll(ctx.Token, "_", "")
+}
+
+func awsAccessKeyIDValue(ctx renderContext) string {
+	token := strings.ToUpper(strings.ReplaceAll(ctx.Token, "_", ""))
+	if len(token) < 16 {
+		token += strings.Repeat("A", 16-len(token))
+	}
+	return "AKIA" + token[:16]
+}
+
+func awsSecretAccessKeyValue(ctx renderContext) string {
+	base := "ABcdEFghIJklMNopQRstUVwxYZ0123456789/+"
+	token := strings.ReplaceAll(ctx.Token, "_", "")
+	if token == "" {
+		token = "SNABLRAWS"
+	}
+	combined := strings.Repeat(base+token, 3)
+	return combined[:40]
+}
+
+func awsSessionTokenValue(ctx renderContext) string {
+	token := strings.ReplaceAll(strings.ToUpper(ctx.Token), "_", "")
+	if token == "" {
+		token = "SNABLRSESSION"
+	}
+	return "IQoJb3JpZ2luX2VjEKD//////////wEaCXVzLWVhc3QtMSJHMEUC" + token + "A1BC2DE3FG4HI5JK6LM7NO8PQ9RS"
+}
+
+func awsDerivedContext(ctx renderContext, suffix string) renderContext {
+	derived := ctx
+	if strings.TrimSpace(suffix) == "" {
+		return derived
+	}
+	derived.Token = ctx.Token + "_" + suffix
+	return derived
 }
 
 func clientSecretValue(ctx renderContext) string {

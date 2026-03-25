@@ -1,12 +1,17 @@
 package seed
 
 import (
+	"archive/zip"
+	"bytes"
+	"io"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"snablr/internal/rules"
 	"snablr/internal/scanner"
+	"snablr/internal/wiminspect"
 	"snablr/pkg/logx"
 )
 
@@ -229,7 +234,7 @@ func TestGenerateSecretStoreSeedPackIncludesActionableArtifacts(t *testing.T) {
 
 	files, err := Generate(GenerateOptions{
 		CountPerCategory: 12,
-		MaxFiles:         240,
+		MaxFiles:         600,
 		SeedPrefix:       "SnablrLab",
 		RandomSeed:       20260316,
 	})
@@ -313,6 +318,52 @@ func TestGenerateSecretStoreSeedPackIncludesActionableArtifacts(t *testing.T) {
 	}
 	if !foundDecoy {
 		t.Fatal("expected secret-store seed pack to include benign decoys")
+	}
+}
+
+func TestGenerateAWSSeedPackIncludesPrimaryAndSupportingArtifacts(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 8,
+		MaxFiles:         260,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260325,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	foundCreds := false
+	foundConfig := false
+	foundCorrelated := false
+	for _, file := range files {
+		if file.Category != "aws-artifacts" && file.Category != "aws-correlation" {
+			continue
+		}
+		switch strings.ToLower(file.Filename) {
+		case "credentials", "credentials.bak":
+			if file.ExpectedClass == seedClassActionable || file.ExpectedClass == seedClassCorrelatedHighConfidence {
+				foundCreds = true
+			}
+		case "config", "config.bak":
+			if file.ExpectedTriageClass == seedTriageWeakReview {
+				foundConfig = true
+			}
+		}
+		if file.Category == "aws-correlation" && file.ExpectedCorrelated && file.ExpectedClass == seedClassCorrelatedHighConfidence {
+			foundCorrelated = true
+		}
+	}
+
+	if !foundCreds {
+		t.Fatal("expected actionable AWS credentials seeds")
+	}
+	if !foundConfig {
+		t.Fatal("expected supporting AWS config seeds")
+	}
+	if !foundCorrelated {
+		t.Fatal("expected correlated AWS seed pack")
 	}
 }
 
@@ -733,6 +784,122 @@ func TestGenerateZIPSeedPackIncludesPositiveAndNegativeCases(t *testing.T) {
 	}
 }
 
+func TestGenerateTARSeedPackIncludesPositiveAndNegativeCases(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 24,
+		MaxFiles:         900,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260326,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	foundActionable := false
+	foundCorrelated := false
+	foundBinaryNoise := false
+	foundNestedNoise := false
+	foundOversized := false
+
+	for _, file := range files {
+		if file.Category != "tar-archives" {
+			continue
+		}
+		switch strings.ToLower(file.Filename) {
+		case "linux-backup.tar":
+			if file.ExpectedClass == seedClassActionable && strings.HasSuffix(file.ExpectedPath, "linux-backup.tar!etc/shadow.bak") {
+				foundActionable = true
+			}
+		case "deploy-configs.tar.gz", "ops-recovery.tgz":
+			if file.ExpectedClass == seedClassCorrelatedHighConfidence && strings.Contains(file.ExpectedPath, "!") {
+				foundCorrelated = true
+			}
+		case "binary-drop.tar":
+			if file.IntendedAs == "filler/noise" {
+				foundBinaryNoise = true
+			}
+		case "nested-backup.tar.gz":
+			if file.IntendedAs == "filler/noise" {
+				foundNestedNoise = true
+			}
+		case "oversized-export.tgz":
+			if file.IntendedAs == "filler/noise" && len(file.Content) > 10*1024*1024 {
+				foundOversized = true
+			}
+		}
+	}
+
+	if !foundActionable || !foundCorrelated || !foundBinaryNoise || !foundNestedNoise || !foundOversized {
+		t.Fatalf("expected tar seed pack to include positive and negative cases, got actionable=%v correlated=%v binary=%v nested=%v oversized=%v", foundActionable, foundCorrelated, foundBinaryNoise, foundNestedNoise, foundOversized)
+	}
+}
+
+func TestGeneratedTARSeedProducesArchiveFindings(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 24,
+		MaxFiles:         900,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260326,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	var tarSeed *SeedFile
+	for i := range files {
+		file := &files[i]
+		if file.Category == "tar-archives" && file.ExpectedPath != "" && strings.EqualFold(file.Filename, "deploy-configs.tar.gz") {
+			tarSeed = file
+			break
+		}
+	}
+	if tarSeed == nil {
+		t.Fatal("expected generated tar archive seed")
+	}
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := scanner.NewEngine(scanner.Options{
+		WIM: wiminspect.Options{
+			Enabled:        true,
+			AutoWIMMaxSize: 128 * 1024 * 1024,
+			MaxWIMSize:     128 * 1024 * 1024,
+			MaxMembers:     8,
+			MaxMemberBytes: 1024 * 1024,
+			MaxTotalBytes:  4 * 1024 * 1024,
+		},
+	}, manager, nil, logx.New("error"))
+	meta := scanner.FileMetadata{
+		FilePath:  FullPath(*tarSeed),
+		Name:      tarSeed.Filename,
+		Extension: ".gz",
+		Size:      int64(len(tarSeed.Content)),
+	}
+	evaluation := engine.Evaluate(meta, tarSeed.Content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected findings from generated tar seed, got %#v", evaluation)
+	}
+
+	foundExpectedPath := false
+	for _, finding := range evaluation.Findings {
+		if finding.FilePath == tarSeed.ExpectedPath && finding.ArchivePath == FullPath(*tarSeed) && finding.ArchiveMemberPath == "app/.env" {
+			foundExpectedPath = true
+			break
+		}
+	}
+	if !foundExpectedPath {
+		t.Fatalf("expected tar finding path %q, got %#v", tarSeed.ExpectedPath, evaluation.Findings)
+	}
+}
+
 func TestGeneratedZIPSeedProducesArchiveFindings(t *testing.T) {
 	t.Parallel()
 
@@ -764,7 +931,16 @@ func TestGeneratedZIPSeedProducesArchiveFindings(t *testing.T) {
 		t.Fatalf("LoadManager returned error: %v", err)
 	}
 
-	engine := scanner.NewEngine(scanner.Options{}, manager, nil, logx.New("error"))
+	engine := scanner.NewEngine(scanner.Options{
+		WIM: wiminspect.Options{
+			Enabled:        true,
+			AutoWIMMaxSize: 128 * 1024 * 1024,
+			MaxWIMSize:     128 * 1024 * 1024,
+			MaxMembers:     8,
+			MaxMemberBytes: 1024 * 1024,
+			MaxTotalBytes:  4 * 1024 * 1024,
+		},
+	}, manager, nil, logx.New("error"))
 	meta := scanner.FileMetadata{
 		FilePath:  FullPath(*archiveSeed),
 		Name:      archiveSeed.Filename,
@@ -819,7 +995,16 @@ func TestGeneratedZIPSeedProducesPrivateKeyArchiveFindings(t *testing.T) {
 		t.Fatalf("LoadManager returned error: %v", err)
 	}
 
-	engine := scanner.NewEngine(scanner.Options{}, manager, nil, logx.New("error"))
+	engine := scanner.NewEngine(scanner.Options{
+		WIM: wiminspect.Options{
+			Enabled:        true,
+			AutoWIMMaxSize: 128 * 1024 * 1024,
+			MaxWIMSize:     128 * 1024 * 1024,
+			MaxMembers:     8,
+			MaxMemberBytes: 1024 * 1024,
+			MaxTotalBytes:  4 * 1024 * 1024,
+		},
+	}, manager, nil, logx.New("error"))
 	meta := scanner.FileMetadata{
 		FilePath:  FullPath(*archiveSeed),
 		Name:      archiveSeed.Filename,
@@ -934,6 +1119,311 @@ func TestGeneratedOversizedZIPSeedIsSkippedByDefault(t *testing.T) {
 	evaluation := engine.Evaluate(meta, oversized.Content)
 	if !evaluation.Skipped || !strings.Contains(evaluation.SkipReason, "automatic inspection limit") {
 		t.Fatalf("expected oversized zip seed to be skipped by default, got %#v", evaluation)
+	}
+}
+
+func TestGenerateOfficeSeedPackIncludesPositiveAndNegativeCases(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 18,
+		MaxFiles:         900,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260325,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	foundDOCX := false
+	foundXLSX := false
+	foundPPTX := false
+	foundBenign := false
+
+	for _, file := range files {
+		if file.Category != "office-documents" {
+			continue
+		}
+		switch strings.ToLower(file.Filename) {
+		case "credentials.docx":
+			if file.ExpectedClass == seedClassActionable && strings.HasSuffix(file.ExpectedPath, "credentials.docx!word/document.xml") {
+				foundDOCX = true
+			}
+		case "db-access.xlsx":
+			if file.ExpectedClass == seedClassActionable && strings.HasSuffix(file.ExpectedPath, "db-access.xlsx!xl/sharedStrings.xml") {
+				foundXLSX = true
+			}
+		case "vpn-rollout.pptx":
+			if file.ExpectedClass == seedClassActionable && strings.HasSuffix(file.ExpectedPath, "vpn-rollout.pptx!ppt/slides/slide1.xml") {
+				foundPPTX = true
+			}
+		case "quarterly-update.docx", "inventory.xlsx", "townhall-notes.pptx":
+			if file.IntendedAs == "filler/noise" && file.ExpectedPath == "" {
+				foundBenign = true
+			}
+		}
+	}
+
+	if !foundDOCX || !foundXLSX || !foundPPTX || !foundBenign {
+		t.Fatalf("expected office seed pack to include positive/negative cases, got docx=%v xlsx=%v pptx=%v benign=%v", foundDOCX, foundXLSX, foundPPTX, foundBenign)
+	}
+}
+
+func TestGeneratedOfficeSeedProducesFindings(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 18,
+		MaxFiles:         900,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260325,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	var officeSeed *SeedFile
+	for i := range files {
+		file := &files[i]
+		if file.Category == "office-documents" && strings.EqualFold(file.Filename, "credentials.docx") {
+			officeSeed = file
+			break
+		}
+	}
+	if officeSeed == nil {
+		t.Fatal("expected generated office seed")
+	}
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := scanner.NewEngine(scanner.Options{
+		WIM: wiminspect.Options{
+			Enabled:        true,
+			AutoWIMMaxSize: 128 * 1024 * 1024,
+			MaxWIMSize:     128 * 1024 * 1024,
+			MaxMembers:     8,
+			MaxMemberBytes: 1024 * 1024,
+			MaxTotalBytes:  4 * 1024 * 1024,
+		},
+	}, manager, nil, logx.New("error"))
+	meta := scanner.FileMetadata{
+		FilePath:  FullPath(*officeSeed),
+		Name:      officeSeed.Filename,
+		Extension: ".docx",
+		Size:      int64(len(officeSeed.Content)),
+	}
+	evaluation := engine.Evaluate(meta, officeSeed.Content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected findings from generated office seed, got %#v", evaluation)
+	}
+
+	foundExpectedPath := false
+	foundContentDriven := false
+	for _, finding := range evaluation.Findings {
+		if finding.FilePath == officeSeed.ExpectedPath && finding.ArchivePath == FullPath(*officeSeed) && finding.ArchiveMemberPath == "word/document.xml" {
+			foundExpectedPath = true
+		}
+		if finding.FilePath == officeSeed.ExpectedPath && (finding.RuleID == "content.password_assignment_indicators" || finding.RuleID == "content.secret_assignment_indicators" || finding.RuleID == "content.database_connection_string_indicators" || finding.RuleID == "dbinspect.access.connection_string") {
+			foundContentDriven = true
+		}
+	}
+	if !foundExpectedPath {
+		t.Fatalf("expected office finding path %q, got %#v", officeSeed.ExpectedPath, evaluation.Findings)
+	}
+	if !foundContentDriven {
+		t.Fatalf("expected generated office seed to produce content-driven findings, got %#v", evaluation.Findings)
+	}
+}
+
+func TestGeneratedOfficeSeedUsesNonPlaceholderCredentialShapes(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 18,
+		MaxFiles:         900,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260325,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	var officeSeed *SeedFile
+	for i := range files {
+		file := &files[i]
+		if file.Category == "office-documents" && strings.EqualFold(file.Filename, "credentials.docx") {
+			officeSeed = file
+			break
+		}
+	}
+	if officeSeed == nil {
+		t.Fatal("expected generated office seed")
+	}
+
+	reader, err := zip.NewReader(bytes.NewReader(officeSeed.Content), int64(len(officeSeed.Content)))
+	if err != nil {
+		t.Fatalf("zip.NewReader returned error: %v", err)
+	}
+
+	var document string
+	for _, file := range reader.File {
+		if file.Name != "word/document.xml" {
+			continue
+		}
+		rc, err := file.Open()
+		if err != nil {
+			t.Fatalf("Open returned error: %v", err)
+		}
+		payload, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatalf("ReadAll returned error: %v", err)
+		}
+		document = string(payload)
+		break
+	}
+	if document == "" {
+		t.Fatal("expected word/document.xml in generated office seed")
+	}
+	for _, want := range []string{"password=FAKE_DB_PASSWORD_", "client_secret=SAMPLE_CLIENT_SECRET_", "Server=db-"} {
+		if !strings.Contains(document, want) {
+			t.Fatalf("expected generated office seed to contain %q, got %q", want, document)
+		}
+	}
+	for _, unwanted := range []string{"EXAMPLE_PASSWORD_", "DEMO_CONN_STRING_"} {
+		if strings.Contains(document, unwanted) {
+			t.Fatalf("expected generated office seed to avoid placeholder value %q, got %q", unwanted, document)
+		}
+	}
+}
+
+func TestGenerateWIMSeedPackIncludesPositiveAndNegativeCases(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("wimlib-imagex"); err != nil {
+		t.Skip("wimlib-imagex not available")
+	}
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 18,
+		MaxFiles:         1200,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260330,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	foundCorrelated := false
+	foundUnattend := false
+	foundMDT := false
+	foundBenign := false
+
+	for _, file := range files {
+		if file.Category != "wim-images" {
+			continue
+		}
+		switch strings.ToLower(file.Filename) {
+		case "domain-backup.wim":
+			if file.ExpectedClass == seedClassCorrelatedHighConfidence && strings.HasSuffix(strings.ToLower(file.ExpectedPath), "domain-backup.wim!windows/ntds/ntds.dit") {
+				foundCorrelated = true
+			}
+		case "deploy-image.wim":
+			if file.ExpectedClass == seedClassActionable && strings.HasSuffix(strings.ToLower(file.ExpectedPath), "deploy-image.wim!windows/panther/unattend.xml") {
+				foundUnattend = true
+			}
+		case "mdt-capture.wim":
+			if file.ExpectedClass == seedClassActionable && strings.HasSuffix(strings.ToLower(file.ExpectedPath), "mdt-capture.wim!deploy/control/bootstrap.ini") {
+				foundMDT = true
+			}
+		case "reference-image.wim":
+			if file.ExpectedClass == seedClassConfigOnly && file.ExpectedPath == "" {
+				foundBenign = true
+			}
+		}
+	}
+
+	if !foundCorrelated || !foundUnattend || !foundMDT || !foundBenign {
+		t.Fatalf("expected WIM seed pack to include positive/negative cases, got correlated=%v unattend=%v mdt=%v benign=%v", foundCorrelated, foundUnattend, foundMDT, foundBenign)
+	}
+}
+
+func TestGeneratedWIMSeedProducesFindings(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("wimlib-imagex"); err != nil {
+		t.Skip("wimlib-imagex not available")
+	}
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 18,
+		MaxFiles:         1200,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260330,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	var wimSeed *SeedFile
+	for i := range files {
+		file := &files[i]
+		if file.Category == "wim-images" && strings.EqualFold(file.Filename, "deploy-image.wim") {
+			wimSeed = file
+			break
+		}
+	}
+	if wimSeed == nil {
+		t.Fatal("expected generated WIM seed")
+	}
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := scanner.NewEngine(scanner.Options{
+		WIM: wiminspect.Options{
+			Enabled:        true,
+			AutoWIMMaxSize: 128 * 1024 * 1024,
+			MaxWIMSize:     128 * 1024 * 1024,
+			MaxMembers:     8,
+			MaxMemberBytes: 1024 * 1024,
+			MaxTotalBytes:  4 * 1024 * 1024,
+		},
+	}, manager, nil, logx.New("error"))
+	meta := scanner.FileMetadata{
+		FilePath:  FullPath(*wimSeed),
+		Name:      wimSeed.Filename,
+		Extension: ".wim",
+		Size:      int64(len(wimSeed.Content)),
+	}
+	evaluation := engine.Evaluate(meta, wimSeed.Content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected findings from generated WIM seed, got %#v", evaluation)
+	}
+
+	foundExpectedPath := false
+	foundContentDriven := false
+	for _, finding := range evaluation.Findings {
+		if strings.EqualFold(finding.FilePath, wimSeed.ExpectedPath) &&
+			strings.EqualFold(finding.ArchivePath, FullPath(*wimSeed)) &&
+			strings.EqualFold(strings.ReplaceAll(finding.ArchiveMemberPath, `\`, "/"), "Windows/Panther/unattend.xml") {
+			foundExpectedPath = true
+		}
+		if strings.EqualFold(finding.FilePath, wimSeed.ExpectedPath) &&
+			(finding.RuleID == "content.unattended_deployment_password_fields" || finding.RuleID == "content.password_assignment_indicators") {
+			foundContentDriven = true
+		}
+	}
+	if !foundExpectedPath {
+		t.Fatalf("expected WIM finding path %q, got %#v", wimSeed.ExpectedPath, evaluation.Findings)
+	}
+	if !foundContentDriven {
+		t.Fatalf("expected generated WIM seed to produce content-driven findings, got %#v", evaluation.Findings)
 	}
 }
 

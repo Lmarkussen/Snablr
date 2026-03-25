@@ -145,6 +145,9 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if strings.TrimSpace(opts.OutputFormat) != "" {
 		cfg.Output.Format = opts.OutputFormat
 	}
+	if opts.NoTUI {
+		cfg.Output.NoTUI = true
+	}
 	if strings.TrimSpace(opts.JSONOut) != "" {
 		cfg.Output.JSONOut = opts.JSONOut
 	}
@@ -226,6 +229,12 @@ func validateScanConfig(cfg config.Config) error {
 	if cfg.Archives.MaxZIPSize < 0 {
 		return fmt.Errorf("archives.max_zip_size cannot be negative")
 	}
+	if cfg.Archives.AutoTARMaxSize < 0 {
+		return fmt.Errorf("archives.auto_tar_max_size cannot be negative")
+	}
+	if cfg.Archives.MaxTARSize < 0 {
+		return fmt.Errorf("archives.max_tar_size cannot be negative")
+	}
 	if cfg.Archives.MaxMembers < 0 {
 		return fmt.Errorf("archives.max_members cannot be negative")
 	}
@@ -237,6 +246,9 @@ func validateScanConfig(cfg config.Config) error {
 	}
 	if cfg.Archives.AllowLargeZIPs && cfg.Archives.MaxZIPSize > 0 && cfg.Archives.MaxZIPSize < cfg.Archives.AutoZIPMaxSize {
 		return fmt.Errorf("archives.max_zip_size must be greater than or equal to archives.auto_zip_max_size when allow_large_zips is enabled")
+	}
+	if cfg.Archives.AllowLargeTARs && cfg.Archives.MaxTARSize > 0 && cfg.Archives.MaxTARSize < cfg.Archives.AutoTARMaxSize {
+		return fmt.Errorf("archives.max_tar_size must be greater than or equal to archives.auto_tar_max_size when allow_large_tars is enabled")
 	}
 	if cfg.Suppression.SampleLimit < 0 {
 		return fmt.Errorf("suppression.sample_limit cannot be negative")

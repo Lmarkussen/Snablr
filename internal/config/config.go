@@ -14,6 +14,7 @@ type Config struct {
 	App         AppConfig         `yaml:"app"`
 	Scan        ScanConfig        `yaml:"scan"`
 	Archives    ArchiveConfig     `yaml:"archives"`
+	WIM         WIMConfig         `yaml:"wim"`
 	SQLite      SQLiteConfig      `yaml:"sqlite"`
 	Suppression SuppressionConfig `yaml:"suppression"`
 	Rules       RulesConfig       `yaml:"rules"`
@@ -64,10 +65,23 @@ type ArchiveConfig struct {
 	AutoZIPMaxSize           int64 `yaml:"auto_zip_max_size"`
 	AllowLargeZIPs           bool  `yaml:"allow_large_zips"`
 	MaxZIPSize               int64 `yaml:"max_zip_size"`
+	AutoTARMaxSize           int64 `yaml:"auto_tar_max_size"`
+	AllowLargeTARs           bool  `yaml:"allow_large_tars"`
+	MaxTARSize               int64 `yaml:"max_tar_size"`
 	MaxMembers               int   `yaml:"max_members"`
 	MaxMemberBytes           int64 `yaml:"max_member_bytes"`
 	MaxTotalUncompressed     int64 `yaml:"max_total_uncompressed_bytes"`
 	InspectExtensionlessText bool  `yaml:"inspect_extensionless_text"`
+}
+
+type WIMConfig struct {
+	Enabled        bool  `yaml:"enabled"`
+	AutoWIMMaxSize int64 `yaml:"auto_wim_max_size"`
+	AllowLargeWIMs bool  `yaml:"allow_large_wims"`
+	MaxWIMSize     int64 `yaml:"max_wim_size"`
+	MaxMembers     int   `yaml:"max_members"`
+	MaxMemberBytes int64 `yaml:"max_member_bytes"`
+	MaxTotalBytes  int64 `yaml:"max_total_bytes"`
 }
 
 type SQLiteConfig struct {
@@ -111,6 +125,7 @@ type RulesConfig struct {
 
 type OutputConfig struct {
 	Format  string `yaml:"output_format"`
+	NoTUI   bool   `yaml:"no_tui"`
 	JSONOut string `yaml:"json_out"`
 	HTMLOut string `yaml:"html_out"`
 	CSVOut  string `yaml:"csv_out"`
@@ -180,6 +195,12 @@ func applyDefaults(cfg *Config) {
 	if cfg.Archives.MaxZIPSize <= 0 {
 		cfg.Archives.MaxZIPSize = cfg.Archives.AutoZIPMaxSize
 	}
+	if cfg.Archives.AutoTARMaxSize <= 0 {
+		cfg.Archives.AutoTARMaxSize = 10 * 1024 * 1024
+	}
+	if cfg.Archives.MaxTARSize <= 0 {
+		cfg.Archives.MaxTARSize = cfg.Archives.AutoTARMaxSize
+	}
 	if cfg.Archives.MaxMembers <= 0 {
 		cfg.Archives.MaxMembers = 64
 	}
@@ -191,6 +212,21 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.SQLite.AutoDBMaxSize <= 0 {
 		cfg.SQLite.AutoDBMaxSize = 5 * 1024 * 1024
+	}
+	if cfg.WIM.AutoWIMMaxSize <= 0 {
+		cfg.WIM.AutoWIMMaxSize = 128 * 1024 * 1024
+	}
+	if cfg.WIM.MaxWIMSize <= 0 {
+		cfg.WIM.MaxWIMSize = cfg.WIM.AutoWIMMaxSize
+	}
+	if cfg.WIM.MaxMembers <= 0 {
+		cfg.WIM.MaxMembers = 8
+	}
+	if cfg.WIM.MaxMemberBytes <= 0 {
+		cfg.WIM.MaxMemberBytes = 1024 * 1024
+	}
+	if cfg.WIM.MaxTotalBytes <= 0 {
+		cfg.WIM.MaxTotalBytes = 4 * 1024 * 1024
 	}
 	if cfg.SQLite.MaxDBSize <= 0 {
 		cfg.SQLite.MaxDBSize = cfg.SQLite.AutoDBMaxSize
@@ -236,10 +272,20 @@ func ApplyScanProfile(cfg *Config, profile string) error {
 		cfg.Archives.AutoZIPMaxSize = 10 * 1024 * 1024
 		cfg.Archives.AllowLargeZIPs = false
 		cfg.Archives.MaxZIPSize = 10 * 1024 * 1024
+		cfg.Archives.AutoTARMaxSize = 10 * 1024 * 1024
+		cfg.Archives.AllowLargeTARs = false
+		cfg.Archives.MaxTARSize = 10 * 1024 * 1024
 		cfg.Archives.MaxMembers = 64
 		cfg.Archives.MaxMemberBytes = 512 * 1024
 		cfg.Archives.MaxTotalUncompressed = 4 * 1024 * 1024
 		cfg.Archives.InspectExtensionlessText = true
+		cfg.WIM.Enabled = true
+		cfg.WIM.AutoWIMMaxSize = 128 * 1024 * 1024
+		cfg.WIM.AllowLargeWIMs = false
+		cfg.WIM.MaxWIMSize = 128 * 1024 * 1024
+		cfg.WIM.MaxMembers = 8
+		cfg.WIM.MaxMemberBytes = 1024 * 1024
+		cfg.WIM.MaxTotalBytes = 4 * 1024 * 1024
 		cfg.SQLite.Enabled = true
 		cfg.SQLite.AutoDBMaxSize = 5 * 1024 * 1024
 		cfg.SQLite.AllowLargeDBs = false
@@ -256,10 +302,20 @@ func ApplyScanProfile(cfg *Config, profile string) error {
 		cfg.Archives.AutoZIPMaxSize = 5 * 1024 * 1024
 		cfg.Archives.AllowLargeZIPs = false
 		cfg.Archives.MaxZIPSize = 5 * 1024 * 1024
+		cfg.Archives.AutoTARMaxSize = 5 * 1024 * 1024
+		cfg.Archives.AllowLargeTARs = false
+		cfg.Archives.MaxTARSize = 5 * 1024 * 1024
 		cfg.Archives.MaxMembers = 32
 		cfg.Archives.MaxMemberBytes = 256 * 1024
 		cfg.Archives.MaxTotalUncompressed = 2 * 1024 * 1024
 		cfg.Archives.InspectExtensionlessText = false
+		cfg.WIM.Enabled = true
+		cfg.WIM.AutoWIMMaxSize = 64 * 1024 * 1024
+		cfg.WIM.AllowLargeWIMs = false
+		cfg.WIM.MaxWIMSize = 64 * 1024 * 1024
+		cfg.WIM.MaxMembers = 6
+		cfg.WIM.MaxMemberBytes = 512 * 1024
+		cfg.WIM.MaxTotalBytes = 2 * 1024 * 1024
 		cfg.SQLite.Enabled = true
 		cfg.SQLite.AutoDBMaxSize = 2 * 1024 * 1024
 		cfg.SQLite.AllowLargeDBs = false
@@ -276,10 +332,20 @@ func ApplyScanProfile(cfg *Config, profile string) error {
 		cfg.Archives.AutoZIPMaxSize = 10 * 1024 * 1024
 		cfg.Archives.AllowLargeZIPs = true
 		cfg.Archives.MaxZIPSize = 25 * 1024 * 1024
+		cfg.Archives.AutoTARMaxSize = 10 * 1024 * 1024
+		cfg.Archives.AllowLargeTARs = false
+		cfg.Archives.MaxTARSize = 10 * 1024 * 1024
 		cfg.Archives.MaxMembers = 96
 		cfg.Archives.MaxMemberBytes = 1024 * 1024
 		cfg.Archives.MaxTotalUncompressed = 8 * 1024 * 1024
 		cfg.Archives.InspectExtensionlessText = true
+		cfg.WIM.Enabled = true
+		cfg.WIM.AutoWIMMaxSize = 128 * 1024 * 1024
+		cfg.WIM.AllowLargeWIMs = true
+		cfg.WIM.MaxWIMSize = 256 * 1024 * 1024
+		cfg.WIM.MaxMembers = 12
+		cfg.WIM.MaxMemberBytes = 2 * 1024 * 1024
+		cfg.WIM.MaxTotalBytes = 8 * 1024 * 1024
 		cfg.SQLite.Enabled = true
 		cfg.SQLite.AutoDBMaxSize = 5 * 1024 * 1024
 		cfg.SQLite.AllowLargeDBs = true

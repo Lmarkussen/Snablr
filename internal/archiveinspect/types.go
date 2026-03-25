@@ -5,6 +5,9 @@ type Options struct {
 	AutoZIPMaxSize           int64
 	AllowLargeZIPs           bool
 	MaxZIPSize               int64
+	AutoTARMaxSize           int64
+	AllowLargeTARs           bool
+	MaxTARSize               int64
 	MaxMembers               int
 	MaxMemberBytes           int64
 	MaxTotalUncompressed     int64

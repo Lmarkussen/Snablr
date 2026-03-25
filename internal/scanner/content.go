@@ -31,10 +31,10 @@ type contentMatchDetails struct {
 }
 
 var (
-	assignmentSecretRegex = regexp.MustCompile(`(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|secret[_-]?key|client[_-]?secret|connection\s*string|conn(?:ection)?[_-]?string)\b(\s*[:=]\s*)(["']?)([^"'\r\n;]+)(?:["']?)`)
-	xmlSecretRegex        = regexp.MustCompile(`(?i)<(password|passwd|pwd|secret|token|apikey|clientsecret)>([^<]+)</[^>]+>`)
-	identityLineRegex     = regexp.MustCompile(`(?i)\b(user(name)?|login|account|email|upn)\b`)
-	genericPairRegex      = regexp.MustCompile(`(?im)^\s*([A-Za-z][A-Za-z0-9._@-]{1,32})(\s*[:=]\s*)([^\s"';]{4,64})\s*$`)
+	assignmentSecretRegex = regexp.MustCompile(`(?i)\b(password|passord|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|secret[_-]?key|client[_-]?secret|connection\s*string|conn(?:ection)?[_-]?string)\b(\s*[:=]\s*)(["']?)([^"'\r\n;]+)(?:["']?)`)
+	xmlSecretRegex        = regexp.MustCompile(`(?i)<(password|passord|passwd|pwd|secret|token|apikey|clientsecret)>([^<]+)</[^>]+>`)
+	identityLineRegex     = regexp.MustCompile(`(?i)\b(user(name)?|login|account|email|upn|domain|domene|domain administrator|domene administrator)\b`)
+	genericPairRegex      = regexp.MustCompile(`(?im)^\s*((?:[A-Za-z][A-Za-z0-9._@-]{1,32})|(?:domain administrator)|(?:domene administrator))(\s*[:=]\s*)([^\s"';]{4,64})\s*$`)
 )
 
 func NewContentScanner(snippetBytes int, validationMode bool, observer ValidationObserver, log validationLogger) ContentScanner {

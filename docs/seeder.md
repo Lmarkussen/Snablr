@@ -107,7 +107,10 @@ The default synthetic catalog currently includes these generation categories:
 - `finance`
 - `sql`
 - `zip-archives`
+- `tar-archives`
 - `cloud`
+- `aws-artifacts`
+- `aws-correlation`
 - `legacy`
 - `user-notes`
 - `scripts`
@@ -116,7 +119,7 @@ The default synthetic catalog currently includes these generation categories:
 - `service-accounts`
 - `noise`
 
-Across those categories, the file names and content cover common enterprise areas such as web configs, exports, payroll-style data, service-account notes, legacy archives, deployment answers, cloud placeholders, browser credential-store artifacts, secret-store artifacts, backup-exposure paths, zip-based honeypots, bounded SQLite databases, and benign clutter.
+Across those categories, the file names and content cover common enterprise areas such as web configs, exports, payroll-style data, service-account notes, legacy archives, deployment answers, AWS shared-profile artifacts, browser credential-store artifacts, secret-store artifacts, backup-exposure paths, zip- and tar-based honeypots, bounded SQLite databases, and benign clutter.
 
 ## Filename Patterns
 
@@ -160,6 +163,10 @@ The filename library now includes many more realistic enterprise-style names, in
 - `finance-share-notes.txt`
 - `sql-connection.properties`
 - `azure-config.yaml`
+- `credentials`
+- `config`
+- `credentials.bak`
+- `config.bak`
 - `aws-migration-notes.txt`
 - `legacy-app.conf`
 - `prod-config-old.yml`
@@ -208,6 +215,9 @@ The default catalog generates realistic-looking placeholders across:
 - `properties`
 - `md`
 - `zip`
+- `tar`
+- `tar.gz`
+- `tgz`
 
 `zip` honeypots are generated programmatically and currently cover:
 
@@ -218,6 +228,14 @@ The default catalog generates realistic-looking placeholders across:
 - nested-archive negative cases
 - binary-only negative cases
 - oversized archives that should be skipped unless larger archive inspection is enabled
+
+`tar` honeypots are generated programmatically and currently cover:
+
+- small `.tar`, `.tar.gz`, and `.tgz` archives containing text-like high-signal members
+- archives containing `.env` material, credential notes, and extensionless private keys
+- nested-archive negative cases that should be skipped
+- binary-only negative cases
+- oversized tar-based archives that should be skipped by default
 
 `sqlite` honeypots are generated programmatically and currently cover:
 

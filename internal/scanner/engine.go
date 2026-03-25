@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"snablr/internal/archiveinspect"
+	"snablr/internal/awsinspect"
 	"snablr/internal/backupinspect"
 	"snablr/internal/browsercredinspect"
 	"snablr/internal/dbinspect"
@@ -18,6 +19,7 @@ import (
 	"snablr/internal/metrics"
 	"snablr/internal/rules"
 	"snablr/internal/sqliteinspect"
+	"snablr/internal/wiminspect"
 	"snablr/internal/wincredinspect"
 	"snablr/pkg/logx"
 )
@@ -28,6 +30,7 @@ type Options struct {
 	MaxReadBytes     int64
 	SnippetBytes     int
 	Archives         archiveinspect.Options
+	WIM              wiminspect.Options
 	SQLite           sqliteinspect.Options
 	Recorder         metrics.Recorder
 	ValidationMode   bool
@@ -49,10 +52,12 @@ type Engine struct {
 	archiveExtHints  map[string]struct{}
 	hasGenericText   bool
 	backupInspector  backupinspect.Inspector
+	awsInspector     awsinspect.Inspector
 	browserInspector browsercredinspect.Inspector
 	dbInspector      dbinspect.Inspector
 	keyInspector     keyinspect.Inspector
 	sqliteInspector  sqliteinspect.Inspector
+	wimInspector     wiminspect.Options
 	winCredInspector wincredinspect.Inspector
 	validationMode   bool
 	validationSink   ValidationObserver
@@ -89,10 +94,12 @@ func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx
 		archiveExtHints:  archiveExtHints,
 		hasGenericText:   hasGenericText,
 		backupInspector:  backupinspect.New(),
+		awsInspector:     awsinspect.New(),
 		browserInspector: browsercredinspect.New(),
 		dbInspector:      dbinspect.New(),
 		keyInspector:     keyinspect.New(),
 		sqliteInspector:  sqliteinspect.New(opts.SQLite),
+		wimInspector:     opts.WIM,
 		winCredInspector: wincredinspect.New(),
 		validationMode:   opts.ValidationMode,
 		validationSink:   validationObserverForSink(sink),
@@ -123,6 +130,15 @@ func (e *Engine) Evaluate(meta FileMetadata, content []byte) Evaluation {
 			}
 		}
 		return e.evaluateArchive(meta, content)
+	}
+	if shouldInspect, skipReason, isWIM := e.wimDecision(meta); isWIM {
+		if !shouldInspect {
+			return Evaluation{
+				Skipped:    true,
+				SkipReason: skipReason,
+			}
+		}
+		return e.evaluateWIM(meta, content)
 	}
 	if shouldInspect, skipReason, isSQLite := e.sqliteDecision(meta); isSQLite && !shouldInspect {
 		return Evaluation{
@@ -176,6 +192,9 @@ func (e *Engine) NeedsContent(meta FileMetadata) bool {
 	if shouldInspect, _, isArchive := e.archiveDecision(meta); isArchive {
 		return shouldInspect
 	}
+	if shouldInspect, _, isWIM := e.wimDecision(meta); isWIM {
+		return shouldInspect
+	}
 	if shouldInspect, _, isSQLite := e.sqliteDecision(meta); isSQLite {
 		return shouldInspect
 	}
@@ -183,6 +202,7 @@ func (e *Engine) NeedsContent(meta FileMetadata) bool {
 		return false
 	}
 	return e.shouldReadContent(meta, e.contentRules) ||
+		e.awsInspector.NeedsContent(awsCandidate(meta)) ||
 		e.dbInspector.NeedsContent(dbCandidate(meta)) ||
 		e.keyInspector.NeedsContent(keyCandidate(meta)) ||
 		e.sqliteInspector.NeedsContent(sqliteCandidate(meta)) ||
@@ -195,18 +215,21 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 	evaluation.Findings = append(evaluation.Findings, e.filenameScanner.Scan(e.filenameRules, meta)...)
 	evaluation.Findings = append(evaluation.Findings, e.extensionScanner.Scan(e.extensionRules, meta)...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromBackupMatches(meta, e.backupInspector.InspectMetadata(backupCandidate(meta)))...)
+	evaluation.Findings = append(evaluation.Findings, findingsFromAWSMatches(meta, e.awsInspector.InspectMetadata(awsCandidate(meta)))...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromBrowserCredMatches(meta, e.browserInspector.InspectMetadata(browserCredCandidate(meta)))...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, e.dbInspector.InspectMetadata(dbCandidate(meta)))...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromWinCredMatches(meta, e.winCredInspector.InspectMetadata(winCredCandidate(meta)))...)
 
 	evaluation.NeedContent = forceContent ||
 		e.shouldReadContent(meta, e.contentRules) ||
+		e.awsInspector.NeedsContent(awsCandidate(meta)) ||
 		e.dbInspector.NeedsContent(dbCandidate(meta)) ||
 		e.keyInspector.NeedsContent(keyCandidate(meta)) ||
 		e.sqliteInspector.NeedsContent(sqliteCandidate(meta)) ||
 		e.winCredInspector.NeedsContent(winCredCandidate(meta))
 	if !evaluation.NeedContent || len(content) == 0 {
 		evaluation.Findings = correlateFindings(meta, evaluation.Findings)
+		evaluation.Findings = adjustAWSArtifactVisibility(evaluation.Findings)
 		evaluation.Findings = adjustBrowserArtifactVisibility(evaluation.Findings)
 		e.recordValidationFindings(evaluation.Findings)
 		return evaluation
@@ -218,10 +241,12 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 	}
 
 	evaluation.Findings = append(evaluation.Findings, e.contentScanner.Scan(e.contentRules, meta, content)...)
+	evaluation.Findings = append(evaluation.Findings, findingsFromAWSMatches(meta, e.awsInspector.InspectContent(awsCandidate(meta), content))...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, e.dbInspector.InspectContent(dbCandidate(meta), content))...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromKeyMatches(meta, e.keyInspector.InspectContent(keyCandidate(meta), content))...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromSQLiteMatches(meta, e.sqliteInspector.InspectContent(sqliteCandidate(meta), content))...)
 	evaluation.Findings = correlateFindings(meta, evaluation.Findings)
+	evaluation.Findings = adjustAWSArtifactVisibility(evaluation.Findings)
 	evaluation.Findings = adjustBrowserArtifactVisibility(evaluation.Findings)
 	e.recordValidationFindings(evaluation.Findings)
 	return evaluation
@@ -236,7 +261,21 @@ func (e *Engine) evaluateArchive(meta FileMetadata, content []byte) Evaluation {
 	}
 	evaluation.ContentRead = true
 
-	result, err := archiveinspect.InspectZIP(content, e.opts.Archives, e.archiveExtHints)
+	archiveExt := archiveinspect.ResolveArchiveExtension(meta.Name, meta.FilePath, meta.Extension)
+	var (
+		result archiveinspect.Result
+		err    error
+	)
+	switch archiveExt {
+	case ".zip", ".docx", ".xlsx", ".pptx":
+		result, err = archiveinspect.InspectZIP(content, archiveExt, e.opts.Archives, e.archiveExtHints)
+	case ".tar", ".tar.gz", ".tgz":
+		result, err = archiveinspect.InspectTAR(content, archiveExt, e.opts.Archives, e.archiveExtHints)
+	default:
+		evaluation.Skipped = true
+		evaluation.SkipReason = fmt.Sprintf("unsupported archive type %q", archiveExt)
+		return evaluation
+	}
 	if err != nil {
 		evaluation.Skipped = true
 		evaluation.SkipReason = fmt.Sprintf("archive inspection failed: %v", err)
@@ -267,8 +306,51 @@ func (e *Engine) evaluateArchive(meta FileMetadata, content []byte) Evaluation {
 	return evaluation
 }
 
+func (e *Engine) evaluateWIM(meta FileMetadata, content []byte) Evaluation {
+	evaluation := Evaluation{NeedContent: true}
+	if len(content) == 0 {
+		evaluation.Skipped = true
+		evaluation.SkipReason = "wim content unavailable"
+		return evaluation
+	}
+	evaluation.ContentRead = true
+
+	result, err := wiminspect.Inspect(content, e.wimInspector)
+	if err != nil {
+		evaluation.Skipped = true
+		evaluation.SkipReason = fmt.Sprintf("wim inspection failed: %v", err)
+		return evaluation
+	}
+	if !result.Inspected {
+		evaluation.Skipped = true
+		evaluation.SkipReason = result.SkipReason
+		return evaluation
+	}
+
+	findings := make([]Finding, 0)
+	for _, member := range result.Members {
+		memberMeta := meta
+		memberMeta.ArchivePath = meta.FilePath
+		memberMeta.ArchiveMemberPath = member.Path
+		memberMeta.ArchiveLocalInspect = result.InspectedLocally
+		memberMeta.FilePath = archiveDisplayPath(meta.FilePath, member.Path)
+		memberMeta.Name = member.Name
+		memberMeta.Extension = member.Extension
+		memberMeta.Size = member.Size
+
+		memberEvaluation := e.evaluateStandard(memberMeta, member.Content, member.ContentRead)
+		findings = append(findings, memberEvaluation.Findings...)
+	}
+
+	evaluation.Findings = findings
+	return evaluation
+}
+
 func (e *Engine) archiveDecision(meta FileMetadata) (bool, string, bool) {
-	if !strings.EqualFold(normalizeExtension(meta.Extension), ".zip") {
+	normalized := archiveinspect.ResolveArchiveExtension(meta.Name, meta.FilePath, meta.Extension)
+	switch normalized {
+	case ".zip", ".docx", ".xlsx", ".pptx", ".tar", ".tar.gz", ".tgz":
+	default:
 		return false, "", false
 	}
 	shouldInspect, reason := archiveinspect.ShouldInspect(archiveinspect.Candidate{
@@ -276,6 +358,18 @@ func (e *Engine) archiveDecision(meta FileMetadata) (bool, string, bool) {
 		Extension: meta.Extension,
 		Size:      meta.Size,
 	}, e.opts.Archives)
+	return shouldInspect, reason, true
+}
+
+func (e *Engine) wimDecision(meta FileMetadata) (bool, string, bool) {
+	if normalizeExtension(meta.Extension) != ".wim" {
+		return false, "", false
+	}
+	shouldInspect, reason := wiminspect.ShouldInspect(wiminspect.Candidate{
+		Name:      meta.Name,
+		Extension: meta.Extension,
+		Size:      meta.Size,
+	}, e.wimInspector)
 	return shouldInspect, reason, true
 }
 
@@ -305,10 +399,17 @@ func (e *Engine) shouldReadContent(meta FileMetadata, contentRules []rules.Rule)
 }
 
 func (e *Engine) shouldSkipByPath(meta FileMetadata) bool {
+	ext := meta.Extension
+	if resolved := archiveinspect.ResolveArchiveExtension(meta.Name, meta.FilePath, meta.Extension); resolved != "" {
+		switch resolved {
+		case ".zip", ".docx", ".xlsx", ".pptx", ".tar", ".tar.gz", ".tgz":
+			ext = resolved
+		}
+	}
 	candidate := rules.Candidate{
 		Path:      meta.FilePath,
 		Name:      meta.Name,
-		Extension: meta.Extension,
+		Extension: ext,
 		Size:      meta.Size,
 		IsDir:     meta.IsDir,
 	}
@@ -594,12 +695,15 @@ func normalizeExtension(ext string) string {
 }
 
 func resolveArchiveOptions(opts archiveinspect.Options) archiveinspect.Options {
-	if !opts.Enabled && !opts.AllowLargeZIPs && opts.AutoZIPMaxSize == 0 && opts.MaxZIPSize == 0 && opts.MaxMembers == 0 && opts.MaxMemberBytes == 0 && opts.MaxTotalUncompressed == 0 && !opts.InspectExtensionlessText {
+	if !opts.Enabled && !opts.AllowLargeZIPs && !opts.AllowLargeTARs && opts.AutoZIPMaxSize == 0 && opts.MaxZIPSize == 0 && opts.AutoTARMaxSize == 0 && opts.MaxTARSize == 0 && opts.MaxMembers == 0 && opts.MaxMemberBytes == 0 && opts.MaxTotalUncompressed == 0 && !opts.InspectExtensionlessText {
 		return archiveinspect.Options{
 			Enabled:                  true,
 			AutoZIPMaxSize:           10 * 1024 * 1024,
 			AllowLargeZIPs:           false,
 			MaxZIPSize:               10 * 1024 * 1024,
+			AutoTARMaxSize:           10 * 1024 * 1024,
+			AllowLargeTARs:           false,
+			MaxTARSize:               10 * 1024 * 1024,
 			MaxMembers:               64,
 			MaxMemberBytes:           512 * 1024,
 			MaxTotalUncompressed:     4 * 1024 * 1024,
@@ -611,6 +715,12 @@ func resolveArchiveOptions(opts archiveinspect.Options) archiveinspect.Options {
 	}
 	if opts.MaxZIPSize <= 0 {
 		opts.MaxZIPSize = opts.AutoZIPMaxSize
+	}
+	if opts.AutoTARMaxSize <= 0 {
+		opts.AutoTARMaxSize = 10 * 1024 * 1024
+	}
+	if opts.MaxTARSize <= 0 {
+		opts.MaxTARSize = opts.AutoTARMaxSize
 	}
 	if opts.MaxMembers <= 0 {
 		opts.MaxMembers = 64

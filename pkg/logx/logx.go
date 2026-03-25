@@ -2,6 +2,7 @@ package logx
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -26,6 +27,18 @@ func New(level string) *Logger {
 		level: parseLevel(level),
 		base:  log.New(os.Stderr, "", log.LstdFlags),
 	}
+}
+
+func (l *Logger) SetOutput(w io.Writer) {
+	if l == nil {
+		return
+	}
+	if w == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.base.SetOutput(w)
 }
 
 func (l *Logger) Debugf(format string, args ...any) {

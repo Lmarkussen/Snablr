@@ -22,6 +22,7 @@ func augmentFindingsForReporting(findings []scanner.Finding) []scanner.Finding {
 	}
 
 	synthetic := buildADCorrelatedFindings(out)
+	synthetic = append(synthetic, buildAWSCorrelatedFindings(out)...)
 	synthetic = append(synthetic, buildPrivateKeyCorrelatedFindings(out)...)
 	synthetic = append(synthetic, buildBrowserCredentialStoreCorrelatedFindings(out)...)
 	synthetic = append(synthetic, buildWindowsCredentialStoreCorrelatedFindings(out)...)
@@ -71,10 +72,11 @@ func buildADCorrelatedFindings(findings []scanner.Finding) []scanner.Finding {
 		if family == "" {
 			continue
 		}
+		dirContext := correlationDirectoryContext(finding)
 		key := bucketKey{
 			host:  strings.ToLower(strings.TrimSpace(finding.Host)),
 			share: strings.ToLower(strings.TrimSpace(finding.Share)),
-			dir:   strings.ToLower(strings.TrimSpace(filepath.ToSlash(filepath.Dir(finding.FilePath)))),
+			dir:   strings.ToLower(strings.TrimSpace(dirContext)),
 		}
 		if key.host == "" || key.share == "" || key.dir == "" {
 			continue
@@ -100,6 +102,13 @@ func buildADCorrelatedFindings(findings []scanner.Finding) []scanner.Finding {
 		out = append(out, newADCorrelatedFinding(selectBestCorrelationAnchor(bucket.ntds), selectBestCorrelationAnchor(bucket.system)))
 	}
 	return out
+}
+
+func correlationDirectoryContext(f scanner.Finding) string {
+	if strings.TrimSpace(f.ArchivePath) != "" {
+		return strings.ToLower(strings.TrimSpace(filepath.ToSlash(f.ArchivePath)))
+	}
+	return strings.ToLower(strings.TrimSpace(filepath.ToSlash(filepath.Dir(f.FilePath))))
 }
 
 func adArtifactFamily(f scanner.Finding) string {

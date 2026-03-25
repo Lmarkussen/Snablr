@@ -189,6 +189,11 @@ func correlateGroup(meta FileMetadata, group []Finding) Finding {
 		correlationContribution += 10
 		reasons = append(reasons, "exact Windows credential-store path matched a known DPAPI credential storage location")
 	}
+	if groupHasTag(group, "artifact:aws-credentials") && (groupHasTag(group, "aws:type:bundle") || groupHasTag(group, "aws:type:session-bundle")) {
+		score += 10
+		correlationContribution += 10
+		reasons = append(reasons, "validated AWS credential material was identified inside an exact shared credentials artifact path")
+	}
 	if groupHasTag(group, "artifact:backup-family") {
 		score += 10
 		correlationContribution += 10

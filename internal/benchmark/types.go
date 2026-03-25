@@ -19,6 +19,7 @@ type Config struct {
 	SnippetBytes   int                  `json:"snippet_bytes" yaml:"snippet_bytes"`
 	LogLevel       string               `json:"log_level" yaml:"log_level"`
 	Archives       config.ArchiveConfig `json:"archives" yaml:"archives"`
+	WIM            config.WIMConfig     `json:"wim" yaml:"wim"`
 	SQLite         config.SQLiteConfig  `json:"sqlite" yaml:"sqlite"`
 }
 

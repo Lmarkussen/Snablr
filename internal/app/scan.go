@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"snablr/internal/sqliteinspect"
 	"snablr/internal/state"
 	"snablr/internal/ui"
+	"snablr/internal/wiminspect"
 	"snablr/pkg/logx"
 )
 
@@ -35,19 +37,25 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	if err := validateScanConfig(cfg); err != nil {
 		return err
 	}
+	useInteractiveTUI := !cfg.Output.NoTUI && ui.ShouldShowProgress(cfg.Output.Format)
+	if useInteractiveTUI {
+		logger.SetOutput(io.Discard)
+	}
 	cfg.Scan.WorkerCount = scanner.ResolveWorkerCount(cfg.Scan.WorkerCount)
 	logger.Infof("using %d file scan worker(s)", cfg.Scan.WorkerCount)
 
 	scanCtx := ctx
-	var cancel context.CancelFunc
+	var timeoutCancel context.CancelFunc
 	maxScanDuration, err := cfg.Scan.MaxScanDuration()
 	if err != nil {
 		return err
 	}
 	if maxScanDuration > 0 {
-		scanCtx, cancel = context.WithTimeout(ctx, maxScanDuration)
-		defer cancel()
+		scanCtx, timeoutCancel = context.WithTimeout(ctx, maxScanDuration)
+		defer timeoutCancel()
 	}
+	scanCtx, scanCancel := context.WithCancel(scanCtx)
+	defer scanCancel()
 
 	manager, err := loadRuleManager(cfg, logger)
 	if err != nil {
@@ -65,6 +73,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		return fmt.Errorf("create output writer: %w", err)
 	}
 	sink = output.WrapWithSuppression(sink, cfg.Suppression)
+	output.SetCancelFunc(sink, scanCancel)
 	output.SetScanProfile(sink, strings.TrimSpace(cfg.Scan.Profile))
 	defer func() {
 		if sink == nil {
@@ -123,10 +132,22 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			AutoZIPMaxSize:           cfg.Archives.AutoZIPMaxSize,
 			AllowLargeZIPs:           cfg.Archives.AllowLargeZIPs,
 			MaxZIPSize:               cfg.Archives.MaxZIPSize,
+			AutoTARMaxSize:           cfg.Archives.AutoTARMaxSize,
+			AllowLargeTARs:           cfg.Archives.AllowLargeTARs,
+			MaxTARSize:               cfg.Archives.MaxTARSize,
 			MaxMembers:               cfg.Archives.MaxMembers,
 			MaxMemberBytes:           cfg.Archives.MaxMemberBytes,
 			MaxTotalUncompressed:     cfg.Archives.MaxTotalUncompressed,
 			InspectExtensionlessText: cfg.Archives.InspectExtensionlessText,
+		},
+		WIM: wiminspect.Options{
+			Enabled:        cfg.WIM.Enabled,
+			AutoWIMMaxSize: cfg.WIM.AutoWIMMaxSize,
+			AllowLargeWIMs: cfg.WIM.AllowLargeWIMs,
+			MaxWIMSize:     cfg.WIM.MaxWIMSize,
+			MaxMembers:     cfg.WIM.MaxMembers,
+			MaxMemberBytes: cfg.WIM.MaxMemberBytes,
+			MaxTotalBytes:  cfg.WIM.MaxTotalBytes,
 		},
 		SQLite: sqliteinspect.Options{
 			Enabled:            cfg.SQLite.Enabled,
@@ -145,6 +166,9 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 
 	resolvedTargets, err := discovery.Resolve(scanCtx, cfg.Scan, logger, recorder)
 	if err != nil {
+		if errors.Is(err, context.Canceled) && output.WasCanceledByUser(sink) {
+			return nil
+		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			logger.Warnf("max scan time reached during target discovery")
 			return nil
@@ -190,7 +214,9 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	}
 
 	var progress *ui.ProgressReporter
-	if ui.ShouldShowProgress(cfg.Output.Format) {
+	if output.SupportsLiveProgress(sink) {
+		output.SetTargetTotal(sink, len(plannedHosts))
+	} else if ui.ShouldShowProgress(cfg.Output.Format) {
 		progress = ui.NewProgressReporter(os.Stderr, recorder, 3*time.Second)
 		progress.SetTargetTotal(len(plannedHosts))
 		progress.Start(scanCtx)
@@ -202,6 +228,9 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	scanTimer := recorder.StartPhase("host_scanning")
 	for _, target := range plannedHosts {
 		if err := scanCtx.Err(); err != nil {
+			if errors.Is(err, context.Canceled) && output.WasCanceledByUser(sink) {
+				return nil
+			}
 			if errors.Is(err, context.DeadlineExceeded) {
 				timedOut = true
 				break
@@ -210,17 +239,24 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		}
 		if checkpoints != nil && checkpoints.ShouldSkipHost(target.Host) {
 			logger.Infof("resume: skipping completed host %s", target.Host)
+			output.MarkTargetProcessed(sink)
 			if progress != nil {
 				progress.MarkTargetProcessed()
 			}
 			continue
 		}
+		output.SetCurrentHost(sink, target.Host)
 		if progress != nil {
 			progress.SetCurrentHost(target.Host)
 		}
 		if err := scanHost(scanCtx, target.Host, target.Source, resolvedTargets.DFSTargets, checkpoints, recorder, cfg, engine, sink, logger); err != nil {
+			if errors.Is(err, context.Canceled) && output.WasCanceledByUser(sink) {
+				return nil
+			}
 			if errors.Is(err, context.DeadlineExceeded) {
 				timedOut = true
+				output.SetStatus(sink, "time limit reached")
+				output.MarkTargetProcessed(sink)
 				if progress != nil {
 					progress.SetStatus("time limit reached")
 					progress.MarkTargetProcessed()
@@ -228,6 +264,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 				break
 			}
 			errs = append(errs, err)
+			output.MarkTargetProcessed(sink)
 			if progress != nil {
 				progress.MarkTargetProcessed()
 			}
@@ -236,12 +273,14 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		if checkpoints != nil {
 			checkpoints.MarkHostComplete(target.Host)
 		}
+		output.MarkTargetProcessed(sink)
 		if progress != nil {
 			progress.MarkTargetProcessed()
 		}
 	}
 	scanTimer.Stop()
 	if timedOut {
+		output.SetStatus(sink, "time limit reached")
 		if progress != nil {
 			progress.SetStatus("time limit reached")
 		}
@@ -249,6 +288,9 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		return nil
 	}
 	if len(errs) > 0 {
+		if errors.Is(errors.Join(errs...), context.Canceled) && output.WasCanceledByUser(sink) {
+			return nil
+		}
 		return errors.Join(errs...)
 	}
 	return nil
@@ -512,6 +554,20 @@ func scanReadLimit(cfg config.Config) int64 {
 		}
 		if cfg.Archives.AllowLargeZIPs && cfg.Archives.MaxZIPSize > limit {
 			limit = cfg.Archives.MaxZIPSize
+		}
+		if cfg.Archives.AutoTARMaxSize > limit {
+			limit = cfg.Archives.AutoTARMaxSize
+		}
+		if cfg.Archives.AllowLargeTARs && cfg.Archives.MaxTARSize > limit {
+			limit = cfg.Archives.MaxTARSize
+		}
+	}
+	if cfg.WIM.Enabled {
+		if cfg.WIM.AutoWIMMaxSize > limit {
+			limit = cfg.WIM.AutoWIMMaxSize
+		}
+		if cfg.WIM.AllowLargeWIMs && cfg.WIM.MaxWIMSize > limit {
+			limit = cfg.WIM.MaxWIMSize
 		}
 	}
 	if cfg.SQLite.Enabled {

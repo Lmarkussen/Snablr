@@ -1,8 +1,10 @@
 package scanner
 
 import (
+	"archive/tar"
 	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"os"
@@ -245,6 +247,70 @@ func TestEngineEvaluatePromotesValidatedSQLDump(t *testing.T) {
 	}
 	if !hasTag(finding.Tags, "db:type:dump-export") {
 		t.Fatalf("expected dump-export tag, got %#v", finding.Tags)
+	}
+}
+
+func TestEngineEvaluateRecognizesAWSCredentialBundle(t *testing.T) {
+	t.Parallel()
+
+	engine := NewEngine(Options{}, &rules.Manager{}, nil, logx.New("error"))
+	meta := FileMetadata{
+		Host:      "fs01",
+		Share:     "Users",
+		FilePath:  "Users/Alice/.aws/credentials",
+		Name:      "credentials",
+		Extension: "",
+		Size:      512,
+	}
+	content := []byte("[default]\naws_access_key_id=AKIAABCDEFGHIJKLMNOP\naws_secret_access_key=abcdEFGHijklMNOPqrstUVWXyz0123456789/+=A\naws_session_token=IQoJb3JpZ2luX2VjEKD//////////wEaCXVzLWVhc3QtMSJHMEUCIQDLABCD1234TOKEN5678VALUE90XYZ0ABCD\n")
+
+	evaluation := engine.Evaluate(meta, content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected AWS findings, got %#v", evaluation.Findings)
+	}
+
+	var foundBundle bool
+	for _, finding := range evaluation.Findings {
+		if finding.RuleID != "awsinspect.content.credentials_bundle" {
+			continue
+		}
+		foundBundle = true
+		if finding.Category != "credentials" || !finding.Actionable {
+			t.Fatalf("expected actionable AWS credential bundle, got %#v", finding)
+		}
+		if finding.Confidence != "high" {
+			t.Fatalf("expected high confidence for AWS credential bundle, got %#v", finding)
+		}
+	}
+	if !foundBundle {
+		t.Fatalf("expected awsinspect.content.credentials_bundle in %#v", evaluation.Findings)
+	}
+}
+
+func TestEngineEvaluateKeepsAWSConfigArtifactSupporting(t *testing.T) {
+	t.Parallel()
+
+	engine := NewEngine(Options{}, &rules.Manager{}, nil, logx.New("error"))
+	meta := FileMetadata{
+		Host:      "fs01",
+		Share:     "Users",
+		FilePath:  "Users/Alice/.aws/config",
+		Name:      "config",
+		Extension: "",
+		Size:      128,
+	}
+	content := []byte("[default]\nregion = eu-north-1\noutput = json\n")
+
+	evaluation := engine.Evaluate(meta, content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected AWS config artifact finding, got %#v", evaluation.Findings)
+	}
+	finding := evaluation.Findings[0]
+	if finding.RuleID != "awsinspect.path.config" {
+		t.Fatalf("expected config artifact rule, got %#v", finding)
+	}
+	if finding.TriageClass != triageWeakReview || finding.Actionable {
+		t.Fatalf("expected supporting AWS config artifact, got %#v", finding)
 	}
 }
 
@@ -919,6 +985,52 @@ func TestEngineSuppressesWeakSampleSecretAssignments(t *testing.T) {
 	}
 }
 
+func TestEngineMatchesNorwegianCredentialLabels(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	meta := FileMetadata{
+		FilePath:  "Users/Alice/Desktop/cred-notes.txt",
+		Name:      "cred-notes.txt",
+		Extension: ".txt",
+		Size:      256,
+	}
+	content := []byte("Domene administrator: svc_backup\nPassord: FAKE_DB_PASSWORD_001\nDomene: essos.local\n")
+
+	evaluation := engine.Evaluate(meta, content)
+
+	foundPassword := false
+	foundNoteStyle := false
+	for _, finding := range evaluation.Findings {
+		for _, ruleID := range finding.MatchedRuleIDs {
+			switch ruleID {
+			case "content.password_assignment_indicators":
+				foundPassword = true
+			case "content.note_style_credential_pair_indicators":
+				foundNoteStyle = true
+			}
+		}
+		switch finding.RuleID {
+		case "content.password_assignment_indicators":
+			foundPassword = true
+		case "content.note_style_credential_pair_indicators":
+			foundNoteStyle = true
+		}
+	}
+	if !foundPassword {
+		t.Fatalf("expected Passord label to trigger password assignment indicators, got %#v", evaluation.Findings)
+	}
+	if !foundNoteStyle {
+		t.Fatalf("expected Domene administrator label to trigger note-style credential pair indicators, got %#v", evaluation.Findings)
+	}
+}
+
 func TestCorrelateFindingsKeepsDatabaseCategoriesSeparate(t *testing.T) {
 	t.Parallel()
 
@@ -1195,6 +1307,188 @@ func TestEngineEvaluatesZIPArchiveWithPrivateKeyAndClientAuthMembers(t *testing.
 	}
 }
 
+func TestEngineEvaluatesTARArchiveMembers(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	content := buildTARFixture(t, ".tar.gz", map[string][]byte{
+		"app/.env":         []byte("DB_PASSWORD=Winter2025!\n"),
+		"configs/app.ini":  []byte("username=svc_backup\npassword=Winter2025!\n"),
+		"nested/inner.tar": buildTARFixture(t, ".tar", map[string][]byte{"secret.txt": []byte("password=Winter2025!\n")}),
+	})
+	meta := FileMetadata{
+		FilePath:  "Archive/deploy-configs.tar.gz",
+		Name:      "deploy-configs.tar.gz",
+		Extension: ".gz",
+		Size:      int64(len(content)),
+	}
+
+	evaluation := engine.Evaluate(meta, content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected findings from tar.gz content, got %#v", evaluation)
+	}
+	for _, finding := range evaluation.Findings {
+		if finding.ArchivePath != "Archive/deploy-configs.tar.gz" {
+			t.Fatalf("expected tar archive metadata on finding, got %#v", finding)
+		}
+		if strings.Contains(finding.FilePath, "inner.tar") {
+			t.Fatalf("expected nested tar member to be skipped, got %#v", evaluation.Findings)
+		}
+	}
+}
+
+func TestEngineSkipsOversizedTARArchivesByDefault(t *testing.T) {
+	t.Parallel()
+
+	engine := NewEngine(Options{}, &rules.Manager{}, nil, logx.New("error"))
+	meta := FileMetadata{
+		FilePath:  "Archive/large.tgz",
+		Name:      "large.tgz",
+		Extension: ".tgz",
+		Size:      10*1024*1024 + 1,
+	}
+
+	if engine.NeedsContent(meta) {
+		t.Fatal("expected oversized tgz to skip content reads by default")
+	}
+	evaluation := engine.Evaluate(meta, nil)
+	if !evaluation.Skipped || !strings.Contains(evaluation.SkipReason, "automatic inspection limit") {
+		t.Fatalf("expected automatic tar size skip, got %#v", evaluation)
+	}
+}
+
+func TestEngineEvaluatesDOCXMembers(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	content := buildZIPFixture(t, map[string][]byte{
+		"[Content_Types].xml":   []byte(`<Types></Types>`),
+		"_rels/.rels":           []byte(`<Relationships></Relationships>`),
+		"word/document.xml":     []byte(`<w:document><w:body><w:p><w:r><w:t>service_account=svc_backup</w:t></w:r></w:p><w:p><w:r><w:t>password=FAKE_DB_PASSWORD_001</w:t></w:r></w:p><w:p><w:r><w:t>client_secret=SAMPLE_CLIENT_SECRET_001</w:t></w:r></w:p><w:p><w:r><w:t>Server=db01.example.local;Database=Payroll;User Id=svc_payroll_db;Password=FAKE_DB_PASSWORD_001;</w:t></w:r></w:p></w:body></w:document>`),
+		"word/media/image1.png": append([]byte{0x89, 'P', 'N', 'G', 0x00}, bytes.Repeat([]byte{0x01}, 32)...),
+	})
+	meta := FileMetadata{
+		FilePath:  "Docs/credentials.docx",
+		Name:      "credentials.docx",
+		Extension: ".docx",
+		Size:      int64(len(content)),
+	}
+
+	evaluation := engine.Evaluate(meta, content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected findings from docx content, got %#v", evaluation)
+	}
+	foundContent := false
+	for _, finding := range evaluation.Findings {
+		if finding.ArchivePath != "Docs/credentials.docx" || finding.ArchiveMemberPath != "word/document.xml" {
+			t.Fatalf("expected Office archive metadata on finding, got %#v", finding)
+		}
+		if finding.RuleID == "content.password_assignment_indicators" || finding.RuleID == "content.secret_assignment_indicators" || finding.RuleID == "content.database_connection_string_indicators" || finding.RuleID == "dbinspect.access.connection_string" {
+			foundContent = true
+		}
+	}
+	if !foundContent {
+		t.Fatalf("expected content-driven docx findings, got %#v", evaluation.Findings)
+	}
+}
+
+func TestEngineEvaluatesXLSXSharedStrings(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	content := buildZIPFixture(t, map[string][]byte{
+		"[Content_Types].xml":      []byte(`<Types></Types>`),
+		"_rels/.rels":              []byte(`<Relationships></Relationships>`),
+		"xl/sharedStrings.xml":     []byte(`<sst><si><t>db_user=svc_payroll_db</t></si><si><t>db_password=FAKE_DB_PASSWORD_001</t></si><si><t>client_secret=SAMPLE_CLIENT_SECRET_001</t></si><si><t>postgresql://svc_payroll_db:FAKE_DB_PASSWORD_001@db-finance.example.invalid/snablr_finance?sslmode=require</t></si></sst>`),
+		"xl/worksheets/sheet1.xml": []byte(`<worksheet><sheetData><row><c t="s"><v>0</v></c></row></sheetData></worksheet>`),
+	})
+	meta := FileMetadata{
+		FilePath:  "Finance/db-access.xlsx",
+		Name:      "db-access.xlsx",
+		Extension: ".xlsx",
+		Size:      int64(len(content)),
+	}
+
+	evaluation := engine.Evaluate(meta, content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected findings from xlsx content, got %#v", evaluation)
+	}
+	foundSharedStrings := false
+	foundContent := false
+	for _, finding := range evaluation.Findings {
+		if finding.ArchiveMemberPath == "xl/sharedStrings.xml" {
+			foundSharedStrings = true
+		}
+		if finding.RuleID == "content.password_assignment_indicators" || finding.RuleID == "content.secret_assignment_indicators" || finding.RuleID == "dbinspect.access.connection_string" {
+			foundContent = true
+		}
+	}
+	if !foundSharedStrings {
+		t.Fatalf("expected xlsx findings to point at sharedStrings, got %#v", evaluation.Findings)
+	}
+	if !foundContent {
+		t.Fatalf("expected content-driven xlsx findings, got %#v", evaluation.Findings)
+	}
+}
+
+func TestEngineEvaluatesPPTXSlideText(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	content := buildZIPFixture(t, map[string][]byte{
+		"[Content_Types].xml":   []byte(`<Types></Types>`),
+		"_rels/.rels":           []byte(`<Relationships></Relationships>`),
+		"ppt/slides/slide1.xml": []byte(`<p:sld><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>remote=vpn-prod.example.invalid</a:t></a:r></a:p><a:p><a:r><a:t>shared_secret=SAMPLE_CLIENT_SECRET_001</a:t></a:r></a:p><a:p><a:r><a:t>password=FAKE_DB_PASSWORD_001</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`),
+	})
+	meta := FileMetadata{
+		FilePath:  "Presentations/vpn-rollout.pptx",
+		Name:      "vpn-rollout.pptx",
+		Extension: ".pptx",
+		Size:      int64(len(content)),
+	}
+
+	evaluation := engine.Evaluate(meta, content)
+	if len(evaluation.Findings) == 0 {
+		t.Fatalf("expected findings from pptx content, got %#v", evaluation)
+	}
+	foundContent := false
+	for _, finding := range evaluation.Findings {
+		if finding.ArchiveMemberPath != "ppt/slides/slide1.xml" {
+			t.Fatalf("expected pptx findings to stay on slide xml members, got %#v", evaluation.Findings)
+		}
+		if finding.RuleID == "content.password_assignment_indicators" || finding.RuleID == "content.secret_assignment_indicators" {
+			foundContent = true
+		}
+	}
+	if !foundContent {
+		t.Fatalf("expected content-driven pptx findings, got %#v", evaluation.Findings)
+	}
+}
+
 type captureFindingSink struct{}
 
 func newCaptureFindingSink() *captureFindingSink {
@@ -1229,6 +1523,41 @@ func buildZIPFixture(t *testing.T, members map[string][]byte) []byte {
 		t.Fatalf("Close returned error: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func buildTARFixture(t *testing.T, ext string, members map[string][]byte) []byte {
+	t.Helper()
+
+	var tarBuf bytes.Buffer
+	tw := tar.NewWriter(&tarBuf)
+	for name, content := range members {
+		header := &tar.Header{Name: name, Mode: 0o644, Size: int64(len(content))}
+		if err := tw.WriteHeader(header); err != nil {
+			t.Fatalf("WriteHeader(%s) returned error: %v", name, err)
+		}
+		if _, err := tw.Write(content); err != nil {
+			t.Fatalf("Write(%s) returned error: %v", name, err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+	if ext == ".tar" {
+		return tarBuf.Bytes()
+	}
+
+	var gzipBuf bytes.Buffer
+	gw, err := gzip.NewWriterLevel(&gzipBuf, gzip.NoCompression)
+	if err != nil {
+		t.Fatalf("NewWriterLevel returned error: %v", err)
+	}
+	if _, err := gw.Write(tarBuf.Bytes()); err != nil {
+		t.Fatalf("gzip write returned error: %v", err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatalf("gzip close returned error: %v", err)
+	}
+	return gzipBuf.Bytes()
 }
 
 func buildSQLiteDBFixture(t *testing.T, statements []string) []byte {
@@ -1270,6 +1599,9 @@ func archiveOptionsForTests(mutate func(*archiveinspect.Options)) archiveinspect
 		AutoZIPMaxSize:           10 * 1024 * 1024,
 		AllowLargeZIPs:           false,
 		MaxZIPSize:               10 * 1024 * 1024,
+		AutoTARMaxSize:           10 * 1024 * 1024,
+		AllowLargeTARs:           false,
+		MaxTARSize:               10 * 1024 * 1024,
 		MaxMembers:               64,
 		MaxMemberBytes:           512 * 1024,
 		MaxTotalUncompressed:     4 * 1024 * 1024,

@@ -160,6 +160,9 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if strings.TrimSpace(opts.MDOut) != "" {
 		cfg.Output.MDOut = opts.MDOut
 	}
+	if strings.TrimSpace(opts.CredsOut) != "" {
+		cfg.Output.CredsOut = opts.CredsOut
+	}
 	if strings.TrimSpace(opts.LogLevel) != "" {
 		cfg.App.LogLevel = opts.LogLevel
 	}

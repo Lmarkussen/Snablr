@@ -24,6 +24,7 @@ func augmentFindingsForReporting(findings []scanner.Finding) []scanner.Finding {
 	synthetic := buildADCorrelatedFindings(out)
 	synthetic = append(synthetic, buildAWSCorrelatedFindings(out)...)
 	synthetic = append(synthetic, buildPrivateKeyCorrelatedFindings(out)...)
+	synthetic = append(synthetic, buildCertificateCorrelatedFindings(out)...)
 	synthetic = append(synthetic, buildBrowserCredentialStoreCorrelatedFindings(out)...)
 	synthetic = append(synthetic, buildWindowsCredentialStoreCorrelatedFindings(out)...)
 	synthetic = append(synthetic, buildBackupCorrelatedFindings(out)...)

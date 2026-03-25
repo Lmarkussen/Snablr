@@ -9,6 +9,7 @@ Supported outputs:
 - HTML
 - CSV
 - Markdown
+- curated `creds.txt`
 
 ## Output Modes
 
@@ -25,6 +26,7 @@ Optional sidecar exports:
 
 - `--csv-out findings.csv`
 - `--md-out summary.md`
+- `--creds-out creds.txt`
 
 Example:
 
@@ -35,7 +37,8 @@ snablr scan \
   --json-out output/results.json \
   --html-out output/report.html \
   --csv-out output/findings.csv \
-  --md-out output/summary.md
+  --md-out output/summary.md \
+  --creds-out output/creds.txt
 ```
 
 In that example, Snablr writes:
@@ -44,6 +47,9 @@ In that example, Snablr writes:
 - HTML to `output/report.html`
 - CSV to `output/findings.csv`
 - Markdown to `output/summary.md`
+- curated credentials to `output/creds.txt`
+
+The `creds.txt` export is intentionally narrow. It includes only primary, high-confidence findings with usable credential material. Supporting artifacts, weak review items, and placeholder/example values are excluded.
 
 ## Console Output
 
@@ -174,6 +180,7 @@ It includes:
 - synthetic high-confidence backup exposure findings when multiple credential-relevant system artifacts co-occur under the same exact backup family
 - synthetic browser credential-store exposure findings when exact paired browser profile artifacts co-occur under the same normalized browser profile context
 - synthetic AWS credential profile findings when exact `.aws/credentials` and `.aws/config` artifacts co-occur under the same normalized profile context
+- synthetic certificate bundle findings when exact `.pfx` or `.p12` artifacts co-occur with nearby password evidence in the same directory context
 - diff summary when a baseline is provided
 
 Use HTML when you need:

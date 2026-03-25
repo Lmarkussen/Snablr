@@ -241,6 +241,65 @@ func sampleClientAuthFinding() scanner.Finding {
 	}
 }
 
+func samplePFXFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:             "extension.key_and_certificate_extensions",
+		RuleName:           "Key And Certificate Extensions",
+		Severity:           "high",
+		Confidence:         "medium",
+		RuleConfidence:     "medium",
+		ConfidenceScore:    42,
+		Category:           "crypto",
+		TriageClass:        "actionable",
+		Actionable:         true,
+		FilePath:           "Recovery/Certificates/corp-admin.pfx",
+		Share:              "Users",
+		Host:               "fs01",
+		SignalType:         "extension",
+		Match:              ".pfx",
+		MatchedText:        ".pfx",
+		MatchReason:        "file extension matched an extension-based heuristic covered by the rule.",
+		MatchedRuleIDs:     []string{"extension.key_and_certificate_extensions"},
+		MatchedSignalTypes: []string{"extension"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "extension", RuleID: "extension.key_and_certificate_extensions", RuleName: "Key And Certificate Extensions", Match: ".pfx", Confidence: "medium", Weight: 18, Reason: "PKCS#12 certificate bundle extension was identified"},
+		},
+		Tags: []string{"crypto", "certificates", "extensions"},
+	}
+}
+
+func sampleCertificatePasswordFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:              "content.password_assignment_indicators",
+		RuleName:            "Password Assignment Indicators",
+		Severity:            "high",
+		Confidence:          "high",
+		RuleConfidence:      "medium",
+		ConfidenceScore:     72,
+		Category:            "credentials",
+		TriageClass:         "actionable",
+		Actionable:          true,
+		FilePath:            "Recovery/Certificates/certificate-passwords.txt",
+		Share:               "Users",
+		Host:                "fs01",
+		SignalType:          "content",
+		Match:               "password=CertImport!2026",
+		MatchedText:         "password=CertImport!2026",
+		MatchedTextRedacted: "password=********",
+		Snippet:             "bundle=corp-admin.pfx\npassword=********",
+		Context:             "bundle=corp-admin.pfx\npassword=CertImport!2026",
+		ContextRedacted:     "bundle=corp-admin.pfx\npassword=********",
+		LineNumber:          2,
+		MatchReason:         "file contents contained text that matches the rule.",
+		MatchedRuleIDs:      []string{"content.password_assignment_indicators"},
+		MatchedSignalTypes:  []string{"content"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "content", RuleID: "content.password_assignment_indicators", RuleName: "Password Assignment Indicators", Match: "password=CertImport!2026", Confidence: "medium", Weight: 32, Reason: "content rule matched a nearby password assignment for the certificate bundle"},
+		},
+		Tags: []string{"credentials", "notes", "passwords"},
+	}
+}
+
 func sampleWindowsCredentialsFinding() scanner.Finding {
 	return scanner.Finding{
 		RuleID:             "wincredinspect.path.credentials",
@@ -270,8 +329,8 @@ func sampleWindowsCredentialsFinding() scanner.Finding {
 }
 
 func sampleAWSCredentialsFinding() scanner.Finding {
-	accessKey := strings.Join([]string{"AKIA", "ABCDEFGHIJKLMNOP"}, "")
-	secretKey := strings.Join([]string{"abcdEFGHijklMNOPqrstUVWXyz0123456789/+=", "A"}, "")
+	accessKey := "AWSKEY-OPS-ALPHA-001"
+	secretKey := "AWSSECRET-OPS-BRAVO-001"
 	return scanner.Finding{
 		RuleID:              "awsinspect.content.credentials_bundle",
 		RuleName:            "AWS Credential Bundle",
@@ -288,10 +347,10 @@ func sampleAWSCredentialsFinding() scanner.Finding {
 		SignalType:          "validated",
 		Match:               "aws_access_key_id + aws_secret_access_key",
 		MatchedText:         "aws_access_key_id=" + accessKey + "\naws_secret_access_key=" + secretKey,
-		MatchedTextRedacted: "aws_access_key_id=AKIA********\naws_secret_access_key=abcd********",
-		Snippet:             "aws_access_key_id=AKIA********",
+		MatchedTextRedacted: "aws_access_key_id=AWSK********\naws_secret_access_key=AWSS********",
+		Snippet:             "aws_access_key_id=AWSK********",
 		Context:             "aws_access_key_id=" + accessKey + "\naws_secret_access_key=" + secretKey,
-		ContextRedacted:     "aws_access_key_id=AKIA********\naws_secret_access_key=abcd********",
+		ContextRedacted:     "aws_access_key_id=AWSK********\naws_secret_access_key=AWSS********",
 		MatchReason:         "file contents contained text that matches the rule.",
 		MatchedRuleIDs:      []string{"awsinspect.path.credentials", "awsinspect.content.credentials_bundle"},
 		MatchedSignalTypes:  []string{"validated", "content", "path"},
@@ -326,6 +385,36 @@ func sampleAWSConfigFinding() scanner.Finding {
 			{SignalType: "validated", RuleID: "awsinspect.path.config", RuleName: "AWS Config Artifact", Match: ".aws/config", Confidence: "high", Weight: 18, Reason: "exact AWS shared config artifact was identified"},
 		},
 		Tags: []string{"aws", "cloud", "artifact:aws-config"},
+	}
+}
+
+func sampleDBConnectionFinding() scanner.Finding {
+	return scanner.Finding{
+		RuleID:              "dbinspect.access.connection_string",
+		RuleName:            "Validated Database Connection Details",
+		Severity:            "high",
+		Confidence:          "high",
+		RuleConfidence:      "high",
+		ConfidenceScore:     80,
+		Category:            "database-access",
+		TriageClass:         "actionable",
+		Actionable:          true,
+		FilePath:            "Apps/Payroll/.env",
+		Share:               "Apps",
+		Host:                "fs01",
+		SignalType:          "validated",
+		Match:               "postgresql -> db-prod.example.invalid -> payroll",
+		MatchedText:         "postgresql://svc_payroll:Winter2025!@db-prod.example.invalid/payroll?sslmode=require",
+		MatchedTextRedacted: "postgresql://svc_payroll:********@db-prod.example.invalid/payroll?sslmode=require",
+		Context:             "postgresql://svc_payroll:Winter2025!@db-prod.example.invalid/payroll?sslmode=require",
+		ContextRedacted:     "postgresql://svc_payroll:********@db-prod.example.invalid/payroll?sslmode=require",
+		MatchReason:         "file contents contained text that matches the rule.",
+		MatchedRuleIDs:      []string{"dbinspect.access.connection_string"},
+		MatchedSignalTypes:  []string{"validated", "content"},
+		SupportingSignals: []scanner.SupportingSignal{
+			{SignalType: "validated", RuleID: "dbinspect.access.connection_string", RuleName: "Validated Database Connection Details", Match: "postgresql -> db-prod.example.invalid -> payroll", Confidence: "high", Weight: 28, Reason: "validated database connection details with authentication material were parsed from a connection string"},
+		},
+		Tags: []string{"database", "db:source:config", "db:type:config-credential"},
 	}
 }
 
@@ -1020,6 +1109,29 @@ func TestAugmentFindingsForReportingBuildsAWSCorrelation(t *testing.T) {
 	}
 }
 
+func TestAugmentFindingsForReportingBuildsCertificateBundleCorrelation(t *testing.T) {
+	t.Parallel()
+
+	augmented := augmentFindingsForReporting([]scanner.Finding{
+		samplePFXFinding(),
+		sampleCertificatePasswordFinding(),
+	})
+
+	found := false
+	for _, finding := range augmented {
+		if finding.RuleID != certificateBundleCorrelationRuleID {
+			continue
+		}
+		found = true
+		if finding.Category != "remote-access" || !finding.Correlated || !finding.Actionable {
+			t.Fatalf("unexpected correlated certificate finding: %#v", finding)
+		}
+	}
+	if !found {
+		t.Fatalf("expected correlated certificate bundle finding in augmented results, got %#v", augmented)
+	}
+}
+
 func TestAugmentFindingsForReportingBuildsBackupCorrelation(t *testing.T) {
 	t.Parallel()
 
@@ -1171,6 +1283,182 @@ func TestJSONWriterIncludesAWSAccessPathSummary(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected AWS access path summary in JSON report, got %#v", report.AccessPaths)
+	}
+}
+
+func TestJSONWriterIncludesCertificateBundleAccessPathSummary(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer := NewJSONWriter(&buf, nil, true)
+	for _, finding := range []scanner.Finding{
+		samplePFXFinding(),
+		sampleCertificatePasswordFinding(),
+	} {
+		if err := writer.WriteFinding(finding); err != nil {
+			t.Fatalf("WriteFinding returned error: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	var report jsonReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+
+	found := false
+	for _, item := range report.AccessPaths {
+		if item.RuleID != certificateBundleCorrelationRuleID {
+			continue
+		}
+		found = true
+		if item.Label != "Certificate/client-auth bundle" || item.PrimaryPath == "" {
+			t.Fatalf("unexpected certificate access path summary: %#v", item)
+		}
+		if item.PriorityTier != "high" || item.ExploitabilityScore <= 0 || item.Rank <= 0 {
+			t.Fatalf("expected ranked certificate access path summary, got %#v", item)
+		}
+	}
+	if !found {
+		t.Fatalf("expected certificate access path summary in JSON report, got %#v", report.AccessPaths)
+	}
+}
+
+func TestCredsWriterExportsCuratedHighConfidenceCredentials(t *testing.T) {
+	var buf bytes.Buffer
+	writer := NewCredsWriter(&buf, nopCloser{})
+
+	findings := []scanner.Finding{
+		sampleAWSCredentialsFinding(),
+		sampleDBConnectionFinding(),
+		samplePrivateKeyFinding(),
+		sampleHeuristicFinding(),
+		sampleAWSConfigFinding(),
+		{
+			RuleID:              "content.password_assignment_indicators",
+			RuleName:            "Password Assignment Indicators",
+			Severity:            "high",
+			Confidence:          "high",
+			RuleConfidence:      "high",
+			ConfidenceScore:     80,
+			Category:            "credentials",
+			TriageClass:         "actionable",
+			Actionable:          true,
+			FilePath:            "Notes/passwords.txt",
+			Share:               "Docs",
+			Host:                "fs01",
+			SignalType:          "content",
+			Match:               "password=EXAMPLE_PASSWORD_001",
+			MatchedText:         "password=EXAMPLE_PASSWORD_001",
+			MatchedTextRedacted: "password=********",
+			Context:             "password=EXAMPLE_PASSWORD_001",
+			ContextRedacted:     "password=********",
+			MatchedRuleIDs:      []string{"content.password_assignment_indicators"},
+			MatchedSignalTypes:  []string{"content"},
+		},
+	}
+	for _, finding := range findings {
+		if err := writer.WriteFinding(finding); err != nil {
+			t.Fatalf("WriteFinding returned error: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	output := buf.String()
+	for _, want := range []string{
+		"==== AWS Credentials ====",
+		"==== Database Credentials ====",
+		"==== SSH Private Keys ====",
+		`Path: \\fs01\Users\Users\Alice\.aws\credentials`,
+		"AccessKey: AWSKEY-OPS-ALPHA-001",
+		"SecretKey: AWSSECRET-OPS-BRAVO-001",
+		`Path: \\fs01\Apps\Apps\Payroll\.env`,
+		"Host: db-prod.example.invalid",
+		"Database: payroll",
+		"User: svc_payroll",
+		"Password: Winter2025!",
+		`Path: \\fs01\Users\Users\Alice\.ssh\id_rsa`,
+		"Type: -----BEGIN OPENSSH PRIVATE KEY-----",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected creds export to contain %q, got:\n%s", want, output)
+		}
+	}
+	for _, dontWant := range []string{
+		"Password Export Filename",
+		"EXAMPLE_PASSWORD_001",
+		"==== infrastructure ====",
+	} {
+		if strings.Contains(output, dontWant) {
+			t.Fatalf("did not expect creds export to contain %q, got:\n%s", dontWant, output)
+		}
+	}
+}
+
+func TestCredsWriterFormatsBundleContextWithoutInventingUser(t *testing.T) {
+	var buf bytes.Buffer
+	writer := NewCredsWriter(&buf, nopCloser{})
+
+	if err := writer.WriteFinding(sampleCertificatePasswordFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	output := buf.String()
+	for _, want := range []string{
+		"==== Application / Deployment Credentials ====",
+		`Path: \\fs01\Users\Recovery\Certificates\certificate-passwords.txt`,
+		"Bundle: corp-admin.pfx",
+		"Password: CertImport!2026",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected creds export to contain %q, got:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "User: bundle") {
+		t.Fatalf("did not expect invented user label for bundle context, got:\n%s", output)
+	}
+}
+
+func TestCredsWriterDeduplicatesCredentialEntriesAcrossPaths(t *testing.T) {
+	var buf bytes.Buffer
+	writer := NewCredsWriter(&buf, nopCloser{})
+
+	first := sampleAWSCredentialsFinding()
+	second := sampleAWSCredentialsFinding()
+	second.FilePath = "Users/Bob/.aws/credentials"
+	second.Host = "fs02"
+	second.Share = "Profiles"
+
+	for _, finding := range []scanner.Finding{first, second} {
+		if err := writer.WriteFinding(finding); err != nil {
+			t.Fatalf("WriteFinding returned error: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	output := buf.String()
+	if strings.Count(output, "==== AWS Credentials ====") != 1 {
+		t.Fatalf("expected one AWS group, got:\n%s", output)
+	}
+	if strings.Count(output, "AccessKey: AWSKEY-OPS-ALPHA-001") != 1 {
+		t.Fatalf("expected deduplicated AWS entry, got:\n%s", output)
+	}
+	for _, want := range []string{
+		`- \\fs01\Users\Users\Alice\.aws\credentials`,
+		`- \\fs02\Profiles\Users\Bob\.aws\credentials`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected deduplicated creds export to contain %q, got:\n%s", want, output)
+		}
 	}
 }
 

@@ -68,4 +68,5 @@ output:
   html_out: report.html
   csv_out: ""
   md_out: ""
+  creds_out: ""
   pretty: true

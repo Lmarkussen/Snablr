@@ -471,6 +471,62 @@ func TestGeneratePrivateKeySeedPackIncludesHighSignalAndSupportArtifacts(t *test
 	}
 }
 
+func TestGenerateCertificateSeedPackIncludesPKCS12AndCorrelation(t *testing.T) {
+	t.Parallel()
+
+	files, err := Generate(GenerateOptions{
+		CountPerCategory: 24,
+		MaxFiles:         900,
+		SeedPrefix:       "SnablrLab",
+		RandomSeed:       20260325,
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	foundPFX := false
+	foundP12 := false
+	foundPasswordNote := false
+	foundCorrelated := false
+
+	for _, file := range files {
+		switch file.Category {
+		case "certificate-bundles":
+			switch strings.ToLower(file.Filename) {
+			case "corp-admin.pfx":
+				if file.ExpectedClass == seedClassActionable {
+					foundPFX = true
+				}
+			case "branch-admin.p12":
+				if file.ExpectedClass == seedClassActionable {
+					foundP12 = true
+				}
+			case "certificate-passwords.txt":
+				if file.ExpectedClass == seedClassActionable && file.ExpectedConfidence == "high" {
+					foundPasswordNote = true
+				}
+			}
+		case "certificate-correlation":
+			if strings.EqualFold(file.Filename, "corp-admin.pfx") && file.ExpectedClass == seedClassCorrelatedHighConfidence && file.ExpectedCorrelated {
+				foundCorrelated = true
+			}
+		}
+	}
+
+	if !foundPFX {
+		t.Fatal("expected certificate seed pack to include actionable .pfx artifacts")
+	}
+	if !foundP12 {
+		t.Fatal("expected certificate seed pack to include actionable .p12 artifacts")
+	}
+	if !foundPasswordNote {
+		t.Fatal("expected certificate seed pack to include nearby password note evidence")
+	}
+	if !foundCorrelated {
+		t.Fatal("expected certificate correlation seed pack to include correlated PKCS#12 anchor")
+	}
+}
+
 func TestGenerateWindowsCredentialStoreSeedPackIncludesStandaloneAndCorrelatedCases(t *testing.T) {
 	t.Parallel()
 

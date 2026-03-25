@@ -238,6 +238,15 @@ func NewWriter(cfg config.OutputConfig) (scanner.FindingSink, error) {
 		sinks = append(sinks, NewMarkdownWriter(mdFile, mdFile))
 	}
 
+	if strings.TrimSpace(cfg.CredsOut) != "" {
+		credsFile, err := createOutputFile(cfg.CredsOut)
+		if err != nil {
+			_ = closeSinks(sinks)
+			return nil, fmt.Errorf("create credential export file %s: %w", cfg.CredsOut, err)
+		}
+		sinks = append(sinks, NewCredsWriter(credsFile, credsFile))
+	}
+
 	if len(sinks) == 1 {
 		return sinks[0], nil
 	}

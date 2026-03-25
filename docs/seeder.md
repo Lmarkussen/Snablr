@@ -94,6 +94,8 @@ The default synthetic catalog currently includes these generation categories:
 - `keepass`
 - `private-keys`
 - `private-key-correlation`
+- `certificate-bundles`
+- `certificate-correlation`
 - `windows-credential-stores`
 - `windows-credential-correlation`
 - `browser-credential-stores`
@@ -138,6 +140,9 @@ The filename library now includes many more realistic enterprise-style names, in
 - `identity`
 - `client-admin.ppk`
 - `branch-admin.ovpn`
+- `corp-admin.pfx`
+- `branch-admin.p12`
+- `certificate-passwords.txt`
 - `authorized_keys`
 - `known_hosts`
 - `A1B2C3D4`

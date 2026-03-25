@@ -124,13 +124,14 @@ type RulesConfig struct {
 }
 
 type OutputConfig struct {
-	Format  string `yaml:"output_format"`
-	NoTUI   bool   `yaml:"no_tui"`
-	JSONOut string `yaml:"json_out"`
-	HTMLOut string `yaml:"html_out"`
-	CSVOut  string `yaml:"csv_out"`
-	MDOut   string `yaml:"md_out"`
-	Pretty  bool   `yaml:"pretty"`
+	Format   string `yaml:"output_format"`
+	NoTUI    bool   `yaml:"no_tui"`
+	JSONOut  string `yaml:"json_out"`
+	HTMLOut  string `yaml:"html_out"`
+	CSVOut   string `yaml:"csv_out"`
+	MDOut    string `yaml:"md_out"`
+	CredsOut string `yaml:"creds_out"`
+	Pretty   bool   `yaml:"pretty"`
 }
 
 func Load(path string) (Config, error) {
@@ -257,6 +258,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Output.HTMLOut == "" {
 		cfg.Output.HTMLOut = "report.html"
+	}
+	if cfg.Output.CredsOut == "" {
+		cfg.Output.CredsOut = ""
 	}
 }
 

@@ -276,15 +276,14 @@ func validateScanConfig(cfg config.Config) error {
 			return fmt.Errorf("suppression rule %q has no match criteria", rule.ID)
 		}
 	}
-	switch strings.ToLower(cfg.Output.Format) {
-	case "console", "json", "html", "all":
-	default:
-		return fmt.Errorf("unsupported output format %q: use console, json, html, or all", cfg.Output.Format)
+	outputSelection, err := config.ParseOutputFormat(cfg.Output.Format)
+	if err != nil {
+		return err
 	}
-	if (strings.EqualFold(cfg.Output.Format, "json") || strings.EqualFold(cfg.Output.Format, "all")) && strings.TrimSpace(cfg.Output.JSONOut) == "" {
+	if outputSelection.JSON && strings.TrimSpace(cfg.Output.JSONOut) == "" {
 		return fmt.Errorf("output format %q requires json_out: set output.json_out or pass --json-out so Snablr knows where to write the JSON report", cfg.Output.Format)
 	}
-	if (strings.EqualFold(cfg.Output.Format, "html") || strings.EqualFold(cfg.Output.Format, "all")) && strings.TrimSpace(cfg.Output.HTMLOut) == "" {
+	if outputSelection.HTML && strings.TrimSpace(cfg.Output.HTMLOut) == "" {
 		return fmt.Errorf("output format %q requires html_out: set output.html_out or pass --html-out so Snablr knows where to write the HTML report", cfg.Output.Format)
 	}
 	return nil

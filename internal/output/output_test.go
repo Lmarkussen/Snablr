@@ -2055,9 +2055,14 @@ func TestHTMLWriterRendersBrowserAccessPathSummary(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, want := range []string{"Top Access Paths", "Browser credential-store exposure", "Browser Credential Store Exposure Path", "logins.json", "key4.db", "score", "priority"} {
+	for _, dontWant := range []string{"Top Access Paths", "access-path-grid", "access-path-card", "access-path-primary-value"} {
+		if strings.Contains(out, dontWant) {
+			t.Fatalf("did not expect html output to contain %q", dontWant)
+		}
+	}
+	for _, want := range []string{"logins.json", "key4.db"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("expected html output to contain %q", want)
+			t.Fatalf("expected html output to retain finding detail content %q", want)
 		}
 	}
 }
@@ -2084,10 +2089,11 @@ func TestHTMLWriterRendersBackupAccessPathSummary(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, want := range []string{"Top Access Paths", "System-state backup exposure", "AD compromise path", "WindowsImageBackup", "score", "priority"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("expected html output to contain %q", want)
-		}
+	if strings.Contains(out, "Top Access Paths") {
+		t.Fatalf("did not expect html output to contain Top Access Paths")
+	}
+	if !strings.Contains(out, "WindowsImageBackup") || !strings.Contains(out, "NTDS.DIT") {
+		t.Fatalf("expected html output to retain finding detail content")
 	}
 }
 
@@ -2126,6 +2132,94 @@ func TestNewWriterNoTUIForcesPlainConsole(t *testing.T) {
 
 	if _, ok := sink.(*ConsoleWriter); !ok {
 		t.Fatalf("expected plain ConsoleWriter when no_tui is enabled, got %T", sink)
+	}
+}
+
+func TestDetermineLiveSinkModeDefaultsToTUIForInteractiveHTML(t *testing.T) {
+	if got := determineLiveSinkMode("html", false, true); got != liveSinkTUI {
+		t.Fatalf("expected interactive html runs to use TUI, got %q", got)
+	}
+}
+
+func TestDetermineLiveSinkModeDefaultsToTUIForInteractiveAll(t *testing.T) {
+	if got := determineLiveSinkMode("all", false, true); got != liveSinkTUI {
+		t.Fatalf("expected interactive all runs to use TUI, got %q", got)
+	}
+}
+
+func TestDetermineLiveSinkModeDefaultsToTUIForInteractiveCombinedExports(t *testing.T) {
+	if got := determineLiveSinkMode("html,json", false, true); got != liveSinkTUI {
+		t.Fatalf("expected interactive html,json runs to use TUI, got %q", got)
+	}
+}
+
+func TestDetermineLiveSinkModeNoTUIDisablesTUIExplicitly(t *testing.T) {
+	if got := determineLiveSinkMode("html", true, true); got != liveSinkConsole {
+		t.Fatalf("expected --no-tui html runs to use plain console, got %q", got)
+	}
+}
+
+func TestDetermineLiveSinkModeNonInteractiveHTMLIsExportOnly(t *testing.T) {
+	if got := determineLiveSinkMode("html", false, false); got != liveSinkNone {
+		t.Fatalf("expected non-interactive html runs without --no-tui to avoid live sink, got %q", got)
+	}
+}
+
+func TestNewWriterNoTUIHTMLIncludesConsoleAndHTML(t *testing.T) {
+	tmpDir := t.TempDir()
+	sink, err := NewWriter(config.OutputConfig{
+		Format:  "html",
+		NoTUI:   true,
+		HTMLOut: filepath.Join(tmpDir, "report.html"),
+	})
+	if err != nil {
+		t.Fatalf("NewWriter returned error: %v", err)
+	}
+	defer sink.Close()
+
+	multi, ok := sink.(*MultiWriter)
+	if !ok {
+		t.Fatalf("expected MultiWriter for html + no_tui, got %T", sink)
+	}
+	if len(multi.sinks) != 2 {
+		t.Fatalf("expected 2 sinks for html + no_tui, got %d", len(multi.sinks))
+	}
+	if _, ok := multi.sinks[0].(*ConsoleWriter); !ok {
+		t.Fatalf("expected first sink to be ConsoleWriter, got %T", multi.sinks[0])
+	}
+	if _, ok := multi.sinks[1].(*HTMLWriter); !ok {
+		t.Fatalf("expected second sink to be HTMLWriter, got %T", multi.sinks[1])
+	}
+}
+
+func TestNewWriterNoTUICombinedExportsIncludeConsoleJSONAndHTML(t *testing.T) {
+	tmpDir := t.TempDir()
+	sink, err := NewWriter(config.OutputConfig{
+		Format:  "html,json",
+		NoTUI:   true,
+		JSONOut: filepath.Join(tmpDir, "report.json"),
+		HTMLOut: filepath.Join(tmpDir, "report.html"),
+	})
+	if err != nil {
+		t.Fatalf("NewWriter returned error: %v", err)
+	}
+	defer sink.Close()
+
+	multi, ok := sink.(*MultiWriter)
+	if !ok {
+		t.Fatalf("expected MultiWriter for html,json + no_tui, got %T", sink)
+	}
+	if len(multi.sinks) != 3 {
+		t.Fatalf("expected 3 sinks for html,json + no_tui, got %d", len(multi.sinks))
+	}
+	if _, ok := multi.sinks[0].(*ConsoleWriter); !ok {
+		t.Fatalf("expected first sink to be ConsoleWriter, got %T", multi.sinks[0])
+	}
+	if _, ok := multi.sinks[1].(*JSONWriter); !ok {
+		t.Fatalf("expected second sink to be JSONWriter, got %T", multi.sinks[1])
+	}
+	if _, ok := multi.sinks[2].(*HTMLWriter); !ok {
+		t.Fatalf("expected third sink to be HTMLWriter, got %T", multi.sinks[2])
 	}
 }
 

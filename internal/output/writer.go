@@ -157,67 +157,45 @@ func (s *summaryCollector) LiveSnapshot() summarySnapshot {
 
 func NewWriter(cfg config.OutputConfig) (scanner.FindingSink, error) {
 	sinks := make([]scanner.FindingSink, 0, 5)
-	useTUI := !cfg.NoTUI && ui.ShouldShowProgress(cfg.Format)
+	selection, err := config.ParseOutputFormat(cfg.Format)
+	if err != nil {
+		return nil, err
+	}
+	liveMode := determineLiveSinkMode(cfg.Format, cfg.NoTUI, ui.ShouldShowProgress(cfg.Format))
 
-	switch strings.ToLower(cfg.Format) {
-	case "console":
-		if useTUI {
-			tuiWriter, err := NewTUIWriter(os.Stdout, nopCloser{})
-			if err != nil {
-				return nil, err
-			}
-			sinks = append(sinks, tuiWriter)
-		} else {
-			sinks = append(sinks, NewConsoleWriter(os.Stdout, nopCloser{}))
+	switch liveMode {
+	case liveSinkTUI:
+		tuiWriter, err := NewTUIWriter(os.Stdout, nopCloser{})
+		if err != nil {
+			return nil, err
 		}
-	case "json":
+		sinks = append(sinks, tuiWriter)
+	case liveSinkConsole:
+		sinks = append(sinks, NewConsoleWriter(os.Stdout, nopCloser{}))
+	}
+
+	if selection.JSON {
 		file, err := createOutputFile(cfg.JSONOut)
 		if err != nil {
+			_ = closeSinks(sinks)
 			return nil, fmt.Errorf("create json output file %s: %w", cfg.JSONOut, err)
 		}
 		sinks = append(sinks, NewJSONWriter(file, file, cfg.Pretty))
-	case "html":
+	}
+
+	if selection.HTML {
 		file, err := createOutputFile(cfg.HTMLOut)
 		if err != nil {
+			_ = closeSinks(sinks)
 			return nil, fmt.Errorf("create html output file %s: %w", cfg.HTMLOut, err)
 		}
 		htmlWriter, err := NewHTMLWriter(file, file)
 		if err != nil {
 			_ = file.Close()
+			_ = closeSinks(sinks)
 			return nil, err
 		}
 		sinks = append(sinks, htmlWriter)
-	case "all":
-		if useTUI {
-			tuiWriter, err := NewTUIWriter(os.Stdout, nopCloser{})
-			if err != nil {
-				return nil, err
-			}
-			sinks = append(sinks, tuiWriter)
-		} else {
-			sinks = append(sinks, NewConsoleWriter(os.Stdout, nopCloser{}))
-		}
-
-		jsonFile, err := createOutputFile(cfg.JSONOut)
-		if err != nil {
-			return nil, fmt.Errorf("create json output file %s: %w", cfg.JSONOut, err)
-		}
-		sinks = append(sinks, NewJSONWriter(jsonFile, jsonFile, cfg.Pretty))
-
-		htmlFile, err := createOutputFile(cfg.HTMLOut)
-		if err != nil {
-			_ = closeSinks(sinks)
-			return nil, fmt.Errorf("create html output file %s: %w", cfg.HTMLOut, err)
-		}
-		htmlWriter, err := NewHTMLWriter(htmlFile, htmlFile)
-		if err != nil {
-			_ = htmlFile.Close()
-			_ = closeSinks(sinks)
-			return nil, fmt.Errorf("load html template: %w", err)
-		}
-		sinks = append(sinks, htmlWriter)
-	default:
-		return nil, fmt.Errorf("unsupported output format %q", cfg.Format)
 	}
 
 	if strings.TrimSpace(cfg.CSVOut) != "" {

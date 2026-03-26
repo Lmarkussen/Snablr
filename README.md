@@ -200,6 +200,8 @@ Live console note:
 - the right pane shows evidence and detail for the currently selected finding
 - evidence is intentionally kept out of the left pane so raw secrets do not scroll by in the live finding list
 - default live output is filtered to primary findings only; weaker supporting artifacts remain available for correlation and in exported reports
+- report/export flags such as `--output-format html`, `--output-format html,json`, `--json-out`, `--html-out`, and sidecar exports do not disable the TUI
+- the TUI is the default live interface for interactive runs; exports are additional outputs
 - pass `--no-tui` if you want the old plain stdout console output in an interactive terminal
 
 Archive note:

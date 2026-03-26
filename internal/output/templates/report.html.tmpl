@@ -813,7 +813,6 @@
           </div>
         </div>
         <div class="hero-actions">
-          {{- if .TopAccessPaths }}<a href="#access-paths">Top Access Paths</a>{{- end }}
           {{- if .Suppression }}<a href="#suppression-summary">Suppressed Findings</a>{{- end }}
           <a href="#severity-summary">Severity Summary</a>
           <a href="#category-summary">Category Summary</a>
@@ -932,44 +931,6 @@
         <div class="card-meta">Start {{ formatScanTime .Summary.StartedAt }} · End {{ formatScanTime .Summary.EndedAt }}</div>
       </article>
     </section>
-
-    {{- if .TopAccessPaths }}
-    <section id="access-paths">
-      <div class="section-head">
-        <h2>Top Access Paths</h2>
-        <span class="section-note">Ranked correlated clusters that most directly suggest reusable access or offline extraction paths. Showing the highest-ranked entries first.</span>
-      </div>
-      <div class="severity-grid">
-        {{- range .TopAccessPaths }}
-        <article class="card">
-          <span class="card-label">#{{ .Rank }} · {{ accessPathLabel . }}</span>
-          <span class="card-value" style="font-size: 1.1rem;">{{ .PrimaryPath }}</span>
-          <div class="card-meta">
-            <div class="badge-row">
-              <span class="badge {{ severityClass .Severity }}">{{ .Severity }}</span>
-              <span class="badge {{ confidenceClass .Confidence }}">{{ .Confidence }}</span>
-              <span class="badge">{{ .PriorityTier }} priority</span>
-              <span class="badge">score {{ .ExploitabilityScore }}</span>
-              <span class="badge">{{ .Type }}</span>
-              {{- if .Category }}<span class="badge">{{ .Category }}</span>{{- end }}
-            </div>
-            <div>{{ valueOrDash .Host }} / {{ valueOrDash .Share }}</div>
-            {{- if .Completeness }}<div>Completeness: {{ .Completeness }}</div>{{- end }}
-            <div>{{ .WhyItMatters }}</div>
-            {{- if .AccessHint }}<div>Enables: {{ .AccessHint }}</div>{{- end }}
-            {{- if .RelatedArtifacts }}
-            <div style="margin-top:8px;">
-              {{- range .RelatedArtifacts }}
-              <div>{{ . }}</div>
-              {{- end }}
-            </div>
-            {{- end }}
-          </div>
-        </article>
-        {{- end }}
-      </div>
-    </section>
-    {{- end }}
 
     {{- if .Suppression }}
     <section id="suppression-summary">

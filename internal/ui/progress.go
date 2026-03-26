@@ -50,11 +50,7 @@ func NewProgressReporter(w io.Writer, source MetricsSource, interval time.Durati
 }
 
 func ShouldShowProgress(outputFormat string) bool {
-	switch strings.ToLower(strings.TrimSpace(outputFormat)) {
-	case "console", "all":
-	default:
-		return false
-	}
+	_ = outputFormat
 	return isTerminal(os.Stdout) && isTerminal(os.Stderr)
 }
 

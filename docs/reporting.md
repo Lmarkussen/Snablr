@@ -22,6 +22,12 @@ Supported primary modes:
 - `html`
 - `all`
 
+You can also combine primary export modes explicitly:
+
+- `html,json`
+- `console,json`
+- `console,html`
+
 Optional sidecar exports:
 
 - `--csv-out findings.csv`
@@ -83,7 +89,13 @@ Implementation note:
 
 - the live TUI consumes bounded writer state on a timer instead of receiving one blocking UI event per finding
 - this keeps the scan path from stalling if the terminal UI falls behind under heavy finding volume
-- the TUI exits automatically when the scan completes
+- the TUI remains open after the scan completes so you can review the final findings state, and closes when you exit it explicitly
+
+Mode selection note:
+
+- the TUI is the default live interface for interactive runs, regardless of whether you also request HTML, JSON, CSV, Markdown, or `creds.txt` exports
+- export flags control report generation only
+- `--no-tui` is the explicit switch that disables the TUI and falls back to plain console output in an interactive terminal
 
 Use console when you want:
 

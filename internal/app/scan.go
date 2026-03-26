@@ -37,7 +37,8 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	if err := validateScanConfig(cfg); err != nil {
 		return err
 	}
-	useInteractiveTUI := !cfg.Output.NoTUI && ui.ShouldShowProgress(cfg.Output.Format)
+	interactiveTerminal := ui.ShouldShowProgress(cfg.Output.Format)
+	useInteractiveTUI := !cfg.Output.NoTUI && interactiveTerminal
 	if useInteractiveTUI {
 		logger.SetOutput(io.Discard)
 	}
@@ -216,7 +217,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	var progress *ui.ProgressReporter
 	if output.SupportsLiveProgress(sink) {
 		output.SetTargetTotal(sink, len(plannedHosts))
-	} else if ui.ShouldShowProgress(cfg.Output.Format) {
+	} else if interactiveTerminal {
 		progress = ui.NewProgressReporter(os.Stderr, recorder, 3*time.Second)
 		progress.SetTargetTotal(len(plannedHosts))
 		progress.Start(scanCtx)

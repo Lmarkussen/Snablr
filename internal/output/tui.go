@@ -18,11 +18,11 @@ import (
 )
 
 const (
-	tuiRefreshInterval  = 250 * time.Millisecond
-	tuiMaxVisibleRows   = 500
-	tuiMinSplitWidth    = 100
-	tuiMinListWidth     = 36
-	tuiMinDetailWidth   = 32
+	tuiRefreshInterval = 250 * time.Millisecond
+	tuiMaxVisibleRows  = 500
+	tuiMinSplitWidth   = 100
+	tuiMinListWidth    = 36
+	tuiMinDetailWidth  = 32
 )
 
 type TUIWriter struct {
@@ -47,9 +47,9 @@ type TUIWriter struct {
 	done   chan struct{}
 	runErr error
 
-	cancelMu          sync.Mutex
-	cancelScan        context.CancelFunc
-	userCanceledScan  bool
+	cancelMu         sync.Mutex
+	cancelScan       context.CancelFunc
+	userCanceledScan bool
 }
 
 type tuiFinalizeEvent struct {
@@ -107,20 +107,20 @@ type tuiModel struct {
 }
 
 type tuiStyles struct {
-	frame        lipgloss.Style
-	header       lipgloss.Style
-	headerDone   lipgloss.Style
-	headerMuted  lipgloss.Style
-	pane         lipgloss.Style
-	paneBorder   lipgloss.Style
-	paneTitle    lipgloss.Style
-	selectedRow  lipgloss.Style
-	row          lipgloss.Style
-	rowMuted     lipgloss.Style
-	detailKey    lipgloss.Style
-	detailValue  lipgloss.Style
-	detailAccent lipgloss.Style
-	footer       lipgloss.Style
+	frame            lipgloss.Style
+	header           lipgloss.Style
+	headerStatusDone lipgloss.Style
+	headerMuted      lipgloss.Style
+	pane             lipgloss.Style
+	paneBorder       lipgloss.Style
+	paneTitle        lipgloss.Style
+	selectedRow      lipgloss.Style
+	row              lipgloss.Style
+	rowMuted         lipgloss.Style
+	detailKey        lipgloss.Style
+	detailValue      lipgloss.Style
+	detailAccent     lipgloss.Style
+	footer           lipgloss.Style
 }
 
 func NewTUIWriter(w io.Writer, closer io.Closer) (*TUIWriter, error) {
@@ -619,10 +619,10 @@ func (m tuiModel) renderHeader() string {
 	status := firstNonEmpty(m.live.Status, "running")
 	elapsed := time.Since(m.live.Summary.StartedAt).Round(time.Second)
 	statusText := fmt.Sprintf("Snablr Live Scan  [%s]", strings.ToUpper(status))
-	statusLine := m.styles.header.Render(statusText)
 	if strings.EqualFold(status, "done") || strings.EqualFold(status, "complete") {
-		statusLine = m.styles.headerDone.Render(fmt.Sprintf("Snablr Live Scan  [%s]", "DONE"))
+		statusText = "Snablr Live Scan  [" + m.styles.headerStatusDone.Render("DONE") + "]"
 	}
+	statusLine := m.styles.header.Render(statusText)
 	lines := []string{
 		statusLine,
 		m.styles.headerMuted.Render(fmt.Sprintf("Profile: %s  Targets: %d/%d  Shares: %d  Files: %d  Primary: %d  Matches: %d  Skipped: %d  Read errors: %d",
@@ -867,20 +867,20 @@ func displayTriageClass(value string) string {
 
 func defaultTUIStyles() tuiStyles {
 	return tuiStyles{
-		frame:        lipgloss.NewStyle().Padding(0, 1),
-		header:       lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#D7FFE1")),
-		headerDone:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7AF0B2")),
-		headerMuted:  lipgloss.NewStyle().Foreground(lipgloss.Color("#8EC7A2")),
-		pane:         lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#2F8F5B")).Padding(0, 1),
-		paneBorder:   lipgloss.NewStyle().Foreground(lipgloss.Color("#2F8F5B")),
-		paneTitle:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#6EE7A8")),
-		selectedRow:  lipgloss.NewStyle().Foreground(lipgloss.Color("#F3FFF7")).Background(lipgloss.Color("#1F6F4A")).Bold(true),
-		row:          lipgloss.NewStyle().Foreground(lipgloss.Color("#D6F5E3")),
-		rowMuted:     lipgloss.NewStyle().Foreground(lipgloss.Color("#6F9E85")),
-		detailKey:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7AF0B2")),
-		detailValue:  lipgloss.NewStyle().Foreground(lipgloss.Color("#E9FFF2")),
-		detailAccent: lipgloss.NewStyle().Foreground(lipgloss.Color("#F4D35E")),
-		footer:       lipgloss.NewStyle().Foreground(lipgloss.Color("#7EB894")),
+		frame:            lipgloss.NewStyle().Padding(0, 1),
+		header:           lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#D9ECFF")),
+		headerStatusDone: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#5BE49B")),
+		headerMuted:      lipgloss.NewStyle().Foreground(lipgloss.Color("#88AECB")),
+		pane:             lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#3B82F6")).Padding(0, 1),
+		paneBorder:       lipgloss.NewStyle().Foreground(lipgloss.Color("#3B82F6")),
+		paneTitle:        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7CC4FF")),
+		selectedRow:      lipgloss.NewStyle().Foreground(lipgloss.Color("#F8FBFF")).Background(lipgloss.Color("#1D4ED8")).Bold(true),
+		row:              lipgloss.NewStyle().Foreground(lipgloss.Color("#D7EAFE")),
+		rowMuted:         lipgloss.NewStyle().Foreground(lipgloss.Color("#7A9BB7")),
+		detailKey:        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#8CCBFF")),
+		detailValue:      lipgloss.NewStyle().Foreground(lipgloss.Color("#EDF6FF")),
+		detailAccent:     lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD166")),
+		footer:           lipgloss.NewStyle().Foreground(lipgloss.Color("#8FAECC")),
 	}
 }
 

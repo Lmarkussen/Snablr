@@ -56,6 +56,9 @@ func Generate(opts GenerateOptions) ([]SeedFile, error) {
 	seenPaths := make(map[string]struct{}, opts.MaxFiles)
 
 	for _, spec := range specs {
+		if spec.Category == "wim-images" && !wimGenerationAvailable() {
+			continue
+		}
 		if len(spec.Variants) == 0 {
 			continue
 		}

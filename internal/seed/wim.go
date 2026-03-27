@@ -9,6 +9,11 @@ import (
 	"strings"
 )
 
+func wimGenerationAvailable() bool {
+	_, err := exec.LookPath("wimlib-imagex")
+	return err == nil
+}
+
 type wimMemberTemplate struct {
 	Path         string
 	Content      []byte
@@ -46,7 +51,7 @@ func wimMembersForVariant(ctx renderContext, variant templateVariant) []wimMembe
 }
 
 func buildWIMBytes(ctx renderContext, members []wimMemberTemplate) []byte {
-	if _, err := exec.LookPath("wimlib-imagex"); err != nil {
+	if !wimGenerationAvailable() {
 		panic("wimlib-imagex is required to generate WIM seed fixtures")
 	}
 

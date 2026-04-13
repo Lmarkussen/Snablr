@@ -1888,6 +1888,11 @@ func TestHTMLWriterRendersStandaloneTriageReport(t *testing.T) {
 			t.Fatalf("expected html output to contain %q", want)
 		}
 	}
+	for _, want := range []string{"details.finding-group, details.supporting-group", ".finding-card, .supporting-card", "class=\"group supporting-group\"", "class=\"supporting-card\"\n              data-search=", "data-triage=\"config-only\"", "data-actionable=\"false\""} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected html output to contain %q", want)
+		}
+	}
 	for _, want := range []string{"id=\"hideConfigOnly\" type=\"checkbox\" checked", "id=\"hideNonActionable\" type=\"checkbox\" checked"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected html output to enable default low-noise filters, missing %q", want)
@@ -1898,7 +1903,7 @@ func TestHTMLWriterRendersStandaloneTriageReport(t *testing.T) {
 			t.Fatalf("expected html output not to contain %q", want)
 		}
 	}
-	for _, want := range []string{"Heuristic file hit", "Config artifact only.", "data-triage=\"config-only\"", "data-actionable=\"false\""} {
+	for _, want := range []string{"Heuristic file hit", "Config artifact only."} {
 		if strings.Contains(out, want) {
 			t.Fatalf("expected html output not to render supporting-only items as primary cards, found %q", want)
 		}

@@ -432,6 +432,7 @@
     tbody tr.status-changed { box-shadow: inset 4px 0 0 var(--diff-changed); }
 	    tbody tr.is-hidden,
 	    .finding-card.is-hidden,
+	    .supporting-card.is-hidden,
 	    .group.is-hidden {
 	      display: none;
 	    }
@@ -1692,7 +1693,7 @@
         </summary>
 
         {{- range .SupportingCategoryGroups }}
-        <details class="group" id="supporting-{{ slug .Summary.Category }}">
+        <details class="group supporting-group" id="supporting-{{ slug .Summary.Category }}" data-category="{{ .Summary.Category }}" data-total-findings="{{ .Summary.Findings }}">
           <summary class="group-summary">
             <div class="group-top">
               <div class="group-title">
@@ -1700,7 +1701,7 @@
                 <span class="badge {{ severityClass .Summary.HighestSeverity }}">{{ .Summary.HighestSeverity }}</span>
               </div>
               <div class="group-stats">
-                <span>{{ .Summary.Findings }} items</span>
+                <span>Visible: <span class="group-visible-count">{{ .Summary.Findings }}</span> / {{ .Summary.Findings }}</span>
                 <span>Critical: {{ .Summary.Critical }}</span>
                 <span>High: {{ .Summary.High }}</span>
                 <span>Medium: {{ .Summary.Medium }}</span>
@@ -1711,7 +1712,18 @@
 
           <div class="supporting-list">
             {{- range .Findings }}
-            <article class="supporting-card">
+            <article class="supporting-card"
+              data-search="{{ findingSearchText .Finding .ChangedFields .DiffStatus }}"
+              data-severity="{{ .Finding.Severity }}"
+              data-category="{{ .Finding.Category }}"
+              data-confidence="{{ .Finding.Confidence }}"
+              data-source="{{ normalizedSource .Finding.Source }}"
+              data-host="{{ .Finding.Host }}"
+              data-share="{{ .Finding.Share }}"
+              data-signal="{{ primarySignal .Finding }}"
+              data-correlated="{{ if isCorrelated .Finding }}true{{ else }}false{{ end }}"
+              data-actionable="{{ if isActionable .Finding }}true{{ else }}false{{ end }}"
+              data-triage="{{ .Finding.TriageClass }}">
               <div class="supporting-card-top">
                 <span class="badge {{ severityClass .Finding.Severity }}">{{ .Finding.Severity }}</span>
                 {{- if primarySignal .Finding }}<span class="badge {{ signalClass (primarySignal .Finding) }}">signal {{ signalLabel (primarySignal .Finding) }}</span>{{ end -}}
@@ -1769,13 +1781,13 @@
         var shouldHideConfigOnly = hideConfigOnly && hideConfigOnly.checked;
         var shouldHideLowConfidence = hideLowConfidence && hideLowConfidence.checked;
         var shouldHideNonActionable = hideNonActionable && hideNonActionable.checked;
-        var groups = document.querySelectorAll("details.finding-group");
+        var groups = document.querySelectorAll("details.finding-group, details.supporting-group");
         var visibleGroups = 0;
         var visibleCards = 0;
         var activeFilter = query || severity || category || confidence || source || signal || scope || onlyCorrelated || shouldHideConfigOnly || shouldHideLowConfidence || shouldHideNonActionable;
 
         groups.forEach(function (group) {
-          var cards = group.querySelectorAll(".finding-card");
+          var cards = group.querySelectorAll(".finding-card, .supporting-card");
           var visible = 0;
 
           cards.forEach(function (card) {

@@ -29,6 +29,9 @@ func FilterReachable(ctx context.Context, targets []Target, opts ReachabilityOpt
 	}
 
 	if opts.SkipCheck {
+		if logger != nil {
+			logger.Infof("reachability checks skipped; marking %d target(s) as reachable", len(targets))
+		}
 		out := make([]Target, 0, len(targets))
 		for _, target := range targets {
 			if enriched := enrichTarget(ctx, target, logger); enriched.Input != "" {
@@ -37,6 +40,10 @@ func FilterReachable(ctx context.Context, targets []Target, opts ReachabilityOpt
 			}
 		}
 		return out, append([]Target{}, out...), nil
+	}
+
+	if logger != nil {
+		logger.Infof("resolving hostnames and testing SMB reachability for %d target(s)", len(targets))
 	}
 
 	jobs := make(chan Target)
@@ -87,6 +94,10 @@ func FilterReachable(ctx context.Context, targets []Target, opts ReachabilityOpt
 	}
 	if err := ctx.Err(); err != nil && !errors.Is(err, context.Canceled) {
 		return nil, nil, err
+	}
+
+	if logger != nil {
+		logger.Infof("reachability complete: %d reachable, %d skipped", len(reachable), len(all)-len(reachable))
 	}
 
 	return all, reachable, nil

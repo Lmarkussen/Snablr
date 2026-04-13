@@ -71,8 +71,8 @@ func extractedSensitiveValues(blob string) []string {
 		}
 	}
 	for _, line := range strings.Split(blob, "\n") {
-		if match := genericPairRegex.FindStringSubmatch(strings.TrimSpace(line)); len(match) == 4 {
-			values = append(values, match[3])
+		if match, ok := parseGenericPairLine(line); ok {
+			values = append(values, match.Value)
 		}
 	}
 	return values

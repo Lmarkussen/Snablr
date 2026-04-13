@@ -22,6 +22,9 @@ type PipelineResult struct {
 
 func Resolve(ctx context.Context, cfg config.ScanConfig, logger Logger, recorder metrics.Recorder) (PipelineResult, error) {
 	var result PipelineResult
+	if logger != nil {
+		logger.Infof("starting target discovery")
+	}
 	var collectTimer *metrics.Timer
 	if recorder != nil {
 		collectTimer = recorder.StartPhase("target_collection")
@@ -37,12 +40,18 @@ func Resolve(ctx context.Context, cfg config.ScanConfig, logger Logger, recorder
 	result.DiscoveredHosts = collected.discoveredHosts
 	result.DFSTargets = collected.dfsTargets
 	result.Stats.Loaded = len(collected.targets)
+	if logger != nil {
+		logger.Infof("resolved %d candidate target(s) before deduplication", result.Stats.Loaded)
+	}
 	if recorder != nil {
 		recorder.AddTargetsLoaded(result.Stats.Loaded)
 	}
 
 	unique := deduplicateTargets(collected.targets)
 	result.Stats.Unique = len(unique)
+	if logger != nil {
+		logger.Infof("prepared %d unique target(s) for reachability checks", result.Stats.Unique)
+	}
 
 	var reachabilityTimer *metrics.Timer
 	if recorder != nil {
@@ -68,6 +77,9 @@ func Resolve(ctx context.Context, cfg config.ScanConfig, logger Logger, recorder
 	}
 	result.Stats.Unreachable = len(unique) - len(reachable)
 	result.Stats.Skipped = result.Stats.Loaded - result.Stats.Reachable
+	if logger != nil {
+		logger.Infof("target discovery complete: %d reachable, %d skipped", result.Stats.Reachable, result.Stats.Skipped)
+	}
 
 	return result, nil
 }
@@ -85,6 +97,9 @@ func collectTargets(ctx context.Context, cfg config.ScanConfig, logger Logger) (
 		if target := newTarget(host, "cli"); target.Input != "" {
 			result.targets = append(result.targets, target)
 		}
+	}
+	if len(result.targets) > 0 && logger != nil {
+		logger.Infof("using %d explicit target(s) from CLI", len(result.targets))
 	}
 
 	if strings.TrimSpace(cfg.TargetsFile) != "" {
@@ -106,6 +121,9 @@ func collectTargets(ctx context.Context, cfg config.ScanConfig, logger Logger) (
 		}
 		if err := scanner.Err(); err != nil {
 			return collectedTargets{}, fmt.Errorf("read host file %s: %w", cfg.TargetsFile, err)
+		}
+		if logger != nil {
+			logger.Infof("loaded targets from file %s; current candidate count=%d", cfg.TargetsFile, len(result.targets))
 		}
 	}
 

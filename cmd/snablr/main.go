@@ -496,6 +496,8 @@ func printScanUsage(fs *flag.FlagSet) {
 	fmt.Println("Description:")
 	fmt.Println("  Runs target discovery, reachability testing, planning, SMB enumeration, rule-based scanning,")
 	fmt.Println("  and report generation.")
+	fmt.Println("  Required credentials for LDAP/DFS discovery are validated before the live TUI starts.")
+	fmt.Println("  Discovery-based scans show target discovery and reachability progress before the TUI opens.")
 	fmt.Println()
 	fmt.Println("When to use it:")
 	fmt.Println("  - direct target scan: use --targets or --targets-file")

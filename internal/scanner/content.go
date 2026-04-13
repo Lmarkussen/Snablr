@@ -37,6 +37,24 @@ var (
 	genericPairRegex      = regexp.MustCompile(`(?im)^\s*((?:[A-Za-z][A-Za-z0-9._@-]{1,32})|(?:domain administrator)|(?:domene administrator))(\s*[:=]\s*)([^\s"';]{4,64})\s*$`)
 )
 
+var disallowedGenericPairLabels = map[string]struct{}{
+	"http":  {},
+	"https": {},
+	"ftp":   {},
+	"ftps":  {},
+	"smb":   {},
+	"ldap":  {},
+	"ldaps": {},
+	"ssh":   {},
+	"file":  {},
+}
+
+type genericPairMatch struct {
+	Label string
+	Sep   string
+	Value string
+}
+
 func NewContentScanner(snippetBytes int, validationMode bool, observer ValidationObserver, log validationLogger) ContentScanner {
 	if snippetBytes <= 0 {
 		snippetBytes = 120
@@ -129,6 +147,11 @@ func buildContentMatchDetails(rule rules.Rule, content string, snippetBytes int)
 	}
 
 	match := content[matchRange[0]:matchRange[1]]
+	if rule.ID == "content.note_style_credential_pair_indicators" {
+		if _, ok := parseGenericPairLine(match); !ok {
+			return contentMatchDetails{}, false
+		}
+	}
 	context, lineNumber, potentialAccount := captureMatchContext(content, matchRange[0], matchRange[1])
 	redactedMatch := redactSensitiveText(match)
 	redactedContext := redactSensitiveText(context)
@@ -195,8 +218,8 @@ func nearbyIdentityLine(lines []string, lineIndex int) string {
 		if line == "" {
 			return ""
 		}
-		if matches := genericPairRegex.FindStringSubmatch(line); len(matches) == 4 {
-			return matches[1]
+		if match, ok := parseGenericPairLine(line); ok {
+			return match.Label
 		}
 		if !identityLineRegex.MatchString(line) {
 			return ""
@@ -225,8 +248,46 @@ func redactSensitiveText(text string) string {
 
 	redacted := assignmentSecretRegex.ReplaceAllString(text, `${1}${2}${3}********`)
 	redacted = xmlSecretRegex.ReplaceAllString(redacted, `<${1}>********</${1}>`)
-	redacted = genericPairRegex.ReplaceAllString(redacted, `${1}${2}********`)
+	redacted = redactGenericPairLines(redacted)
 	return redacted
+}
+
+func parseGenericPairLine(line string) (genericPairMatch, bool) {
+	matches := genericPairRegex.FindStringSubmatch(strings.TrimSpace(line))
+	if len(matches) != 4 {
+		return genericPairMatch{}, false
+	}
+
+	label := strings.TrimSpace(matches[1])
+	value := strings.TrimSpace(matches[3])
+	if genericPairLooksLikeURI(label, value) {
+		return genericPairMatch{}, false
+	}
+
+	return genericPairMatch{
+		Label: label,
+		Sep:   matches[2],
+		Value: value,
+	}, true
+}
+
+func genericPairLooksLikeURI(label, value string) bool {
+	if _, blocked := disallowedGenericPairLabels[strings.ToLower(strings.TrimSpace(label))]; blocked {
+		return strings.HasPrefix(strings.TrimSpace(value), "//")
+	}
+	return false
+}
+
+func redactGenericPairLines(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		match, ok := parseGenericPairLine(line)
+		if !ok {
+			continue
+		}
+		lines[i] = match.Label + match.Sep + "********"
+	}
+	return strings.Join(lines, "\n")
 }
 
 func limitRunes(value string, maxCount int) string {

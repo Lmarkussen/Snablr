@@ -195,6 +195,10 @@ What this does:
 
 Live console note:
 
+- scans that require LDAP/DFS credentials now run a credential preflight before the TUI starts
+- invalid required credentials abort the scan immediately and the TUI is not launched
+- discovery-based scans now show target discovery and reachability progress in plain console output before the TUI opens
+- the interactive TUI starts only after startup work completes and real target counts are available
 - interactive terminal scans now open a two-pane TUI
 - the left pane shows finding metadata, scan progress, and current activity
 - the right pane shows evidence and detail for the currently selected finding

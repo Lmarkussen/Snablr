@@ -65,35 +65,66 @@ func isWeakReviewFinding(f Finding) bool {
 }
 
 func hasStrongEvidence(f Finding) bool {
+	if strings.EqualFold(strings.TrimSpace(findingPrimarySignal(f)), "correlation") {
+		return true
+	}
+
+	if hasUsablePrimaryEvidence(f) {
+		return true
+	}
+
+	return isDirectExploitArtifact(f)
+}
+
+func hasUsablePrimaryEvidence(f Finding) bool {
 	quality := assessFindingValueQuality(f)
 	if quality.Weak {
-		switch strings.ToLower(strings.TrimSpace(f.Category)) {
-		case "configuration", "credentials", "infrastructure", "database-access":
-			return false
-		}
+		return false
 	}
 
 	switch strings.ToLower(strings.TrimSpace(findingPrimarySignal(f))) {
-	case "validated":
-		return true
 	case "content":
 		return true
-	case "correlation":
-		return true
+	case "validated":
+		return !isValidatedArtifactIdentityOnly(f)
+	default:
+		return false
 	}
+}
 
+func isDirectExploitArtifact(f Finding) bool {
 	switch strings.ToLower(strings.TrimSpace(f.RuleID)) {
 	case "filename.private_key_artifacts",
 		"filename.secret_store_artifacts",
 		"filename.windows_hive_artifacts",
 		"filename.ad_database_backup_artifacts",
-		"filename.windows_hive_backup_artifacts",
-		"extension.client_auth_artifacts":
+		"filename.windows_hive_backup_artifacts":
 		return true
+	default:
+		return false
 	}
+}
 
+func isValidatedArtifactIdentityOnly(f Finding) bool {
 	ruleID := strings.ToLower(strings.TrimSpace(f.RuleID))
-	return strings.HasPrefix(ruleID, "backupinspect.path.") || strings.HasPrefix(ruleID, "wincredinspect.path.")
+	switch {
+	case strings.HasPrefix(ruleID, "backupinspect.path."):
+		return true
+	case strings.HasPrefix(ruleID, "browsercredinspect."):
+		return true
+	case strings.HasPrefix(ruleID, "dbinspect.artifact."):
+		return true
+	case strings.HasPrefix(ruleID, "dbinspect.infrastructure."):
+		return true
+	case strings.HasPrefix(ruleID, "wincredinspect.path."):
+		return true
+	case ruleID == "awsinspect.path.credentials":
+		return true
+	case ruleID == "awsinspect.path.config":
+		return true
+	default:
+		return false
+	}
 }
 
 func findingPrimarySignal(f Finding) string {

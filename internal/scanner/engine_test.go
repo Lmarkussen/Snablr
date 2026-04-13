@@ -615,8 +615,8 @@ func TestEngineEvaluateDetectsClientAuthArtifacts(t *testing.T) {
 		if finding.RuleID != "extension.client_auth_artifacts" {
 			t.Fatalf("expected client-auth extension rule, got %#v", finding)
 		}
-		if finding.Category != "remote-access" || finding.Severity != "high" {
-			t.Fatalf("expected high remote-access finding, got %#v", finding)
+		if finding.Category != "remote-access" || finding.TriageClass != triageWeakReview || finding.Actionable {
+			t.Fatalf("expected client-auth extension artifact to stay review-only, got %#v", finding)
 		}
 	}
 }
@@ -673,8 +673,8 @@ func TestEngineEvaluateDetectsWindowsImageBackupPath(t *testing.T) {
 	if finding.RuleID != "backupinspect.path.windowsimagebackup" {
 		t.Fatalf("unexpected finding: %#v", finding)
 	}
-	if finding.Category != "backup-exposure" || finding.Confidence != "high" {
-		t.Fatalf("expected high-confidence backup-exposure finding, got %#v", finding)
+	if finding.Category != "backup-exposure" || finding.TriageClass != triageWeakReview || finding.Actionable {
+		t.Fatalf("expected backup family path to stay review-only without secret artifact evidence, got %#v", finding)
 	}
 	if !hasTag(finding.Tags, "artifact:backup-family") || !hasTag(finding.Tags, "backup-family:windowsimagebackup") {
 		t.Fatalf("expected backup-family tags, got %#v", finding.Tags)
@@ -851,8 +851,8 @@ func TestEngineEvaluateDetectsWindowsCredentialStorePath(t *testing.T) {
 	if finding.RuleID != "wincredinspect.path.credentials" {
 		t.Fatalf("unexpected finding: %#v", finding)
 	}
-	if finding.Category != "windows-credentials" || finding.Confidence != "high" {
-		t.Fatalf("expected high-confidence windows-credentials finding, got %#v", finding)
+	if finding.Category != "windows-credentials" || finding.TriageClass != triageWeakReview || finding.Actionable {
+		t.Fatalf("expected standalone Windows Credentials path to stay review-only, got %#v", finding)
 	}
 	if !hasTag(finding.Tags, "credstore:path-exact") || !hasTag(finding.Tags, "credstore:type:credentials") {
 		t.Fatalf("expected credential-store tags, got %#v", finding.Tags)
@@ -876,6 +876,9 @@ func TestEngineEvaluateDetectsWindowsCredentialStoreBackupVariant(t *testing.T) 
 	}
 	if evaluation.Findings[0].RuleID != "wincredinspect.path.vault" {
 		t.Fatalf("unexpected finding: %#v", evaluation.Findings[0])
+	}
+	if evaluation.Findings[0].TriageClass != triageWeakReview || evaluation.Findings[0].Actionable {
+		t.Fatalf("expected standalone Windows Vault path to stay review-only, got %#v", evaluation.Findings[0])
 	}
 }
 

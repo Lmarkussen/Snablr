@@ -204,7 +204,7 @@ Live console note:
 - the right pane shows evidence and detail for the currently selected finding
 - evidence is intentionally kept out of the left pane so raw secrets do not scroll by in the live finding list
 - default live output is filtered to primary findings only; weaker supporting artifacts remain available for correlation and in exported reports
-- the HTML report keeps the full dataset, but opens with config-only and non-actionable findings hidden by default
+- the HTML report now renders primary findings as the main report body and moves weaker supporting items into a separate collapsed supporting-context section
 - each scan also writes `scanned_targets.txt` by default so discovery-mode runs leave an audit trail of reachable and actually scanned targets
 - report/export flags such as `--output-format html`, `--output-format html,json`, `--json-out`, `--html-out`, and sidecar exports do not disable the TUI
 - the TUI is the default live interface for interactive runs; exports are additional outputs
@@ -518,10 +518,12 @@ What to look at first:
 2. severity summary
    Helps you decide whether to start with critical/high findings or broad category review
 3. category summary
-   Shows where the bulk of findings live
+   Shows where the bulk of primary findings live
 4. grouped findings
-   Findings are grouped by category, then ordered by severity for practical review
-5. seeded validation summary, when `--seed-manifest` is provided
+   Primary findings are grouped by category, then ordered by severity for practical review
+5. supporting context
+   Lower-priority review items remain available in a collapsed secondary section for correlation and drill-down
+6. seeded validation summary, when `--seed-manifest` is provided
    Shows expected versus observed behavior for seeded lab content
 
 How to interpret a finding row:
@@ -534,7 +536,7 @@ How to interpret a finding row:
 - rule explanation tells you why the rule exists
 - remediation guidance helps you turn the finding into defensive follow-up
 
-The HTML report also includes structured client-side filters that work together with the quick text search. Operators can filter by severity, category, confidence, source, host/share, signal type, correlated findings, actionable evidence, and low-value config-only findings.
+The HTML report also includes structured client-side filters that work together with the quick text search. Operators can filter primary findings by severity, category, confidence, source, host/share, signal type, correlated findings, actionable evidence, and low-value config-only findings.
 
 There is no screenshot committed yet, so the report sections above are described directly in the docs.
 

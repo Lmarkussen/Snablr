@@ -179,7 +179,9 @@ func (h *HTMLWriter) Close() error {
 	defer h.mu.Unlock()
 
 	augmented := augmentFindingsForReporting(h.findings)
-	categorySummaries := buildCategorySummaries(augmented)
+	primaryFindings, supportingFindings := splitFindingsByActionable(augmented)
+	categorySummaries := buildCategorySummaries(primaryFindings)
+	supportingCategorySummaries := buildCategorySummaries(supportingFindings)
 	var diffResult *diff.DiffResult
 	statuses := map[diff.FindingFingerprint]diff.FindingDelta{}
 	if len(h.baseline) > 0 {
@@ -187,10 +189,11 @@ func (h *HTMLWriter) Close() error {
 		diffResult = &result
 		statuses = diff.CurrentStatuses(result)
 	}
-	categoryGroups := groupFindingsByCategory(augmented, categorySummaries, statuses)
-	hostSummaries := buildHostSummaries(augmented)
-	severitySummaries := buildSeveritySummaries(augmented)
-	filterOptions := buildFilterOptions(augmented)
+	categoryGroups := groupFindingsByCategory(primaryFindings, categorySummaries, statuses)
+	supportingCategoryGroups := groupFindingsByCategory(supportingFindings, supportingCategorySummaries, statuses)
+	hostSummaries := buildHostSummaries(primaryFindings)
+	severitySummaries := buildSeveritySummaries(primaryFindings)
+	filterOptions := buildFilterOptions(primaryFindings)
 	summary := adjustedSummarySnapshot(h.summary.Snapshot(), h.findings, augmented)
 	validation, err := buildValidationSummary(h.manifest, augmented)
 	if err != nil {
@@ -207,6 +210,7 @@ func (h *HTMLWriter) Close() error {
 		Metrics           metrics.Snapshot
 		SeveritySummaries []severitySummary
 		CategorySummaries []categorySummary
+		SupportingCategorySummaries []categorySummary
 		AccessPaths       []accessPathSummary
 		TopAccessPaths    []accessPathSummary
 		Suppression       *suppressionSummary
@@ -215,6 +219,8 @@ func (h *HTMLWriter) Close() error {
 		ChangedFindings   []diff.ChangedFinding
 		RemovedFindings   []scanner.Finding
 		CategoryGroups    []htmlCategoryGroup
+		SupportingCategoryGroups []htmlCategoryGroup
+		SupportingFindingCount   int
 		FilterOptions     reportFilterOptions
 		Validation        *validationSummary
 	}{
@@ -224,6 +230,7 @@ func (h *HTMLWriter) Close() error {
 		Metrics:           h.metrics,
 		SeveritySummaries: severitySummaries,
 		CategorySummaries: categorySummaries,
+		SupportingCategorySummaries: supportingCategorySummaries,
 		AccessPaths:       buildAccessPathSummaries(augmented),
 		HostSummaries:     hostSummaries,
 		Suppression:       h.suppression,
@@ -231,6 +238,8 @@ func (h *HTMLWriter) Close() error {
 		ChangedFindings:   changedFindings(diffResult),
 		RemovedFindings:   removedFindings(diffResult),
 		CategoryGroups:    categoryGroups,
+		SupportingCategoryGroups: supportingCategoryGroups,
+		SupportingFindingCount:   len(supportingFindings),
 		FilterOptions:     filterOptions,
 		Validation:        validation,
 	}
@@ -246,6 +255,23 @@ func (h *HTMLWriter) Close() error {
 		return nil
 	}
 	return h.closer.Close()
+}
+
+func splitFindingsByActionable(findings []scanner.Finding) ([]scanner.Finding, []scanner.Finding) {
+	if len(findings) == 0 {
+		return nil, nil
+	}
+
+	primary := make([]scanner.Finding, 0, len(findings))
+	supporting := make([]scanner.Finding, 0, len(findings))
+	for _, finding := range findings {
+		if finding.Actionable {
+			primary = append(primary, finding)
+			continue
+		}
+		supporting = append(supporting, finding)
+	}
+	return primary, supporting
 }
 
 func severityRank(value string) int {

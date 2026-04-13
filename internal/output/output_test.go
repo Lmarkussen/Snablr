@@ -91,8 +91,8 @@ func sampleHeuristicFinding() scanner.Finding {
 		ConfidenceScore:   38,
 		ConfidenceReasons: []string{"filename rule matched \"passwords\" for Detect credential-style exports.", "planner marked this path as relevant review material"},
 		Category:          "credentials",
-		TriageClass:       "actionable",
-		Actionable:        true,
+		TriageClass:       "weak-review",
+		Actionable:        false,
 		Correlated:        true,
 		ConfidenceBreakdown: scanner.ConfidenceBreakdown{
 			BaseScore:                   38,
@@ -218,13 +218,13 @@ func sampleClientAuthFinding() scanner.Finding {
 	return scanner.Finding{
 		RuleID:             "extension.client_auth_artifacts",
 		RuleName:           "Client Auth Artifact Extensions",
-		Severity:           "high",
-		Confidence:         "high",
+		Severity:           "medium",
+		Confidence:         "medium",
 		RuleConfidence:     "high",
 		ConfidenceScore:    52,
 		Category:           "remote-access",
-		TriageClass:        "actionable",
-		Actionable:         true,
+		TriageClass:        "weak-review",
+		Actionable:         false,
 		FilePath:           "Users/Alice/.ssh/client-admin.ovpn",
 		Share:              "Users",
 		Host:               "fs01",
@@ -250,8 +250,8 @@ func samplePFXFinding() scanner.Finding {
 		RuleConfidence:     "medium",
 		ConfidenceScore:    42,
 		Category:           "crypto",
-		TriageClass:        "actionable",
-		Actionable:         true,
+		TriageClass:        "weak-review",
+		Actionable:         false,
 		FilePath:           "Recovery/Certificates/corp-admin.pfx",
 		Share:              "Users",
 		Host:               "fs01",
@@ -304,13 +304,13 @@ func sampleWindowsCredentialsFinding() scanner.Finding {
 	return scanner.Finding{
 		RuleID:             "wincredinspect.path.credentials",
 		RuleName:           "Windows Credentials Store Path",
-		Severity:           "high",
-		Confidence:         "high",
+		Severity:           "medium",
+		Confidence:         "medium",
 		RuleConfidence:     "high",
-		ConfidenceScore:    70,
+		ConfidenceScore:    34,
 		Category:           "windows-credentials",
-		TriageClass:        "actionable",
-		Actionable:         true,
+		TriageClass:        "weak-review",
+		Actionable:         false,
 		FilePath:           "Users/Alice/AppData/Roaming/Microsoft/Credentials/A1B2C3D4",
 		Share:              "Profiles",
 		Host:               "fs01",
@@ -423,12 +423,12 @@ func sampleWindowsProtectFinding() scanner.Finding {
 		RuleID:             "wincredinspect.path.protect",
 		RuleName:           "Windows DPAPI Protect Path",
 		Severity:           "medium",
-		Confidence:         "high",
+		Confidence:         "medium",
 		RuleConfidence:     "high",
-		ConfidenceScore:    70,
+		ConfidenceScore:    34,
 		Category:           "windows-credentials",
-		TriageClass:        "actionable",
-		Actionable:         true,
+		TriageClass:        "weak-review",
+		Actionable:         false,
 		FilePath:           "Users/Alice/AppData/Roaming/Microsoft/Protect/S-1-5-21/masterkey",
 		Share:              "Profiles",
 		Host:               "fs01",
@@ -506,13 +506,13 @@ func sampleBackupPathFinding() scanner.Finding {
 	return scanner.Finding{
 		RuleID:             "backupinspect.path.windowsimagebackup",
 		RuleName:           "WindowsImageBackup Exposure Path",
-		Severity:           "high",
-		Confidence:         "high",
+		Severity:           "medium",
+		Confidence:         "medium",
 		RuleConfidence:     "high",
-		ConfidenceScore:    62,
+		ConfidenceScore:    34,
 		Category:           "backup-exposure",
-		TriageClass:        "actionable",
-		Actionable:         true,
+		TriageClass:        "weak-review",
+		Actionable:         false,
 		FilePath:           "Backups/SystemState/WindowsImageBackup/DC01/Backup 2025-01-01/C/Windows/System32/config/SAM",
 		Share:              "Backups",
 		Host:               "fs01",
@@ -1883,7 +1883,7 @@ func TestHTMLWriterRendersStandaloneTriageReport(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, want := range []string{"Snablr Scan Report", "Version", "quickFilter", "severityFilter", "categoryFilter", "confidenceFilter", "sourceFilter", "signalFilter", "scopeFilter", "correlatedOnly", "hideConfigOnly", "hideLowConfidence", "hideNonActionable", "resetFilters", "filterStatus", "Severity Summary", "Category Summary", "Host Summary", "SYSVOL", "Signal Type", "Password Export Filename", "Visible Evidence", "password = ReplaceMe123!", "user = alice", "Line Number", "Heuristic file hit", "Config artifact only.", "filename matched a heuristic naming pattern covered by the rule.", "Rule Explanation", "confidence high", "Supporting Signals", "Confidence Breakdown", "Content signal strength", "Value quality:", "Final score:", "Remediation", "Download", "data-triage=\"config-only\"", "data-actionable=\"false\""} {
+	for _, want := range []string{"Snablr Scan Report", "Version", "quickFilter", "severityFilter", "categoryFilter", "confidenceFilter", "sourceFilter", "signalFilter", "scopeFilter", "correlatedOnly", "hideConfigOnly", "hideLowConfidence", "hideNonActionable", "resetFilters", "filterStatus", "Severity Summary", "Category Summary", "Host Summary", "SYSVOL", "Signal Type", "Visible Evidence", "password = ReplaceMe123!", "user = alice", "Line Number", "Rule Explanation", "confidence high", "Supporting Signals", "Confidence Breakdown", "Content signal strength", "Value quality:", "Final score:", "Remediation", "Download", "Supporting Context", "Supporting Findings", "Password Export Filename", "filename matched a heuristic naming pattern covered by the rule."} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected html output to contain %q", want)
 		}
@@ -1896,6 +1896,11 @@ func TestHTMLWriterRendersStandaloneTriageReport(t *testing.T) {
 	for _, want := range []string{"Show Evidence", "Raw Supporting Signals"} {
 		if strings.Contains(out, want) {
 			t.Fatalf("expected html output not to contain %q", want)
+		}
+	}
+	for _, want := range []string{"Heuristic file hit", "Config artifact only.", "data-triage=\"config-only\"", "data-actionable=\"false\""} {
+		if strings.Contains(out, want) {
+			t.Fatalf("expected html output not to render supporting-only items as primary cards, found %q", want)
 		}
 	}
 }

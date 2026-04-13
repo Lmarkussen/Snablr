@@ -122,7 +122,12 @@ The same visibility rule applies there:
 - default live console output shows primary findings only
 - supporting/contextual observations are retained for correlation, JSON, and HTML output
 
-The HTML report keeps the full dataset, but it now opens with config-only and non-actionable findings hidden by default so the first operator view is lower-noise.
+The HTML report now uses a split view:
+
+- primary findings render in the main report body
+- supporting findings move into a separate collapsed supporting-context section
+
+This keeps the default report focused on actionable evidence while still preserving weaker artifacts for correlation and manual follow-up.
 
 If you want the old plain stdout console output even in an interactive terminal, run the scan with:
 
@@ -431,10 +436,9 @@ Practical examples:
 
 The HTML view updates visible finding groups in place, so it is practical to move between:
 
-- all findings
 - only actionable findings
 - only correlated/high-confidence findings
-- everything except config-only review noise
+- everything except lower-confidence review noise in the primary section
 
 ## Diff / Baseline Reporting
 

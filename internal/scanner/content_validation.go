@@ -70,6 +70,16 @@ func extractedSensitiveValues(blob string) []string {
 			values = append(values, match[2])
 		}
 	}
+	for _, match := range xmlAddValueRegex.FindAllStringSubmatch(blob, -1) {
+		if len(match) >= 3 && isSecretLabel(match[1]) {
+			values = append(values, match[2])
+		}
+	}
+	for _, match := range xmlSecretAttrRegex.FindAllStringSubmatch(blob, -1) {
+		if len(match) >= 3 {
+			values = append(values, match[2])
+		}
+	}
 	for _, line := range strings.Split(blob, "\n") {
 		if match, ok := parseGenericPairLine(line); ok {
 			values = append(values, match.Value)

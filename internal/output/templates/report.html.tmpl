@@ -1405,7 +1405,7 @@
 
 	        <div class="finding-list">
 	          {{- range .Findings }}
-	          <article class="finding-card {{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" data-search="{{ .Finding.Category }} {{ .Finding.Severity }} {{ .Finding.Confidence }} {{ .Finding.RuleID }} {{ .Finding.RuleName }} {{ .Finding.Host }} {{ .Finding.Share }} {{ .Finding.ShareType }} {{ .Finding.ShareDescription }} {{ .Finding.FilePath }} {{ .Finding.Source }} {{ .Finding.ArchivePath }} {{ .Finding.ArchiveMemberPath }} {{ .Finding.DatabaseFilePath }} {{ .Finding.DatabaseTable }} {{ .Finding.DatabaseColumn }} {{ .Finding.DatabaseRowContext }} {{ .Finding.DFSNamespacePath }} {{ .Finding.DFSLinkPath }} {{ joinTags .Finding.Tags " " }} {{ .Finding.MatchReason }} {{ .Finding.RuleExplanation }} {{ .Finding.RuleRemediation }} {{ .Finding.Snippet }} {{ .Finding.Context }} {{ .Finding.ContextRedacted }} {{ .Finding.MatchedText }} {{ .Finding.MatchedTextRedacted }} {{ .Finding.PotentialAccount }} {{ .DiffStatus }} {{ joinTags .ChangedFields " " }} {{ joinList .Finding.MatchedRuleIDs " " }} {{ joinList .Finding.MatchedSignalTypes " " }} {{ joinList .Finding.ConfidenceReasons " " }}"
+	          <article class="finding-card {{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" data-search="{{ findingSearchText .Finding .ChangedFields .DiffStatus }}"
               data-severity="{{ .Finding.Severity }}"
               data-category="{{ .Finding.Category }}"
               data-confidence="{{ .Finding.Confidence }}"
@@ -1618,7 +1618,7 @@
 	                  {{- if and .Finding.MatchedText .Finding.MatchedTextRedacted (ne .Finding.MatchedText .Finding.MatchedTextRedacted) }}
 	                  <div class="evidence-pair">
 	                    <span class="evidence-label">Raw Matched Text</span>
-	                    <pre class="evidence-block">{{ .Finding.MatchedText }}</pre>
+	                    <pre class="evidence-block">{{ displayRawMatch .Finding }}</pre>
 	                  </div>
 	                  {{- end }}
 	                  {{- if displayContext .Finding }}
@@ -1630,7 +1630,7 @@
 	                  {{- if and .Finding.Context .Finding.ContextRedacted (ne .Finding.Context .Finding.ContextRedacted) }}
 	                  <div class="evidence-pair">
 	                    <span class="evidence-label">Raw Context</span>
-	                    <pre class="evidence-block">{{ .Finding.Context }}</pre>
+	                    <pre class="evidence-block">{{ displayRawContext .Finding }}</pre>
 	                  </div>
 	                  {{- end }}
 	                  {{- if .Finding.LineNumber }}

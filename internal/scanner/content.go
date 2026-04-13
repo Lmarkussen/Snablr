@@ -33,8 +33,13 @@ type contentMatchDetails struct {
 var (
 	assignmentSecretRegex = regexp.MustCompile(`(?i)\b(password|passord|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|secret[_-]?key|client[_-]?secret|connection\s*string|conn(?:ection)?[_-]?string)\b(\s*[:=]\s*)(["']?)([^"'\r\n;]+)(?:["']?)`)
 	xmlSecretRegex        = regexp.MustCompile(`(?i)<(password|passord|passwd|pwd|secret|token|apikey|clientsecret)>([^<]+)</[^>]+>`)
+	xmlAddValueRegex      = regexp.MustCompile(`(?i)<add\b[^>]*\b(?:key|name)\s*=\s*["']([^"']{1,64})["'][^>]*\bvalue\s*=\s*["']([^"']+)["'][^>]*\/?>`)
+	xmlSecretAttrRegex    = regexp.MustCompile(`(?i)<[^>]+\b(password|passord|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|secret[_-]?key|client[_-]?secret)\s*=\s*["']([^"']+)["'][^>]*\/?>`)
 	identityLineRegex     = regexp.MustCompile(`(?i)\b(user(name)?|login|account|email|upn|domain|domene|domain administrator|domene administrator)\b`)
 	genericPairRegex      = regexp.MustCompile(`(?im)^\s*((?:[A-Za-z][A-Za-z0-9._@-]{1,32})|(?:domain administrator)|(?:domene administrator))(\s*[:=]\s*)([^\s"';]{4,64})\s*$`)
+	credentialContextLabelRegex = regexp.MustCompile(`(?i)^(user(name)?|login|account|email|upn|admin(istrator)?|domain administrator|domene administrator|db[_-]?user|service[_-]?account)$`)
+	accountAliasLabelRegex      = regexp.MustCompile(`(?i)^(svc[_-]?[a-z0-9._-]+|app[_-]?[a-z0-9._-]+|sql[_-]?[a-z0-9._-]+|adm[_-]?[a-z0-9._-]+|[a-z0-9._-]*admin)$`)
+	genericResourceLabelRegex   = regexp.MustCompile(`(?i)^(msg|message|text|label|caption|title|description|desc|prompt|error|info|hint|notice|status|default(server|host|url)?|server|host|url|uri|path|dir|directory|file|folder)[0-9._-]*$`)
 )
 
 var disallowedGenericPairLabels = map[string]struct{}{
@@ -141,7 +146,7 @@ func buildContentMatchDetails(rule rules.Rule, content string, snippetBytes int)
 		return contentMatchDetails{}, false
 	}
 
-	matchRange := rx.FindStringIndex(content)
+	matchRange := contentMatchRange(rule.ID, rx, content)
 	if len(matchRange) != 2 {
 		return contentMatchDetails{}, false
 	}
@@ -166,6 +171,58 @@ func buildContentMatchDetails(rule rules.Rule, content string, snippetBytes int)
 		potentialAccount:    limitRunes(potentialAccount, 160),
 		lineNumber:          lineNumber,
 	}, true
+}
+
+func contentMatchRange(ruleID string, rx *regexp.Regexp, content string) []int {
+	if rx != nil {
+		if ruleID == "content.note_style_credential_pair_indicators" {
+			for _, matchRange := range rx.FindAllStringIndex(content, -1) {
+				if len(matchRange) != 2 {
+					continue
+				}
+				if _, ok := parseGenericPairLine(content[matchRange[0]:matchRange[1]]); ok {
+					return matchRange
+				}
+			}
+		} else if matchRange := rx.FindStringIndex(content); len(matchRange) == 2 {
+			return matchRange
+		}
+	}
+
+	switch ruleID {
+	case "content.password_assignment_indicators":
+		return xmlAssignmentRange(content, isPasswordLabel)
+	case "content.secret_assignment_indicators":
+		return xmlAssignmentRange(content, isSecretLabel)
+	default:
+		return nil
+	}
+}
+
+func xmlAssignmentRange(content string, allowLabel func(string) bool) []int {
+	for _, match := range xmlAddValueRegex.FindAllStringSubmatchIndex(content, -1) {
+		if len(match) < 6 {
+			continue
+		}
+		label := strings.TrimSpace(content[match[2]:match[3]])
+		if !allowLabel(label) {
+			continue
+		}
+		return []int{match[0], match[1]}
+	}
+
+	for _, match := range xmlSecretAttrRegex.FindAllStringSubmatchIndex(content, -1) {
+		if len(match) < 6 {
+			continue
+		}
+		label := strings.TrimSpace(content[match[2]:match[3]])
+		if !allowLabel(label) {
+			continue
+		}
+		return []int{match[0], match[1]}
+	}
+
+	return nil
 }
 
 func captureMatchContext(content string, start, end int) (string, int, string) {
@@ -221,6 +278,12 @@ func nearbyIdentityLine(lines []string, lineIndex int) string {
 		if match, ok := parseGenericPairLine(line); ok {
 			return match.Label
 		}
+		if label, value, ok := parseXMLAddValueLine(line); ok && isCredentialContextLabel(label) {
+			if strings.TrimSpace(value) != "" {
+				return label + "=" + value
+			}
+			return label
+		}
 		if !identityLineRegex.MatchString(line) {
 			return ""
 		}
@@ -248,6 +311,7 @@ func redactSensitiveText(text string) string {
 
 	redacted := assignmentSecretRegex.ReplaceAllString(text, `${1}${2}${3}********`)
 	redacted = xmlSecretRegex.ReplaceAllString(redacted, `<${1}>********</${1}>`)
+	redacted = redactXMLAttributeAssignments(redacted)
 	redacted = redactGenericPairLines(redacted)
 	return redacted
 }
@@ -262,6 +326,14 @@ func parseGenericPairLine(line string) (genericPairMatch, bool) {
 	value := strings.TrimSpace(matches[3])
 	if genericPairLooksLikeURI(label, value) {
 		return genericPairMatch{}, false
+	}
+	if genericResourceLabelRegex.MatchString(strings.ToLower(label)) {
+		return genericPairMatch{}, false
+	}
+	if !isCredentialContextLabel(label) {
+		if !accountAliasLabelRegex.MatchString(label) || assessSensitiveValueQuality(value).Weak {
+			return genericPairMatch{}, false
+		}
 	}
 
 	return genericPairMatch{
@@ -288,6 +360,68 @@ func redactGenericPairLines(text string) string {
 		lines[i] = match.Label + match.Sep + "********"
 	}
 	return strings.Join(lines, "\n")
+}
+
+func parseXMLAddValueLine(line string) (string, string, bool) {
+	matches := xmlAddValueRegex.FindStringSubmatch(strings.TrimSpace(line))
+	if len(matches) != 3 {
+		return "", "", false
+	}
+	return strings.TrimSpace(matches[1]), strings.TrimSpace(matches[2]), true
+}
+
+func redactXMLAttributeAssignments(text string) string {
+	text = xmlAddValueRegex.ReplaceAllStringFunc(text, func(value string) string {
+		matches := xmlAddValueRegex.FindStringSubmatch(value)
+		if len(matches) != 3 {
+			return value
+		}
+		label := strings.TrimSpace(matches[1])
+		if !isSecretLabel(label) {
+			return value
+		}
+		return strings.Replace(value, matches[2], "********", 1)
+	})
+	text = xmlSecretAttrRegex.ReplaceAllStringFunc(text, func(value string) string {
+		matches := xmlSecretAttrRegex.FindStringSubmatch(value)
+		if len(matches) != 3 {
+			return value
+		}
+		return strings.Replace(value, matches[2], "********", 1)
+	})
+	return text
+}
+
+func isPasswordLabel(label string) bool {
+	switch strings.ToLower(strings.TrimSpace(label)) {
+	case "password", "passord", "passwd", "pwd", "databasepassword":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSecretLabel(label string) bool {
+	label = strings.ToLower(strings.TrimSpace(label))
+	return isPasswordLabel(label) ||
+		label == "secret" ||
+		label == "token" ||
+		label == "apikey" ||
+		label == "api_key" ||
+		label == "accesskey" ||
+		label == "access_key" ||
+		label == "secretkey" ||
+		label == "secret_key" ||
+		label == "clientsecret" ||
+		label == "client_secret"
+}
+
+func isCredentialContextLabel(label string) bool {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return false
+	}
+	return credentialContextLabelRegex.MatchString(label)
 }
 
 func limitRunes(value string, maxCount int) string {

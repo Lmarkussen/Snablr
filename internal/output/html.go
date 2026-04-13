@@ -92,6 +92,7 @@ func NewHTMLWriter(w io.Writer, closer io.Closer) (*HTMLWriter, error) {
 		"displayContext":    displayContext,
 		"displayRawMatch":   displayRawMatch,
 		"displayRawContext": displayRawContext,
+		"findingSearchText": findingSearchText,
 		"isHeuristicHit":    isHeuristicHit,
 		"formatScanTime":    formatScanTime,
 		"formatDuration":    formatDuration,
@@ -391,37 +392,91 @@ func signalMatchLabel(signal string) string {
 }
 
 func displayMatch(f scanner.Finding) string {
-	if strings.TrimSpace(f.MatchedText) != "" {
-		return strings.TrimSpace(f.MatchedText)
-	}
 	if strings.TrimSpace(f.MatchedTextRedacted) != "" {
-		return strings.TrimSpace(f.MatchedTextRedacted)
+		return boundReportText(strings.TrimSpace(f.MatchedTextRedacted), 240)
 	}
-	return strings.TrimSpace(f.Match)
+	if strings.TrimSpace(f.MatchedText) != "" {
+		return boundReportText(strings.TrimSpace(f.MatchedText), 240)
+	}
+	return boundReportText(strings.TrimSpace(f.Match), 160)
 }
 
 func displayRawMatch(f scanner.Finding) string {
 	if strings.TrimSpace(f.MatchedText) != "" {
-		return strings.TrimSpace(f.MatchedText)
+		return boundReportText(strings.TrimSpace(f.MatchedText), 240)
 	}
-	return strings.TrimSpace(f.Match)
+	return boundReportText(strings.TrimSpace(f.Match), 160)
 }
 
 func displayContext(f scanner.Finding) string {
-	if strings.TrimSpace(f.Context) != "" {
-		return strings.TrimSpace(f.Context)
-	}
 	if strings.TrimSpace(f.ContextRedacted) != "" {
-		return strings.TrimSpace(f.ContextRedacted)
+		return boundReportText(strings.TrimSpace(f.ContextRedacted), 320)
 	}
-	return strings.TrimSpace(f.Snippet)
+	if strings.TrimSpace(f.Context) != "" {
+		return boundReportText(strings.TrimSpace(f.Context), 320)
+	}
+	return boundReportText(strings.TrimSpace(f.Snippet), 240)
 }
 
 func displayRawContext(f scanner.Finding) string {
 	if strings.TrimSpace(f.Context) != "" {
-		return strings.TrimSpace(f.Context)
+		return boundReportText(strings.TrimSpace(f.Context), 320)
 	}
-	return strings.TrimSpace(f.Snippet)
+	return boundReportText(strings.TrimSpace(f.Snippet), 240)
+}
+
+func findingSearchText(f scanner.Finding, changedFields []string, diffStatus string) string {
+	parts := []string{
+		f.Category,
+		f.Severity,
+		f.Confidence,
+		f.RuleID,
+		f.RuleName,
+		f.Host,
+		f.Share,
+		f.ShareType,
+		f.ShareDescription,
+		f.FilePath,
+		f.Source,
+		f.ArchivePath,
+		f.ArchiveMemberPath,
+		f.DatabaseFilePath,
+		f.DatabaseTable,
+		f.DatabaseColumn,
+		f.DatabaseRowContext,
+		f.DFSNamespacePath,
+		f.DFSLinkPath,
+		joinListOrEmpty(f.Tags),
+		f.MatchReason,
+		f.RuleExplanation,
+		f.RuleRemediation,
+		boundReportText(f.Snippet, 180),
+		boundReportText(f.ContextRedacted, 180),
+		boundReportText(firstNonEmpty(f.MatchedTextRedacted, f.MatchedText), 180),
+		f.PotentialAccount,
+		diffStatus,
+		joinListOrEmpty(changedFields),
+		joinListOrEmpty(f.MatchedRuleIDs),
+		joinListOrEmpty(f.MatchedSignalTypes),
+		joinListOrEmpty(f.ConfidenceReasons),
+	}
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+func boundReportText(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 || len([]rune(value)) <= limit {
+		return value
+	}
+	runes := []rune(value)
+	return strings.TrimSpace(string(runes[:limit])) + " ... [truncated]"
+}
+
+func joinListOrEmpty(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return strings.Join(values, " ")
 }
 
 func isHeuristicHit(f scanner.Finding) bool {

@@ -33,6 +33,7 @@ Optional sidecar exports:
 - `--csv-out findings.csv`
 - `--md-out summary.md`
 - `--creds-out creds.txt`
+- `--scanned-targets-out scanned_targets.txt`
 
 Example:
 
@@ -44,7 +45,8 @@ snablr scan \
   --html-out output/report.html \
   --csv-out output/findings.csv \
   --md-out output/summary.md \
-  --creds-out output/creds.txt
+  --creds-out output/creds.txt \
+  --scanned-targets-out output/scanned_targets.txt
 ```
 
 In that example, Snablr writes:
@@ -54,8 +56,11 @@ In that example, Snablr writes:
 - CSV to `output/findings.csv`
 - Markdown to `output/summary.md`
 - curated credentials to `output/creds.txt`
+- target audit to `output/scanned_targets.txt`
 
 The `creds.txt` export is intentionally narrow. It includes only primary, high-confidence findings with usable credential material. Supporting artifacts, weak review items, and placeholder/example values are excluded.
+
+The `scanned_targets.txt` export is an audit aid. It records the targets Snablr discovered or accepted, whether they were reachable, and whether they were actually planned for scanning.
 
 ## Console Output
 
@@ -116,6 +121,8 @@ The same visibility rule applies there:
 
 - default live console output shows primary findings only
 - supporting/contextual observations are retained for correlation, JSON, and HTML output
+
+The HTML report keeps the full dataset, but it now opens with config-only and non-actionable findings hidden by default so the first operator view is lower-noise.
 
 If you want the old plain stdout console output even in an interactive terminal, run the scan with:
 

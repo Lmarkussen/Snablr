@@ -185,6 +185,9 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	if len(plannedHosts) > 0 {
 		logger.Infof("scan plan prepared for %d host(s); highest priority=%d (%s)", len(plannedHosts), plannedHosts[0].Priority, plannedHosts[0].Reason)
 	}
+	if err := writeScannedTargets(cfg.Output.ScannedTargetsOut, resolvedTargets, plannedHosts); err != nil {
+		return err
+	}
 
 	if useInteractiveTUI {
 		logger.Infof("startup complete; launching live TUI")

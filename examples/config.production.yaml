@@ -69,4 +69,5 @@ output:
   csv_out: output/production/findings.csv
   md_out: output/production/summary.md
   creds_out: output/production/creds.txt
+  scanned_targets_out: output/production/scanned_targets.txt
   pretty: true

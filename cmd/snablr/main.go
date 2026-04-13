@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"snablr/internal/app"
@@ -111,7 +112,22 @@ func runScan(args []string) error {
 	csvOut := fs.String("csv-out", "", "Path to CSV findings export file")
 	mdOut := fs.String("md-out", "", "Path to Markdown summary export file")
 	credsOut := fs.String("creds-out", "", "Path to curated creds.txt export file")
+	scannedTargetsOut := fs.String("scanned-targets-out", "", "Path to scanned_targets.txt audit export file")
 	logLevel := fs.String("log-level", "", "Log level: debug, info, warn, error")
+	var wimEnabled optionalBoolFlag
+	var wimAutoMaxSize optionalInt64Flag
+	var wimAllowLarge optionalBoolFlag
+	var wimMaxSize optionalInt64Flag
+	var wimMaxMembers optionalIntFlag
+	var wimMaxMemberBytes optionalInt64Flag
+	var wimMaxTotalBytes optionalInt64Flag
+	fs.Var(&wimEnabled, "wim-enabled", "Enable or disable WIM inspection (overrides config)")
+	fs.Var(&wimAutoMaxSize, "wim-auto-max-size", "Automatic WIM inspection size limit in bytes (overrides config)")
+	fs.Var(&wimAllowLarge, "wim-allow-large", "Allow WIM inspection above the automatic size limit up to --wim-max-size (overrides config)")
+	fs.Var(&wimMaxSize, "wim-max-size", "Maximum WIM size in bytes allowed for inspection (overrides config)")
+	fs.Var(&wimMaxMembers, "wim-max-members", "Maximum number of targeted WIM members to inspect (overrides config)")
+	fs.Var(&wimMaxMemberBytes, "wim-max-member-bytes", "Maximum bytes to inspect from a single extracted WIM member (overrides config)")
+	fs.Var(&wimMaxTotalBytes, "wim-max-total-bytes", "Maximum total extracted WIM bytes to inspect per image (overrides config)")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -157,6 +173,14 @@ func runScan(args []string) error {
 		CSVOut:                     *csvOut,
 		MDOut:                      *mdOut,
 		CredsOut:                   *credsOut,
+		ScannedTargetsOut:          *scannedTargetsOut,
+		WIMEnabled:                 wimEnabled.ptr(),
+		WIMAutoMaxSize:             wimAutoMaxSize.ptr(),
+		WIMAllowLarge:              wimAllowLarge.ptr(),
+		WIMMaxSize:                 wimMaxSize.ptr(),
+		WIMMaxMembers:              wimMaxMembers.ptr(),
+		WIMMaxMemberBytes:          wimMaxMemberBytes.ptr(),
+		WIMMaxTotalBytes:           wimMaxTotalBytes.ptr(),
 		LogLevel:                   *logLevel,
 	})
 }
@@ -511,6 +535,7 @@ func printScanUsage(fs *flag.FlagSet) {
 	fmt.Println("  snablr scan --share Finance --path Reports/ --max-depth 4")
 	fmt.Println("  snablr scan --baseline previous-results.json --output-format all --json-out results.json --html-out report.html")
 	fmt.Println("  snablr scan --checkpoint-file state.json --resume")
+	fmt.Println("  snablr scan --wim-allow-large --wim-max-size 536870912")
 	fmt.Println()
 	fmt.Println("Output formats:")
 	fmt.Println("  console  print findings to the terminal")
@@ -686,4 +711,100 @@ func (m *multiValueFlag) Set(value string) error {
 	}
 	*m = append(*m, value)
 	return nil
+}
+
+type optionalBoolFlag struct {
+	set   bool
+	value bool
+}
+
+func (f *optionalBoolFlag) String() string {
+	if f == nil || !f.set {
+		return ""
+	}
+	return fmt.Sprintf("%t", f.value)
+}
+
+func (f *optionalBoolFlag) Set(value string) error {
+	f.set = true
+	if strings.TrimSpace(value) == "" {
+		f.value = true
+		return nil
+	}
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+	if err != nil {
+		return err
+	}
+	f.value = parsed
+	return nil
+}
+
+func (f *optionalBoolFlag) IsBoolFlag() bool { return true }
+
+func (f *optionalBoolFlag) ptr() *bool {
+	if f == nil || !f.set {
+		return nil
+	}
+	value := f.value
+	return &value
+}
+
+type optionalInt64Flag struct {
+	set   bool
+	value int64
+}
+
+func (f *optionalInt64Flag) String() string {
+	if f == nil || !f.set {
+		return ""
+	}
+	return strconv.FormatInt(f.value, 10)
+}
+
+func (f *optionalInt64Flag) Set(value string) error {
+	parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil {
+		return err
+	}
+	f.set = true
+	f.value = parsed
+	return nil
+}
+
+func (f *optionalInt64Flag) ptr() *int64 {
+	if f == nil || !f.set {
+		return nil
+	}
+	value := f.value
+	return &value
+}
+
+type optionalIntFlag struct {
+	set   bool
+	value int
+}
+
+func (f *optionalIntFlag) String() string {
+	if f == nil || !f.set {
+		return ""
+	}
+	return strconv.Itoa(f.value)
+}
+
+func (f *optionalIntFlag) Set(value string) error {
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return err
+	}
+	f.set = true
+	f.value = parsed
+	return nil
+}
+
+func (f *optionalIntFlag) ptr() *int {
+	if f == nil || !f.set {
+		return nil
+	}
+	value := f.value
+	return &value
 }

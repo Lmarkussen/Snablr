@@ -37,6 +37,14 @@ type ScanOptions struct {
 	CSVOut                     string
 	MDOut                      string
 	CredsOut                   string
+	ScannedTargetsOut          string
+	WIMEnabled                 *bool
+	WIMAutoMaxSize             *int64
+	WIMAllowLarge              *bool
+	WIMMaxSize                 *int64
+	WIMMaxMembers              *int
+	WIMMaxMemberBytes          *int64
+	WIMMaxTotalBytes           *int64
 	LogLevel                   string
 }
 

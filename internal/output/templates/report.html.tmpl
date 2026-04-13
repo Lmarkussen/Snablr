@@ -886,9 +886,9 @@
       </div>
       <div class="toggle-grid">
         <label class="toggle-option"><input id="correlatedOnly" type="checkbox"> Show only correlated findings</label>
-        <label class="toggle-option"><input id="hideConfigOnly" type="checkbox"> Hide config-only findings</label>
+        <label class="toggle-option"><input id="hideConfigOnly" type="checkbox" checked> Hide config-only findings</label>
         <label class="toggle-option"><input id="hideLowConfidence" type="checkbox"> Hide medium or lower confidence</label>
-        <label class="toggle-option"><input id="hideNonActionable" type="checkbox"> Hide findings without actionable evidence</label>
+        <label class="toggle-option"><input id="hideNonActionable" type="checkbox" checked> Hide findings without actionable evidence</label>
       </div>
       <div class="filter-actions">
         <button id="resetFilters" class="filter-reset" type="button">Reset Filters</button>
@@ -1727,6 +1727,7 @@
           applyFilter();
         });
       }
+      applyFilter();
     }());
   </script>
 </body>

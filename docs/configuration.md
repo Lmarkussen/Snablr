@@ -287,6 +287,52 @@ Behavior:
 - remote scans never unpack archives on the target side; the outer file is read and inspected locally
 - archive findings are reported with both the outer archive path and inner member path
 
+## `wim`
+
+The `wim` section controls limited offline WIM inspection.
+
+Phase 1 support is intentionally narrow:
+
+- `.wim` candidates only
+- local inspection only after the outer file is copied/read locally
+- targeted extraction only for selected deployment and credential-relevant paths
+- no full image extraction
+
+Example:
+
+```yaml
+wim:
+  enabled: true
+  auto_wim_max_size: 134217728
+  allow_large_wims: false
+  max_wim_size: 134217728
+  max_members: 8
+  max_member_bytes: 1048576
+  max_total_bytes: 4194304
+```
+
+Fields:
+
+- `enabled`
+  Enable bounded `.wim` inspection.
+- `auto_wim_max_size`
+  Automatically inspect `.wim` files up to this size in bytes.
+- `allow_large_wims`
+  Permit `.wim` inspection above the automatic limit when `max_wim_size` allows it.
+- `max_wim_size`
+  Absolute maximum `.wim` size Snablr will inspect.
+- `max_members`
+  Maximum number of targeted WIM members extracted for inspection.
+- `max_member_bytes`
+  Maximum bytes read from any single extracted WIM member.
+- `max_total_bytes`
+  Maximum total extracted bytes read across one WIM image.
+
+CLI note:
+
+- `snablr scan` also accepts `--wim-*` flags for all of these values
+- explicit CLI WIM flags override config values for that run only
+
 ## `sqlite`
 
 The `sqlite` section controls limited offline SQLite inspection.
@@ -449,6 +495,7 @@ output:
   csv_out: output/findings.csv
   md_out: output/summary.md
   creds_out: output/creds.txt
+  scanned_targets_out: output/scanned_targets.txt
   pretty: true
 ```
 
@@ -466,6 +513,8 @@ Fields:
   Optional Markdown sidecar path
 - `creds_out`
   Optional curated credential export path. This writes only primary, high-signal findings with usable credential material into a readable `creds.txt`-style file.
+- `scanned_targets_out`
+  Plain-text target audit path. This writes a stable `scanned_targets.txt`-style file showing which targets were discovered, reachable, and actually scanned.
 - `pretty`
   Pretty-print JSON output
 
@@ -503,6 +552,7 @@ Optional sidecar exports:
 - `csv_out`
 - `md_out`
 - `creds_out`
+- `scanned_targets_out`
 
 These can be used together with any primary mode.
 
@@ -587,4 +637,14 @@ snablr scan \
   --config examples/config.domain.yaml \
   --dc dc01.example.local \
   --base-dn 'OU=Servers,DC=example,DC=local'
+```
+
+Override WIM inspection for one run:
+
+```bash
+snablr scan \
+  --config examples/config.domain.yaml \
+  --wim-allow-large \
+  --wim-max-size 536870912 \
+  --wim-max-member-bytes 2097152
 ```

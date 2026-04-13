@@ -73,13 +73,14 @@ func Default() Config {
 			FailOnInvalid: false,
 		},
 		Output: OutputConfig{
-			Format:   "console",
-			JSONOut:  "results.json",
-			HTMLOut:  "report.html",
-			CSVOut:   "",
-			MDOut:    "",
-			CredsOut: "",
-			Pretty:   true,
+			Format:            "console",
+			JSONOut:           "results.json",
+			HTMLOut:           "report.html",
+			CSVOut:            "",
+			MDOut:             "",
+			CredsOut:          "",
+			ScannedTargetsOut: "scanned_targets.txt",
+			Pretty:            true,
 		},
 	}
 	applyPathContext(&cfg, "")

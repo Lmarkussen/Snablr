@@ -27,6 +27,12 @@ import (
 
 const sharePlanningBatchSize = 2048
 
+var (
+	runScanPreflightFunc = runScanPreflight
+	newOutputWriterFunc  = output.NewWriter
+	resolveTargetsFunc   = discovery.Resolve
+)
+
 func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	cfg, logger, err := loadConfigAndLogger(opts.ConfigPath, opts.LogLevel)
 	if err != nil {
@@ -39,8 +45,8 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	}
 	interactiveTerminal := ui.ShouldShowProgress(cfg.Output.Format)
 	useInteractiveTUI := !cfg.Output.NoTUI && interactiveTerminal
-	if useInteractiveTUI {
-		logger.SetOutput(io.Discard)
+	if err := runScanPreflightFunc(ctx, cfg, useInteractiveTUI, logger); err != nil {
+		return err
 	}
 	cfg.Scan.WorkerCount = scanner.ResolveWorkerCount(cfg.Scan.WorkerCount)
 	logger.Infof("using %d file scan worker(s)", cfg.Scan.WorkerCount)
@@ -69,49 +75,15 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		return fmt.Errorf("rule validation failed with %d issue(s)", len(issues))
 	}
 
-	sink, err := output.NewWriter(cfg.Output)
-	if err != nil {
-		return fmt.Errorf("create output writer: %w", err)
-	}
-	sink = output.WrapWithSuppression(sink, cfg.Suppression)
-	output.SetCancelFunc(sink, scanCancel)
-	output.SetScanProfile(sink, strings.TrimSpace(cfg.Scan.Profile))
-	defer func() {
-		if sink == nil {
-			return
-		}
-		if closeErr := sink.Close(); closeErr != nil {
-			if logger != nil {
-				logger.Errorf("output finalization failed: %v", closeErr)
-			}
-			if err == nil {
-				err = closeErr
-			}
-		}
-	}()
-
-	if strings.TrimSpace(cfg.Scan.Baseline) != "" {
-		baseline, err := diff.LoadJSON(cfg.Scan.Baseline)
-		if err != nil {
-			return fmt.Errorf("load baseline %s: %w", cfg.Scan.Baseline, err)
-		}
-		output.SetBaselineReport(sink, baseline)
-		logger.Infof("loaded %d baseline finding(s) for diff reporting", len(baseline.Findings))
-	}
-	if strings.TrimSpace(cfg.Scan.SeedManifest) != "" {
-		output.SetValidationManifest(sink, cfg.Scan.SeedManifest)
-		logger.Infof("enabled seeded validation summary in reporting")
-	}
-	if cfg.Scan.ValidationMode {
-		output.SetValidationMode(sink, true)
-		logger.Infof("validation mode enabled")
-	}
+	var sink scanner.FindingSink
 
 	recorder := metrics.NewCollector()
 	totalTimer := recorder.StartPhase("total_scan")
 	defer func() {
 		totalTimer.Stop()
-		output.SetMetricsSnapshot(sink, recorder.Snapshot())
+		if sink != nil {
+			output.SetMetricsSnapshot(sink, recorder.Snapshot())
+		}
 	}()
 
 	checkpoints, err := state.NewManager(cfg.Scan.CheckpointFile, cfg.Scan.Resume, 10*time.Second)
@@ -165,7 +137,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		ValidationMode: cfg.Scan.ValidationMode,
 	}, manager, sink, logger)
 
-	resolvedTargets, err := discovery.Resolve(scanCtx, cfg.Scan, logger, recorder)
+	resolvedTargets, err := resolveTargetsFunc(scanCtx, cfg.Scan, logger, recorder)
 	if err != nil {
 		if errors.Is(err, context.Canceled) && output.WasCanceledByUser(sink) {
 			return nil
@@ -212,6 +184,49 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	planningTimer.Stop()
 	if len(plannedHosts) > 0 {
 		logger.Infof("scan plan prepared for %d host(s); highest priority=%d (%s)", len(plannedHosts), plannedHosts[0].Priority, plannedHosts[0].Reason)
+	}
+
+	if useInteractiveTUI {
+		logger.Infof("startup complete; launching live TUI")
+		logger.SetOutput(io.Discard)
+	}
+
+	sink, err = newOutputWriterFunc(cfg.Output)
+	if err != nil {
+		return fmt.Errorf("create output writer: %w", err)
+	}
+	sink = output.WrapWithSuppression(sink, cfg.Suppression)
+	output.SetCancelFunc(sink, scanCancel)
+	output.SetScanProfile(sink, strings.TrimSpace(cfg.Scan.Profile))
+	defer func() {
+		if sink == nil {
+			return
+		}
+		if closeErr := sink.Close(); closeErr != nil {
+			if logger != nil {
+				logger.Errorf("output finalization failed: %v", closeErr)
+			}
+			if err == nil {
+				err = closeErr
+			}
+		}
+	}()
+
+	if strings.TrimSpace(cfg.Scan.Baseline) != "" {
+		baseline, err := diff.LoadJSON(cfg.Scan.Baseline)
+		if err != nil {
+			return fmt.Errorf("load baseline %s: %w", cfg.Scan.Baseline, err)
+		}
+		output.SetBaselineReport(sink, baseline)
+		logger.Infof("loaded %d baseline finding(s) for diff reporting", len(baseline.Findings))
+	}
+	if strings.TrimSpace(cfg.Scan.SeedManifest) != "" {
+		output.SetValidationManifest(sink, cfg.Scan.SeedManifest)
+		logger.Infof("enabled seeded validation summary in reporting")
+	}
+	if cfg.Scan.ValidationMode {
+		output.SetValidationMode(sink, true)
+		logger.Infof("validation mode enabled")
 	}
 
 	var progress *ui.ProgressReporter

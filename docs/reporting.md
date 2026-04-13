@@ -63,6 +63,13 @@ Console output is designed for live terminal triage.
 
 When stdout/stderr are attached to an interactive terminal, Snablr now uses a Bubble Tea TUI instead of line-by-line stdout printing.
 
+Before the TUI starts, Snablr runs required preflight credential validation for the active scan mode.
+
+- scans that rely on LDAP or DFS discovery validate those credentials before the TUI opens
+- invalid required credentials abort the scan immediately
+- discovery-based scans then show target discovery and reachability progress in plain console output
+- the TUI only starts after preflight succeeds and target preparation is complete
+
 Layout:
 
 - left pane

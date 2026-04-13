@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -15,6 +16,28 @@ type ldapSession struct {
 	Conn       *ldap.Conn
 	RootDSE    rootDSEInfo
 	AuthMethod string
+}
+
+func ValidateLDAPCredentials(ctx context.Context, opts LDAPOptions, logger Logger) error {
+	if opts.Timeout <= 0 {
+		opts.Timeout = defaultLDAPTimeout
+	}
+
+	domainContext, err := DetectDomainContext(ctx, opts, logger)
+	if err != nil {
+		return err
+	}
+	if domainContext.DomainController == "" {
+		return fmt.Errorf("ldap discovery: unable to determine a domain controller for credential validation")
+	}
+
+	session, err := connectLDAPSession(opts, &domainContext, logger)
+	if err != nil {
+		return err
+	}
+	defer session.Conn.Close()
+
+	return nil
 }
 
 func connectLDAPSession(opts LDAPOptions, domainContext *DomainContext, logger Logger) (ldapSession, error) {

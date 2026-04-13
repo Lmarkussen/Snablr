@@ -21,6 +21,15 @@ import (
 	"snablr/pkg/logx"
 )
 
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestEngineNeedsContentUsesRuleExtensionHints(t *testing.T) {
 	t.Parallel()
 
@@ -1028,6 +1037,91 @@ func TestEngineMatchesNorwegianCredentialLabels(t *testing.T) {
 	}
 	if !foundNoteStyle {
 		t.Fatalf("expected Domene administrator label to trigger note-style credential pair indicators, got %#v", evaluation.Findings)
+	}
+}
+
+func TestEngineDoesNotTreatURISchemesAsCredentialPairs(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	meta := FileMetadata{
+		Host:       "10.0.1.40",
+		Share:      "SYSVOL",
+		FilePath:   "ha.no/scripts/Backup/2017-April/kix2010.txt",
+		Name:       "kix2010.txt",
+		Extension:  ".txt",
+		Size:       512,
+		FromSYSVOL: true,
+		Priority:   92,
+	}
+	content := []byte("http://www.kixtart.org\nhttps://internal.example.local\nftp://server/path\n")
+
+	evaluation := engine.Evaluate(meta, content)
+	for _, finding := range evaluation.Findings {
+		if finding.RuleID == "content.note_style_credential_pair_indicators" {
+			t.Fatalf("expected URI schemes to avoid note-style credential matches, got %#v", evaluation.Findings)
+		}
+		if strings.EqualFold(strings.TrimSpace(finding.PotentialAccount), "http") ||
+			strings.EqualFold(strings.TrimSpace(finding.PotentialAccount), "https") ||
+			strings.EqualFold(strings.TrimSpace(finding.PotentialAccount), "ftp") {
+			t.Fatalf("expected URI schemes to avoid potential-account extraction, got %#v", evaluation.Findings)
+		}
+	}
+}
+
+func TestEngineKeepsValidNoteStyleCredentialPairs(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	meta := FileMetadata{
+		Host:       "10.0.1.40",
+		Share:      "SYSVOL",
+		FilePath:   "ha.no/scripts/Backup/2025-October/cred-notes.txt",
+		Name:       "cred-notes.txt",
+		Extension:  ".txt",
+		Size:       512,
+		FromSYSVOL: true,
+		Priority:   92,
+	}
+	content := []byte("username: admin\npassword: Winter2025!\nuser=svc_sql\n")
+
+	evaluation := engine.Evaluate(meta, content)
+
+	var noteStyle *Finding
+	for i := range evaluation.Findings {
+		finding := &evaluation.Findings[i]
+		if containsString(finding.MatchedRuleIDs, "content.note_style_credential_pair_indicators") {
+			noteStyle = finding
+		}
+	}
+	if noteStyle == nil {
+		t.Fatalf("expected valid note-style credential pair finding, got %#v", evaluation.Findings)
+	}
+	if strings.EqualFold(strings.TrimSpace(noteStyle.PotentialAccount), "http") ||
+		strings.EqualFold(strings.TrimSpace(noteStyle.PotentialAccount), "https") ||
+		strings.EqualFold(strings.TrimSpace(noteStyle.PotentialAccount), "ftp") {
+		t.Fatalf("expected note-style potential account to avoid URI schemes, got %#v", noteStyle)
+	}
+	if noteStyle.MatchedText == "" {
+		t.Fatalf("expected note-style finding to retain matched content, got %#v", noteStyle)
+	}
+	if !containsString(noteStyle.MatchedRuleIDs, "content.password_assignment_indicators") {
+		t.Fatalf("expected correlated finding to retain password assignment evidence, got %#v", noteStyle)
+	}
+	if noteStyle.ConfidenceScore < 70 || noteStyle.Confidence != "high" {
+		t.Fatalf("expected valid content evidence in SYSVOL to still promote strongly, got %#v", noteStyle)
 	}
 }
 

@@ -3,6 +3,7 @@ package output
 import (
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"snablr/internal/scanner"
@@ -15,7 +16,7 @@ func augmentFindingsForReporting(findings []scanner.Finding) []scanner.Finding {
 		return nil
 	}
 
-	out := cloneFindings(findings)
+	out := dedupeReportFindings(cloneFindings(findings))
 	existing := make(map[string]struct{}, len(out))
 	for _, finding := range out {
 		existing[correlationFindingKey(finding)] = struct{}{}
@@ -37,6 +38,7 @@ func augmentFindingsForReporting(findings []scanner.Finding) []scanner.Finding {
 		existing[key] = struct{}{}
 		out = append(out, finding)
 	}
+	out = dedupeReportFindings(out)
 
 	sort.Slice(out, func(i, j int) bool {
 		left := severityRank(out[i].Severity)
@@ -53,6 +55,69 @@ func augmentFindingsForReporting(findings []scanner.Finding) []scanner.Finding {
 		return left > right
 	})
 	return out
+}
+
+func dedupeReportFindings(findings []scanner.Finding) []scanner.Finding {
+	if len(findings) < 2 {
+		return findings
+	}
+
+	deduped := make(map[string]scanner.Finding, len(findings))
+	for _, finding := range findings {
+		key := reportFindingDedupKey(finding)
+		if existing, ok := deduped[key]; ok {
+			deduped[key] = betterReportFinding(existing, finding)
+			continue
+		}
+		deduped[key] = finding
+	}
+
+	out := make([]scanner.Finding, 0, len(deduped))
+	for _, finding := range deduped {
+		out = append(out, finding)
+	}
+	return out
+}
+
+func reportFindingDedupKey(f scanner.Finding) string {
+	evidence := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		f.MatchedTextRedacted,
+		f.MatchedText,
+		f.Match,
+		f.Snippet,
+	)))
+	return strings.Join([]string{
+		strings.ToLower(strings.TrimSpace(f.RuleID)),
+		strings.ToLower(strings.TrimSpace(f.Category)),
+		strings.ToLower(strings.TrimSpace(f.Host)),
+		strings.ToLower(strings.TrimSpace(f.Share)),
+		strings.ToLower(strings.TrimSpace(f.FilePath)),
+		strings.ToLower(strings.TrimSpace(f.ArchivePath)),
+		strings.ToLower(strings.TrimSpace(f.ArchiveMemberPath)),
+		strings.ToLower(strings.TrimSpace(f.DatabaseTable)),
+		strings.ToLower(strings.TrimSpace(f.DatabaseColumn)),
+		strconv.Itoa(f.LineNumber),
+		evidence,
+	}, "|")
+}
+
+func betterReportFinding(left, right scanner.Finding) scanner.Finding {
+	if right.Actionable && !left.Actionable {
+		return right
+	}
+	if right.Correlated && !left.Correlated {
+		return right
+	}
+	if right.ConfidenceScore > left.ConfidenceScore {
+		return right
+	}
+	if severityRank(right.Severity) > severityRank(left.Severity) {
+		return right
+	}
+	if len(strings.TrimSpace(right.Context)) > len(strings.TrimSpace(left.Context)) {
+		return right
+	}
+	return left
 }
 
 func buildADCorrelatedFindings(findings []scanner.Finding) []scanner.Finding {

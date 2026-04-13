@@ -1905,6 +1905,57 @@ func TestHTMLWriterRendersStandaloneTriageReport(t *testing.T) {
 	}
 }
 
+func TestHTMLWriterBoundsLargeDatabaseEvidence(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer, err := NewHTMLWriter(&buf, nil)
+	if err != nil {
+		t.Fatalf("NewHTMLWriter returned error: %v", err)
+	}
+
+	finding := sampleDBConnectionFinding()
+	large := "SELECT secret FROM payroll_users WHERE password='Winter2025!'; " + strings.Repeat("UNION SELECT token FROM audit_log; ", 80)
+	finding.MatchedText = large
+	finding.Context = large
+	finding.ContextRedacted = large
+	finding.Snippet = large
+
+	if err := writer.WriteFinding(finding); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "[truncated]") {
+		t.Fatalf("expected html output to mark truncated oversized DB evidence, got:\n%s", out)
+	}
+	if strings.Count(out, "UNION SELECT token FROM audit_log;") > 20 {
+		t.Fatalf("expected bounded DB evidence and search text, got excessive repeated SQL in report")
+	}
+}
+
+func TestAugmentFindingsForReportingDeduplicatesSameFileSameEvidence(t *testing.T) {
+	t.Parallel()
+
+	first := sampleFinding()
+	second := sampleFinding()
+	second.ConfidenceScore = first.ConfidenceScore - 10
+
+	augmented := augmentFindingsForReporting([]scanner.Finding{first, second})
+	count := 0
+	for _, finding := range augmented {
+		if finding.RuleID == first.RuleID && finding.FilePath == first.FilePath {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected duplicate same-file same-evidence findings to collapse, got %#v", augmented)
+	}
+}
+
 func TestHTMLWriterShowsDiffSummaryAndHighlights(t *testing.T) {
 	t.Parallel()
 

@@ -1126,6 +1126,50 @@ func TestEngineMatchesNorwegianCredentialLabels(t *testing.T) {
 	}
 }
 
+func TestEngineDetectsExecutableConfigXMLCredentials(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	meta := FileMetadata{
+		FilePath:  "install/VOBarnehageApplicationService.exe.config",
+		Name:      "VOBarnehageApplicationService.exe.config",
+		Extension: ".config",
+		Size:      512,
+	}
+	content := []byte(`
+<configuration>
+  <appSettings>
+    <add key="OleDbConnection" value="Provider=SQLOLEDB.1;data source=ha-db-01;initial catalog=U_RESSURSSTYRING;user id=VER;password=Winter2025!" />
+    <add key="DatabasePassword" value="JvLGRifzatx+57lSEubUTkfH68fRD9eI/87s+/5Of4M=" />
+  </appSettings>
+</configuration>`)
+
+	evaluation := engine.Evaluate(meta, content)
+
+	foundConnectionString := false
+	foundSecretAssignment := false
+	for _, finding := range evaluation.Findings {
+		if finding.RuleID == "dbinspect.access.connection_string" {
+			foundConnectionString = true
+		}
+		if finding.RuleID == "content.secret_assignment_indicators" || containsString(finding.MatchedRuleIDs, "content.secret_assignment_indicators") {
+			foundSecretAssignment = true
+		}
+	}
+	if !foundConnectionString {
+		t.Fatalf("expected validated connection-string finding from .exe.config XML attributes, got %#v", evaluation.Findings)
+	}
+	if !foundSecretAssignment {
+		t.Fatalf("expected XML appSettings secret/password finding from .exe.config, got %#v", evaluation.Findings)
+	}
+}
+
 func TestEngineDoesNotTreatURISchemesAsCredentialPairs(t *testing.T) {
 	t.Parallel()
 
@@ -1157,6 +1201,32 @@ func TestEngineDoesNotTreatURISchemesAsCredentialPairs(t *testing.T) {
 			strings.EqualFold(strings.TrimSpace(finding.PotentialAccount), "https") ||
 			strings.EqualFold(strings.TrimSpace(finding.PotentialAccount), "ftp") {
 			t.Fatalf("expected URI schemes to avoid potential-account extraction, got %#v", evaluation.Findings)
+		}
+	}
+}
+
+func TestEngineDoesNotTreatGenericResourceAssignmentsAsCredentialPairs(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	meta := FileMetadata{
+		FilePath:  "Install/langpack.ini",
+		Name:      "langpack.ini",
+		Extension: ".ini",
+		Size:      256,
+	}
+	content := []byte("msg1=Installasjon\nmsg2=Avinstallering\nmsg3=Oppgradering\n")
+
+	evaluation := engine.Evaluate(meta, content)
+	for _, finding := range evaluation.Findings {
+		if finding.RuleID == "content.note_style_credential_pair_indicators" || finding.RuleID == "content.password_assignment_indicators" {
+			t.Fatalf("expected generic resource assignments to avoid credential findings, got %#v", evaluation.Findings)
 		}
 	}
 }

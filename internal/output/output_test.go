@@ -1888,6 +1888,11 @@ func TestHTMLWriterRendersStandaloneTriageReport(t *testing.T) {
 			t.Fatalf("expected html output to contain %q", want)
 		}
 	}
+	for _, want := range []string{"id=\"hideConfigOnly\" type=\"checkbox\" checked", "id=\"hideNonActionable\" type=\"checkbox\" checked"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected html output to enable default low-noise filters, missing %q", want)
+		}
+	}
 	for _, want := range []string{"Show Evidence", "Raw Supporting Signals"} {
 		if strings.Contains(out, want) {
 			t.Fatalf("expected html output not to contain %q", want)

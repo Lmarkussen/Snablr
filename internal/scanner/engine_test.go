@@ -727,6 +727,89 @@ func TestEngineEvaluateDetectsFirefoxCredentialStoreArtifact(t *testing.T) {
 	}
 }
 
+func TestEngineEvaluateKeepsPFXExtensionReviewOnly(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	meta := FileMetadata{
+		FilePath:  "Recovery/Certificates/corp-admin.pfx",
+		Name:      "corp-admin.pfx",
+		Extension: ".pfx",
+		Size:      2048,
+	}
+
+	evaluation := engine.Evaluate(meta, nil)
+	if len(evaluation.Findings) != 1 {
+		t.Fatalf("expected one certificate extension finding, got %#v", evaluation.Findings)
+	}
+	finding := evaluation.Findings[0]
+	if finding.RuleID != "extension.key_and_certificate_extensions" {
+		t.Fatalf("unexpected finding: %#v", finding)
+	}
+	if finding.TriageClass != triageWeakReview || finding.Actionable {
+		t.Fatalf("expected bare PKCS#12 extension hit to stay review-only, got %#v", finding)
+	}
+}
+
+func TestEngineEvaluateKeepsAWSCredentialArtifactSupportingWithoutKeyMaterial(t *testing.T) {
+	t.Parallel()
+
+	engine := NewEngine(Options{}, &rules.Manager{}, nil, logx.New("error"))
+	meta := FileMetadata{
+		FilePath: "Users/Alice/.aws/credentials",
+		Name:     "credentials",
+		Size:     128,
+	}
+
+	evaluation := engine.Evaluate(meta, []byte("[default]\nregion=eu-north-1\n"))
+	if len(evaluation.Findings) != 1 {
+		t.Fatalf("expected one AWS credentials artifact finding, got %#v", evaluation.Findings)
+	}
+	finding := evaluation.Findings[0]
+	if finding.RuleID != "awsinspect.path.credentials" {
+		t.Fatalf("unexpected finding: %#v", finding)
+	}
+	if finding.TriageClass != triageWeakReview || finding.Actionable {
+		t.Fatalf("expected path-only AWS credentials artifact to stay review-only, got %#v", finding)
+	}
+}
+
+func TestEngineEvaluateKeepsCredentialFilenameKeywordReviewOnly(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	meta := FileMetadata{
+		FilePath:  "Users/Alice/Desktop/passwords.txt",
+		Name:      "passwords.txt",
+		Extension: ".txt",
+		Size:      256,
+	}
+
+	evaluation := engine.Evaluate(meta, nil)
+	if len(evaluation.Findings) != 1 {
+		t.Fatalf("expected one filename keyword finding, got %#v", evaluation.Findings)
+	}
+	finding := evaluation.Findings[0]
+	if finding.RuleID != "filename.credentials_and_secrets_keywords" {
+		t.Fatalf("unexpected finding: %#v", finding)
+	}
+	if finding.TriageClass != triageWeakReview || finding.Actionable {
+		t.Fatalf("expected credential-style filename keyword to stay review-only, got %#v", finding)
+	}
+}
+
 func TestEngineEvaluateDetectsChromiumCredentialStoreBackupVariant(t *testing.T) {
 	t.Parallel()
 

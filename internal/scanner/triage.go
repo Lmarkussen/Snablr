@@ -61,15 +61,7 @@ func isConfigOnlyFinding(f Finding) bool {
 }
 
 func isWeakReviewFinding(f Finding) bool {
-	if hasStrongEvidence(f) {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(f.Category)) {
-	case "infrastructure", "scripts":
-		return true
-	default:
-		return false
-	}
+	return !hasStrongEvidence(f)
 }
 
 func hasStrongEvidence(f Finding) bool {
@@ -86,15 +78,22 @@ func hasStrongEvidence(f Finding) bool {
 		return true
 	case "content":
 		return true
+	case "correlation":
+		return true
 	}
 
-	category := strings.ToLower(strings.TrimSpace(f.Category))
-	switch category {
-	case "credentials", "crypto", "active-directory", "deployment", "password-manager", "database-access", "database-infrastructure", "database-artifacts":
+	switch strings.ToLower(strings.TrimSpace(f.RuleID)) {
+	case "filename.private_key_artifacts",
+		"filename.secret_store_artifacts",
+		"filename.windows_hive_artifacts",
+		"filename.ad_database_backup_artifacts",
+		"filename.windows_hive_backup_artifacts",
+		"extension.client_auth_artifacts":
 		return true
-	default:
-		return false
 	}
+
+	ruleID := strings.ToLower(strings.TrimSpace(f.RuleID))
+	return strings.HasPrefix(ruleID, "backupinspect.path.") || strings.HasPrefix(ruleID, "wincredinspect.path.")
 }
 
 func findingPrimarySignal(f Finding) string {

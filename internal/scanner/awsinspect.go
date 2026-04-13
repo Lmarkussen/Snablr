@@ -72,15 +72,15 @@ func awsArtifactKind(path string) (string, bool) {
 func adjustAWSArtifactVisibility(findings []Finding) []Finding {
 	for i := range findings {
 		ruleID := strings.ToLower(strings.TrimSpace(findings[i].RuleID))
-		if ruleID != "awsinspect.path.config" {
-			continue
+		switch ruleID {
+		case "awsinspect.path.config", "awsinspect.path.credentials":
+			findings[i] = downgradeAWSArtifactFinding(findings[i], ruleID)
 		}
-		findings[i] = downgradeAWSConfigArtifactFinding(findings[i])
 	}
 	return findings
 }
 
-func downgradeAWSConfigArtifactFinding(f Finding) Finding {
+func downgradeAWSArtifactFinding(f Finding, ruleID string) Finding {
 	f.TriageClass = triageWeakReview
 	f.Actionable = false
 	f.Correlated = false
@@ -93,7 +93,12 @@ func downgradeAWSConfigArtifactFinding(f Finding) Finding {
 	if strings.TrimSpace(f.Confidence) == "" || confidenceRank(f.Confidence) > confidenceRank("medium") {
 		f.Confidence = "medium"
 	}
-	f.ConfidenceReasons = appendUniqueReason(f.ConfidenceReasons, "AWS shared config was identified without credential material and is retained as supporting context")
+	switch ruleID {
+	case "awsinspect.path.credentials":
+		f.ConfidenceReasons = appendUniqueReason(f.ConfidenceReasons, "AWS shared credentials artifact was identified without credential material and is retained as supporting context")
+	default:
+		f.ConfidenceReasons = appendUniqueReason(f.ConfidenceReasons, "AWS shared config was identified without credential material and is retained as supporting context")
+	}
 	f.ConfidenceBreakdown.TriageAdjustment = f.ConfidenceScore - f.ConfidenceBreakdown.BaseScore
 	f.ConfidenceBreakdown.FinalScore = f.ConfidenceScore
 	return f

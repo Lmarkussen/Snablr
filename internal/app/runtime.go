@@ -163,6 +163,30 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if strings.TrimSpace(opts.CredsOut) != "" {
 		cfg.Output.CredsOut = opts.CredsOut
 	}
+	if strings.TrimSpace(opts.ScannedTargetsOut) != "" {
+		cfg.Output.ScannedTargetsOut = opts.ScannedTargetsOut
+	}
+	if opts.WIMEnabled != nil {
+		cfg.WIM.Enabled = *opts.WIMEnabled
+	}
+	if opts.WIMAutoMaxSize != nil {
+		cfg.WIM.AutoWIMMaxSize = *opts.WIMAutoMaxSize
+	}
+	if opts.WIMAllowLarge != nil {
+		cfg.WIM.AllowLargeWIMs = *opts.WIMAllowLarge
+	}
+	if opts.WIMMaxSize != nil {
+		cfg.WIM.MaxWIMSize = *opts.WIMMaxSize
+	}
+	if opts.WIMMaxMembers != nil {
+		cfg.WIM.MaxMembers = *opts.WIMMaxMembers
+	}
+	if opts.WIMMaxMemberBytes != nil {
+		cfg.WIM.MaxMemberBytes = *opts.WIMMaxMemberBytes
+	}
+	if opts.WIMMaxTotalBytes != nil {
+		cfg.WIM.MaxTotalBytes = *opts.WIMMaxTotalBytes
+	}
 	if strings.TrimSpace(opts.LogLevel) != "" {
 		cfg.App.LogLevel = opts.LogLevel
 	}
@@ -208,9 +232,6 @@ func applyDiscoverOverrides(cfg *config.Config, opts DiscoverOptions) {
 }
 
 func validateScanConfig(cfg config.Config) error {
-	if err := config.ApplyScanProfile(&cfg, cfg.Scan.Profile); err != nil {
-		return err
-	}
 	if strings.TrimSpace(cfg.Scan.Username) == "" {
 		return fmt.Errorf("missing SMB username: set scan.username in config or pass --username (run `snablr scan --help` for examples)")
 	}
@@ -252,6 +273,44 @@ func validateScanConfig(cfg config.Config) error {
 	}
 	if cfg.Archives.AllowLargeTARs && cfg.Archives.MaxTARSize > 0 && cfg.Archives.MaxTARSize < cfg.Archives.AutoTARMaxSize {
 		return fmt.Errorf("archives.max_tar_size must be greater than or equal to archives.auto_tar_max_size when allow_large_tars is enabled")
+	}
+	if cfg.WIM.AutoWIMMaxSize < 0 {
+		return fmt.Errorf("wim.auto_wim_max_size cannot be negative")
+	}
+	if cfg.WIM.MaxWIMSize < 0 {
+		return fmt.Errorf("wim.max_wim_size cannot be negative")
+	}
+	if cfg.WIM.MaxMembers < 0 {
+		return fmt.Errorf("wim.max_members cannot be negative")
+	}
+	if cfg.WIM.MaxMemberBytes < 0 {
+		return fmt.Errorf("wim.max_member_bytes cannot be negative")
+	}
+	if cfg.WIM.MaxTotalBytes < 0 {
+		return fmt.Errorf("wim.max_total_bytes cannot be negative")
+	}
+	if cfg.WIM.Enabled {
+		if cfg.WIM.AutoWIMMaxSize == 0 {
+			return fmt.Errorf("wim.auto_wim_max_size must be greater than zero when WIM inspection is enabled")
+		}
+		if cfg.WIM.MaxWIMSize == 0 {
+			return fmt.Errorf("wim.max_wim_size must be greater than zero when WIM inspection is enabled")
+		}
+		if cfg.WIM.MaxMembers == 0 {
+			return fmt.Errorf("wim.max_members must be greater than zero when WIM inspection is enabled")
+		}
+		if cfg.WIM.MaxMemberBytes == 0 {
+			return fmt.Errorf("wim.max_member_bytes must be greater than zero when WIM inspection is enabled")
+		}
+		if cfg.WIM.MaxTotalBytes == 0 {
+			return fmt.Errorf("wim.max_total_bytes must be greater than zero when WIM inspection is enabled")
+		}
+	}
+	if cfg.WIM.MaxWIMSize < cfg.WIM.AutoWIMMaxSize {
+		return fmt.Errorf("wim.max_wim_size must be greater than or equal to wim.auto_wim_max_size")
+	}
+	if cfg.WIM.MaxTotalBytes < cfg.WIM.MaxMemberBytes {
+		return fmt.Errorf("wim.max_total_bytes must be greater than or equal to wim.max_member_bytes")
 	}
 	if cfg.Suppression.SampleLimit < 0 {
 		return fmt.Errorf("suppression.sample_limit cannot be negative")

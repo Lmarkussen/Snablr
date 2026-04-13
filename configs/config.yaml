@@ -69,4 +69,5 @@ output:
   csv_out: ""
   md_out: ""
   creds_out: ""
+  scanned_targets_out: scanned_targets.txt
   pretty: true

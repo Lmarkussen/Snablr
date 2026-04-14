@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"snablr/internal/diff"
 	"snablr/internal/scanner"
@@ -194,6 +194,46 @@ func TestTUIViewLongDetailContentStaysWithinTerminalHeight(t *testing.T) {
 	for _, line := range strings.Split(view, "\n") {
 		if width := lipgloss.Width(line); width > model.width {
 			t.Fatalf("rendered line exceeded terminal width: got %d want <= %d\n%s", width, model.width, line)
+		}
+	}
+}
+
+func TestTUIViewKeepsSingleHeaderAcrossLiveUpdates(t *testing.T) {
+	writer := &TUIWriter{
+		summary:          newSummaryCollector(),
+		validationMode:   newValidationModeCollector(),
+		status:           "running",
+		profile:          "default",
+		targetsTotal:     51,
+		targetsProcessed: 41,
+		currentHost:      "fs01",
+	}
+	model := newTUIModel(writer)
+	model.windowLoaded = true
+	model.width = 100
+	model.height = 20
+	model.layout()
+
+	firstView := model.View()
+	if strings.Count(firstView, "Snablr Live Scan") != 1 {
+		t.Fatalf("expected a single header line in initial view, got:\n%s", firstView)
+	}
+	for _, line := range strings.Split(firstView, "\n") {
+		if width := lipgloss.Width(line); width != model.width {
+			t.Fatalf("initial view line width mismatch: got %d want %d\n%s", width, model.width, line)
+		}
+	}
+
+	writer.targetsProcessed = 42
+	writer.currentHost = "fs02"
+	model.syncLiveState(writer.liveState())
+	secondView := model.View()
+	if strings.Count(secondView, "Snablr Live Scan") != 1 {
+		t.Fatalf("expected a single header line after live update, got:\n%s", secondView)
+	}
+	for _, line := range strings.Split(secondView, "\n") {
+		if width := lipgloss.Width(line); width != model.width {
+			t.Fatalf("updated view line width mismatch: got %d want %d\n%s", width, model.width, line)
 		}
 	}
 }

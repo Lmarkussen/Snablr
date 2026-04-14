@@ -3,6 +3,8 @@ package keyinspect
 import (
 	"bytes"
 	"strings"
+
+	"snablr/internal/textdecode"
 )
 
 func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
@@ -18,7 +20,10 @@ func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
 		return nil
 	}
 
-	text := string(content)
+	text := textdecode.Normalize(content)
+	if text == "" {
+		text = string(content)
+	}
 	lineNumber := lineForHeader(text, header)
 	snippet := header
 	context := limitText(text, 320)

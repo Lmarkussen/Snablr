@@ -1961,6 +1961,82 @@ func TestAugmentFindingsForReportingDeduplicatesSameFileSameEvidence(t *testing.
 	}
 }
 
+func TestGroupDuplicateReportFindingsMergesSameSecretAcrossLocations(t *testing.T) {
+	t.Parallel()
+
+	first := sampleFinding()
+	second := sampleFinding()
+	second.FilePath = "Policies/Backup/Groups.xml"
+	second.ArchivePath = "Backups/policies.zip"
+	second.ArchiveMemberPath = "Policies/Groups.xml"
+
+	grouped := groupDuplicateReportFindings([]scanner.Finding{first, second})
+	if len(grouped) != 1 {
+		t.Fatalf("expected duplicate material across locations to collapse into one group, got %#v", grouped)
+	}
+	if len(grouped[0].Duplicates) != 1 {
+		t.Fatalf("expected one duplicate location, got %#v", grouped[0])
+	}
+	if grouped[0].Canonical.FilePath != first.FilePath {
+		t.Fatalf("expected cleaner primary location to stay canonical, got %#v", grouped[0].Canonical)
+	}
+}
+
+func TestGroupDuplicateReportFindingsKeepsDistinctSecretsSeparate(t *testing.T) {
+	t.Parallel()
+
+	first := sampleFinding()
+	second := sampleFinding()
+	second.FilePath = "Policies/Groups-copy.xml"
+	second.MatchedText = "password = ReplaceMe124!"
+	second.MatchedTextRedacted = "password = ********"
+	second.Match = "password = ReplaceMe124!"
+	second.Context = "user = alice\npassword = ReplaceMe124!\ndomain = example.local"
+	second.ContextRedacted = "user = alice\npassword = ********\ndomain = example.local"
+	second.Snippet = "user = alice\npassword = ReplaceMe124!\ndomain = example.local"
+
+	grouped := groupDuplicateReportFindings([]scanner.Finding{first, second})
+	if len(grouped) != 2 {
+		t.Fatalf("expected distinct secrets to remain separate, got %#v", grouped)
+	}
+}
+
+func TestHTMLWriterShowsDuplicateLocationsUnderCanonicalFinding(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer, err := NewHTMLWriter(&buf, nil)
+	if err != nil {
+		t.Fatalf("NewHTMLWriter returned error: %v", err)
+	}
+
+	first := sampleFinding()
+	second := sampleFinding()
+	second.FilePath = "Policies/Backup/Groups.xml"
+	second.Host = "fs02"
+	second.Share = "Backups"
+
+	if err := writer.WriteFinding(first); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.WriteFinding(second); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	if strings.Count(out, `class="finding-card `) != 1 {
+		t.Fatalf("expected duplicate findings to render as one primary card, got:\n%s", out)
+	}
+	for _, want := range []string{"Also found in 1 additional location", uncPath(second), `data-scope="dc01 SYSVOL fs02 Backups"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected grouped duplicate output to contain %q, got:\n%s", want, out)
+		}
+	}
+}
+
 func TestHTMLWriterShowsDiffSummaryAndHighlights(t *testing.T) {
 	t.Parallel()
 

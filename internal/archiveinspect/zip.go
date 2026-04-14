@@ -12,7 +12,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"unicode/utf8"
+
+	"snablr/internal/textdecode"
 )
 
 var driveLetterPathPattern = regexp.MustCompile(`(?i)^[a-z]:`)
@@ -355,30 +356,7 @@ func newTARReader(content []byte, outerExtension string) (*tar.Reader, error) {
 }
 
 func looksTextLike(data []byte) bool {
-	if len(data) == 0 {
-		return false
-	}
-	if bytes.IndexByte(data, 0x00) >= 0 {
-		return false
-	}
-	sample := data
-	if len(sample) > 4096 {
-		sample = sample[:4096]
-	}
-	if !utf8.Valid(sample) {
-		return false
-	}
-	printable := 0
-	for _, b := range sample {
-		if b == '\n' || b == '\r' || b == '\t' {
-			printable++
-			continue
-		}
-		if b >= 32 && b <= 126 {
-			printable++
-		}
-	}
-	return float64(printable)/float64(len(sample)) >= 0.85
+	return textdecode.LooksLikeText(data)
 }
 
 func extractOfficeXMLText(data []byte) []byte {

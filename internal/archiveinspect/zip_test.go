@@ -5,7 +5,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"encoding/binary"
 	"testing"
+	"unicode/utf16"
 )
 
 func TestShouldInspectZIPHonorsDefaultAndLargeOverrides(t *testing.T) {
@@ -90,6 +92,33 @@ func TestInspectZIPHonorsMemberAndTotalLimits(t *testing.T) {
 	}
 	if len(result.Members) != 1 || result.Members[0].Path == "three.txt" {
 		t.Fatalf("expected archive limits to stop after first small member, got %#v", result.Members)
+	}
+}
+
+func TestInspectZIPRecognizesUTF16TextMembers(t *testing.T) {
+	t.Parallel()
+
+	content := buildZIPBytes(t, map[string][]byte{
+		"docs/norwegian.txt": utf16LEArchiveText("Passord: Vår2026!\nBruker=señor\n"),
+		"image.png":          append([]byte{0x89, 'P', 'N', 'G', 0x00}, bytes.Repeat([]byte{0x01}, 32)...),
+	})
+
+	result, err := InspectZIP(content, ".zip", Options{
+		Enabled:                  true,
+		AutoZIPMaxSize:           10 * 1024 * 1024,
+		MaxZIPSize:               10 * 1024 * 1024,
+		MaxMembers:               64,
+		MaxMemberBytes:           512 * 1024,
+		MaxTotalUncompressed:     4 * 1024 * 1024,
+		InspectExtensionlessText: true,
+	}, map[string]struct{}{
+		".txt": {},
+	})
+	if err != nil {
+		t.Fatalf("InspectZIP returned error: %v", err)
+	}
+	if len(result.Members) != 1 || result.Members[0].Path != "docs/norwegian.txt" {
+		t.Fatalf("expected UTF-16 text member to be retained, got %#v", result.Members)
 	}
 }
 
@@ -217,6 +246,18 @@ func TestInspectZIPOfficeFiltersToRelevantXMLMembers(t *testing.T) {
 			t.Fatalf("unexpected office member included: %#v", member)
 		}
 	}
+}
+
+func utf16LEArchiveText(value string) []byte {
+	encoded := utf16.Encode([]rune(value))
+	out := make([]byte, 0, len(encoded)*2+2)
+	out = append(out, 0xFF, 0xFE)
+	buf := make([]byte, 2)
+	for _, code := range encoded {
+		binary.LittleEndian.PutUint16(buf, code)
+		out = append(out, buf...)
+	}
+	return out
 }
 
 func TestInspectZIPExtractsOfficeXMLText(t *testing.T) {

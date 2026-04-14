@@ -7,13 +7,17 @@ import (
 	"compress/gzip"
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"unicode/utf16"
 
 	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/transform"
 	"snablr/internal/archiveinspect"
 	"snablr/internal/dbinspect"
 	"snablr/internal/rules"
@@ -1170,6 +1174,77 @@ func TestEngineDetectsExecutableConfigXMLCredentials(t *testing.T) {
 	}
 }
 
+func TestEngineDecodesLegacyEncodedContentForPasswordDetection(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	meta := FileMetadata{
+		FilePath:  "docs/credential-note.txt",
+		Name:      "credential-note.txt",
+		Extension: ".txt",
+		Size:      256,
+	}
+
+	latin1, _, err := transform.Bytes(charmap.Windows1252.NewEncoder(), []byte("Bruker=señor\nPassord: Vår2026!\n"))
+	if err != nil {
+		t.Fatalf("Windows-1252 encode failed: %v", err)
+	}
+	evaluation := engine.Evaluate(meta, latin1)
+
+	foundPassword := false
+	for _, finding := range evaluation.Findings {
+		if finding.RuleID == "content.password_assignment_indicators" {
+			foundPassword = true
+			if !strings.Contains(finding.Context, "Passord: Vår2026!") {
+				t.Fatalf("expected decoded context to preserve non-ASCII characters, got %#v", finding)
+			}
+		}
+	}
+	if !foundPassword {
+		t.Fatalf("expected password assignment finding from legacy-encoded content, got %#v", evaluation.Findings)
+	}
+}
+
+func TestEngineDecodesUTF16ContentForPasswordDetection(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	meta := FileMetadata{
+		FilePath:  "docs/spanish-note.txt",
+		Name:      "spanish-note.txt",
+		Extension: ".txt",
+		Size:      256,
+	}
+
+	content := utf16LEBytesForTest("Usuario=niño\nPassord: Vår2026!\n")
+	evaluation := engine.Evaluate(meta, content)
+
+	foundPassword := false
+	for _, finding := range evaluation.Findings {
+		if finding.RuleID == "content.password_assignment_indicators" {
+			foundPassword = true
+			if !strings.Contains(finding.Context, "Usuario=niño") {
+				t.Fatalf("expected UTF-16 decoded context to preserve accented text, got %#v", finding)
+			}
+		}
+	}
+	if !foundPassword {
+		t.Fatalf("expected password assignment finding from UTF-16 content, got %#v", evaluation.Findings)
+	}
+}
+
 func TestEngineDoesNotTreatURISchemesAsCredentialPairs(t *testing.T) {
 	t.Parallel()
 
@@ -1203,6 +1278,18 @@ func TestEngineDoesNotTreatURISchemesAsCredentialPairs(t *testing.T) {
 			t.Fatalf("expected URI schemes to avoid potential-account extraction, got %#v", evaluation.Findings)
 		}
 	}
+}
+
+func utf16LEBytesForTest(value string) []byte {
+	encoded := utf16.Encode([]rune(value))
+	out := make([]byte, 0, len(encoded)*2+2)
+	out = append(out, 0xFF, 0xFE)
+	buf := make([]byte, 2)
+	for _, code := range encoded {
+		binary.LittleEndian.PutUint16(buf, code)
+		out = append(out, buf...)
+	}
+	return out
 }
 
 func TestEngineDoesNotTreatGenericResourceAssignmentsAsCredentialPairs(t *testing.T) {

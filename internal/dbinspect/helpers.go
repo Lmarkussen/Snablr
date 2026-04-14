@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"snablr/internal/textdecode"
 )
 
 func candidateFragments(line string) []string {
@@ -224,12 +226,7 @@ func normalizedExtension(candidate Candidate) string {
 }
 
 func normalizedContent(content []byte) string {
-	if len(content) == 0 {
-		return ""
-	}
-	text := strings.TrimPrefix(string(content), "\uFEFF")
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	text = strings.ReplaceAll(text, "\r", "\n")
+	text := textdecode.Normalize(content)
 	if strings.TrimSpace(text) == "" {
 		return ""
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -2034,6 +2035,38 @@ func TestHTMLWriterShowsDuplicateLocationsUnderCanonicalFinding(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected grouped duplicate output to contain %q, got:\n%s", want, out)
 		}
+	}
+}
+
+type closeOrderSink struct {
+	name   string
+	closed *[]string
+}
+
+func (s *closeOrderSink) WriteFinding(scanner.Finding) error { return nil }
+
+func (s *closeOrderSink) Close() error {
+	*s.closed = append(*s.closed, s.name)
+	return nil
+}
+
+func TestCloseSinksClosesInReverseCreationOrder(t *testing.T) {
+	t.Parallel()
+
+	var closed []string
+	sinks := []scanner.FindingSink{
+		&closeOrderSink{name: "tui", closed: &closed},
+		&closeOrderSink{name: "json", closed: &closed},
+		&closeOrderSink{name: "html", closed: &closed},
+	}
+
+	if err := closeSinks(sinks); err != nil {
+		t.Fatalf("closeSinks returned error: %v", err)
+	}
+
+	want := []string{"html", "json", "tui"}
+	if !reflect.DeepEqual(closed, want) {
+		t.Fatalf("expected close order %v, got %v", want, closed)
 	}
 }
 

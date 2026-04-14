@@ -483,7 +483,8 @@ func (m *MultiWriter) broadcastValidationObserver(fn func(scanner.ValidationObse
 
 func closeSinks(sinks []scanner.FindingSink) error {
 	var errs []error
-	for _, sink := range sinks {
+	for i := len(sinks) - 1; i >= 0; i-- {
+		sink := sinks[i]
 		if sink == nil {
 			continue
 		}

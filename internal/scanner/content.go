@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"snablr/internal/rules"
+	"snablr/internal/textdecode"
 )
 
 type ContentScanner struct {
@@ -93,9 +94,10 @@ func (s ContentScanner) Scan(ruleSet []rules.Rule, meta FileMetadata, content []
 		return findings
 	}
 
-	contentString := strings.TrimPrefix(string(content), "\uFEFF")
-	contentString = strings.ReplaceAll(contentString, "\r\n", "\n")
-	contentString = strings.ReplaceAll(contentString, "\r", "\n")
+	contentString := textdecode.Normalize(content)
+	if contentString == "" {
+		return findings
+	}
 	for _, rule := range ruleSet {
 		if rule.Action == rules.ActionSkip {
 			continue

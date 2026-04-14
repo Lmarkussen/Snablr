@@ -642,6 +642,30 @@
 	      flex: 1 1 auto;
 	      min-width: 0;
 	    }
+	    .duplicate-locations {
+	      margin-top: 10px;
+	      border: 1px solid var(--line);
+	      border-radius: 12px;
+	      background: var(--panel-alt);
+	      padding: 10px 12px;
+	    }
+	    .duplicate-locations summary {
+	      cursor: pointer;
+	      color: var(--muted);
+	      font-size: 13px;
+	      font-weight: 600;
+	    }
+	    .duplicate-location-list {
+	      margin: 8px 0 0;
+	      padding-left: 18px;
+	      color: var(--text);
+	    }
+	    .duplicate-location-list li {
+	      margin: 4px 0;
+	      word-break: break-word;
+	      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+	      font-size: 12px;
+	    }
 	    .download-link {
 	      flex: 0 0 auto;
 	      display: inline-flex;
@@ -1406,13 +1430,14 @@
 
 	        <div class="finding-list">
 	          {{- range .Findings }}
-	          <article class="finding-card {{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" data-search="{{ findingSearchText .Finding .ChangedFields .DiffStatus }}"
+	          <article class="finding-card {{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" data-search="{{ .SearchText }}"
               data-severity="{{ .Finding.Severity }}"
               data-category="{{ .Finding.Category }}"
               data-confidence="{{ .Finding.Confidence }}"
               data-source="{{ normalizedSource .Finding.Source }}"
               data-host="{{ .Finding.Host }}"
               data-share="{{ .Finding.Share }}"
+              data-scope="{{ .ScopeText }}"
               data-signal="{{ primarySignal .Finding }}"
               data-correlated="{{ if isCorrelated .Finding }}true{{ else }}false{{ end }}"
               data-actionable="{{ if isActionable .Finding }}true{{ else }}false{{ end }}"
@@ -1461,6 +1486,16 @@
 	              <a class="download-link" href="{{ downloadHref .Finding }}" download title="Open or download the underlying remote file">Download</a>
 	              {{- end }}
 	            </div>
+	            {{- if .Duplicates }}
+	            <details class="duplicate-locations">
+	              <summary>Also found in {{ len .Duplicates }} additional location{{ if ne (len .Duplicates) 1 }}s{{ end }} ({{ .TotalLocations }} total)</summary>
+	              <ul class="duplicate-location-list">
+	                {{- range .Duplicates }}
+	                <li title="{{ uncPath . }}">{{ uncPath . }}</li>
+	                {{- end }}
+	              </ul>
+	            </details>
+	            {{- end }}
 	            <div class="finding-body">
 	              <section class="finding-panel">
 	                <span class="panel-title">Finding Summary</span>
@@ -1713,13 +1748,14 @@
           <div class="supporting-list">
             {{- range .Findings }}
             <article class="supporting-card"
-              data-search="{{ findingSearchText .Finding .ChangedFields .DiffStatus }}"
+              data-search="{{ .SearchText }}"
               data-severity="{{ .Finding.Severity }}"
               data-category="{{ .Finding.Category }}"
               data-confidence="{{ .Finding.Confidence }}"
               data-source="{{ normalizedSource .Finding.Source }}"
               data-host="{{ .Finding.Host }}"
               data-share="{{ .Finding.Share }}"
+              data-scope="{{ .ScopeText }}"
               data-signal="{{ primarySignal .Finding }}"
               data-correlated="{{ if isCorrelated .Finding }}true{{ else }}false{{ end }}"
               data-actionable="{{ if isActionable .Finding }}true{{ else }}false{{ end }}"
@@ -1735,6 +1771,16 @@
               <div class="supporting-path" title="{{ uncPath .Finding }}">{{ uncPath .Finding }}</div>
               {{- if .Finding.MatchReason }}
               <div class="supporting-reason">{{ .Finding.MatchReason }}</div>
+              {{- end }}
+              {{- if .Duplicates }}
+              <details class="duplicate-locations">
+                <summary>Also found in {{ len .Duplicates }} additional location{{ if ne (len .Duplicates) 1 }}s{{ end }}</summary>
+                <ul class="duplicate-location-list">
+                  {{- range .Duplicates }}
+                  <li title="{{ uncPath . }}">{{ uncPath . }}</li>
+                  {{- end }}
+                </ul>
+              </details>
               {{- end }}
             </article>
             {{- end }}
@@ -1798,7 +1844,7 @@
             var matchesConfidence = confidence === "" || normalize(card.getAttribute("data-confidence")) === confidence;
             var matchesSource = source === "" || normalize(card.getAttribute("data-source")) === source;
             var matchesSignal = signal === "" || normalize(card.getAttribute("data-signal")) === signal;
-            var scopeText = normalize((card.getAttribute("data-host") || "") + " " + (card.getAttribute("data-share") || ""));
+            var scopeText = normalize(card.getAttribute("data-scope") || ((card.getAttribute("data-host") || "") + " " + (card.getAttribute("data-share") || "")));
             var matchesScope = scope === "" || scopeText.indexOf(scope) !== -1;
             var matchesCorrelated = !onlyCorrelated || card.getAttribute("data-correlated") === "true";
             var matchesConfigOnly = !shouldHideConfigOnly || normalize(card.getAttribute("data-triage")) !== "config-only";

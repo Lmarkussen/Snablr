@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"snablr/internal/rules"
+	"snablr/internal/textdecode"
 )
 
 type artifactKind string
@@ -83,7 +84,12 @@ func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
 		return nil
 	}
 
-	accessKey, secretKey, sessionToken, lineNumber, profile := extractAWSCredentialBundle(string(content))
+	text := textdecode.Normalize(content)
+	if text == "" {
+		return nil
+	}
+
+	accessKey, secretKey, sessionToken, lineNumber, profile := extractAWSCredentialBundle(text)
 	if accessKey == "" || secretKey == "" {
 		return nil
 	}

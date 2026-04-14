@@ -43,6 +43,10 @@ type htmlFinding struct {
 	Finding       scanner.Finding
 	DiffStatus    string
 	ChangedFields []string
+	SearchText    string
+	ScopeText     string
+	Duplicates    []scanner.Finding
+	TotalLocations int
 }
 
 type hostSummary struct {
@@ -180,9 +184,11 @@ func (h *HTMLWriter) Close() error {
 	defer h.mu.Unlock()
 
 	augmented := augmentFindingsForReporting(h.findings)
-	primaryFindings, supportingFindings := splitFindingsByActionable(augmented)
-	categorySummaries := buildCategorySummaries(primaryFindings)
-	supportingCategorySummaries := buildCategorySummaries(supportingFindings)
+	groupedFindings := groupDuplicateReportFindings(augmented)
+	groupedCanonical := groupedFindingsToCanonical(groupedFindings)
+	primaryFindings, supportingFindings := splitGroupedFindingsByActionable(groupedFindings)
+	categorySummaries := buildCategorySummaries(groupedFindingsToCanonical(primaryFindings))
+	supportingCategorySummaries := buildCategorySummaries(groupedFindingsToCanonical(supportingFindings))
 	var diffResult *diff.DiffResult
 	statuses := map[diff.FindingFingerprint]diff.FindingDelta{}
 	if len(h.baseline) > 0 {
@@ -192,9 +198,10 @@ func (h *HTMLWriter) Close() error {
 	}
 	categoryGroups := groupFindingsByCategory(primaryFindings, categorySummaries, statuses)
 	supportingCategoryGroups := groupFindingsByCategory(supportingFindings, supportingCategorySummaries, statuses)
-	hostSummaries := buildHostSummaries(primaryFindings)
-	severitySummaries := buildSeveritySummaries(primaryFindings)
-	filterOptions := buildFilterOptions(primaryFindings)
+	canonicalPrimary := groupedFindingsToCanonical(primaryFindings)
+	hostSummaries := buildHostSummaries(canonicalPrimary)
+	severitySummaries := buildSeveritySummaries(canonicalPrimary)
+	filterOptions := buildFilterOptions(canonicalPrimary)
 	summary := adjustedSummarySnapshot(h.summary.Snapshot(), h.findings, augmented)
 	validation, err := buildValidationSummary(h.manifest, augmented)
 	if err != nil {
@@ -232,7 +239,7 @@ func (h *HTMLWriter) Close() error {
 		SeveritySummaries: severitySummaries,
 		CategorySummaries: categorySummaries,
 		SupportingCategorySummaries: supportingCategorySummaries,
-		AccessPaths:       buildAccessPathSummaries(augmented),
+		AccessPaths:       buildAccessPathSummaries(groupedCanonical),
 		HostSummaries:     hostSummaries,
 		Suppression:       h.suppression,
 		DiffSummary:       diffSummary(diffResult),
@@ -258,21 +265,32 @@ func (h *HTMLWriter) Close() error {
 	return h.closer.Close()
 }
 
-func splitFindingsByActionable(findings []scanner.Finding) ([]scanner.Finding, []scanner.Finding) {
+func splitGroupedFindingsByActionable(findings []reportFindingGroup) ([]reportFindingGroup, []reportFindingGroup) {
 	if len(findings) == 0 {
 		return nil, nil
 	}
 
-	primary := make([]scanner.Finding, 0, len(findings))
-	supporting := make([]scanner.Finding, 0, len(findings))
+	primary := make([]reportFindingGroup, 0, len(findings))
+	supporting := make([]reportFindingGroup, 0, len(findings))
 	for _, finding := range findings {
-		if finding.Actionable {
+		if finding.Canonical.Actionable {
 			primary = append(primary, finding)
 			continue
 		}
 		supporting = append(supporting, finding)
 	}
 	return primary, supporting
+}
+
+func groupedFindingsToCanonical(findings []reportFindingGroup) []scanner.Finding {
+	if len(findings) == 0 {
+		return nil
+	}
+	out := make([]scanner.Finding, 0, len(findings))
+	for _, finding := range findings {
+		out = append(out, finding.Canonical)
+	}
+	return out
 }
 
 func severityRank(value string) int {
@@ -742,22 +760,26 @@ func slug(value string) string {
 	return out
 }
 
-func groupFindingsByCategory(findings []scanner.Finding, summaries []categorySummary, statuses map[diff.FindingFingerprint]diff.FindingDelta) []htmlCategoryGroup {
+func groupFindingsByCategory(findings []reportFindingGroup, summaries []categorySummary, statuses map[diff.FindingFingerprint]diff.FindingDelta) []htmlCategoryGroup {
 	if len(findings) == 0 {
 		return nil
 	}
 
 	buckets := make(map[string][]htmlFinding)
 	for _, finding := range findings {
-		category := strings.TrimSpace(finding.Category)
+		category := strings.TrimSpace(finding.Canonical.Category)
 		if category == "" {
 			category = "uncategorized"
 		}
-		delta := statuses[diff.Fingerprint(finding)]
+		delta := statuses[diff.Fingerprint(finding.Canonical)]
 		buckets[category] = append(buckets[category], htmlFinding{
-			Finding:       finding,
-			DiffStatus:    string(delta.Status),
-			ChangedFields: append([]string{}, delta.ChangedFields...),
+			Finding:        finding.Canonical,
+			DiffStatus:     string(delta.Status),
+			ChangedFields:  append([]string{}, delta.ChangedFields...),
+			SearchText:     duplicateSearchText(findingSearchText(finding.Canonical, delta.ChangedFields, string(delta.Status)), finding.Duplicates),
+			ScopeText:      duplicateScopeText(finding.Canonical, finding.Duplicates),
+			Duplicates:     append([]scanner.Finding{}, finding.Duplicates...),
+			TotalLocations: 1 + len(finding.Duplicates),
 		})
 	}
 

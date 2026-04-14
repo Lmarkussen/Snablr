@@ -433,7 +433,7 @@ func (m tuiModel) View() string {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 	}
 
-	return clampBlock(lipgloss.JoinVertical(lipgloss.Left, header, body, footer), m.width, m.height)
+	return fitScreenBlock(lipgloss.JoinVertical(lipgloss.Left, header, body, footer), m.width, m.height)
 }
 
 func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -932,6 +932,25 @@ func clampBlock(value string, width, height int) string {
 	lines := strings.Split(clampMultiline(value, width), "\n")
 	if len(lines) > height {
 		lines = lines[:height]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func fitScreenBlock(value string, width, height int) string {
+	if width <= 0 {
+		return ""
+	}
+	lines := strings.Split(clampMultiline(value, width), "\n")
+	if height > 0 {
+		if len(lines) > height {
+			lines = lines[:height]
+		}
+		for len(lines) < height {
+			lines = append(lines, "")
+		}
+	}
+	for i, line := range lines {
+		lines[i] = padDisplayWidth(line, width)
 	}
 	return strings.Join(lines, "\n")
 }

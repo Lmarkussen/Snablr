@@ -1,8 +1,10 @@
 APP := snablr
+SEED_APP := snablr-seed
 BIN_DIR := bin
 DIST_DIR := dist
 STAGE_DIR := $(DIST_DIR)/stage
 CMD := ./cmd/snablr
+SEED_CMD := ./cmd/snablr-seed
 GO ?= go
 ROOT_DIR := $(CURDIR)
 
@@ -29,7 +31,7 @@ RELEASE_TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd
 help:
 	@echo "Snablr build targets"
 	@echo ""
-	@echo "  make build             Build ./bin/$(APP) with version metadata"
+	@echo "  make build             Build ./bin/$(APP) and ./bin/$(SEED_APP) with version metadata"
 	@echo "  make test              Run go test ./..."
 	@echo "  make lint              Run go vet ./..."
 	@echo "  make release-snapshot  Build release archives under ./dist"
@@ -37,7 +39,9 @@ help:
 build:
 	mkdir -p $(BIN_DIR)
 	$(GOENV) $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP) $(CMD)
+	$(GOENV) $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(SEED_APP) $(SEED_CMD)
 	@echo "Built $(BIN_DIR)/$(APP)"
+	@echo "Built $(BIN_DIR)/$(SEED_APP)"
 
 test:
 	$(GOENV) $(GO) test ./...

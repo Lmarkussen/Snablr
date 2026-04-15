@@ -344,7 +344,7 @@ Important notes:
 
 - `snablr-seed` generates only synthetic fake data for authorized lab use.
 - Administrative shares are excluded by default unless explicitly requested.
-- `make build` builds `snablr`; build `snablr-seed` separately with `go build`.
+- `make build` builds both `snablr` and `snablr-seed` into `./bin`.
 - Full seeder usage, safety constraints, scaling flags, and verification details are in `docs/seeder.md`.
 
 ## First-Time User Tip

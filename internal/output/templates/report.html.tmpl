@@ -495,6 +495,40 @@
       transform: translateY(0);
     }
 	    .path-text { max-width: 380px; }
+    .artifact-path-details summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      max-width: 100%;
+    }
+    .artifact-path-details summary::-webkit-details-marker {
+      display: none;
+    }
+    .artifact-path-details summary::after {
+      content: "Show full path";
+      flex: none;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .artifact-path-details[open] summary::after {
+      content: "Hide full path";
+    }
+    .artifact-path-full {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #f8fbff;
+      font: 0.85rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
 	    .snippet-text,
 	    .reason-text {
 	      white-space: normal;
@@ -1442,7 +1476,14 @@
                 <td>{{ valueOrDash .Share }}</td>
                 <td><span class="badge">{{ .Extension }}</span></td>
                 <td>{{ if gt .Size 0 }}{{ .Size }} bytes{{ else }}-{{ end }}</td>
-                <td><span class="tooltip path-text" data-tip="{{ .UNCPath }}"><span>{{ .UNCPath }}</span></span></td>
+                <td>
+                  <details class="artifact-path-details">
+                    <summary>
+                      <span class="tooltip path-text" data-tip="{{ .UNCPath }}" title="{{ .UNCPath }}"><span>{{ .UNCPath }}</span></span>
+                    </summary>
+                    <div class="artifact-path-full">{{ .UNCPath }}</div>
+                  </details>
+                </td>
               </tr>
               {{- end }}
             </tbody>

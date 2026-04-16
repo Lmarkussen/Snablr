@@ -1997,7 +1997,7 @@ func TestHTMLWriterRendersBackupArtifactInventoryWhenEnabled(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, want := range []string{"Backup Artifact Inventory", "Backup / Imaging Artifacts", `.wim: 1`, `.mtf: 1`, `.bak: 1`, `\\fs01\Backups\Images\domain-backup.wim`, `\\fs01\Backups\Tape\archive.mtf`, `\\fs02\Users\Profiles\alice\config.bak`} {
+	for _, want := range []string{"Backup Artifact Inventory", "Backup / Imaging Artifacts", `.wim: 1`, `.mtf: 1`, `.bak: 1`, `\\fs01\Backups\Images\domain-backup.wim`, `\\fs01\Backups\Tape\archive.mtf`, `\\fs02\Users\Profiles\alice\config.bak`, `class="artifact-path-details"`, `class="artifact-path-full"`, `Show full path`, `title="\\fs01\Backups\Images\domain-backup.wim"`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected html output to contain %q, got:\n%s", want, out)
 		}

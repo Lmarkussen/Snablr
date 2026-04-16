@@ -180,7 +180,9 @@ func NewWriter(cfg config.OutputConfig) (scanner.FindingSink, error) {
 			_ = closeSinks(sinks)
 			return nil, fmt.Errorf("create json output file %s: %w", cfg.JSONOut, err)
 		}
-		sinks = append(sinks, NewJSONWriter(file, file, cfg.Pretty))
+		jsonWriter := NewJSONWriter(file, file, cfg.Pretty)
+		jsonWriter.SetBackupArtifactInventoryEnabled(cfg.ReportBackupArtifacts)
+		sinks = append(sinks, jsonWriter)
 	}
 
 	if selection.HTML {
@@ -195,6 +197,7 @@ func NewWriter(cfg config.OutputConfig) (scanner.FindingSink, error) {
 			_ = closeSinks(sinks)
 			return nil, err
 		}
+		htmlWriter.SetBackupArtifactInventoryEnabled(cfg.ReportBackupArtifacts)
 		sinks = append(sinks, htmlWriter)
 	}
 

@@ -113,6 +113,7 @@ func runScan(args []string) error {
 	mdOut := fs.String("md-out", "", "Path to Markdown summary export file")
 	credsOut := fs.String("creds-out", "", "Path to curated creds.txt export file")
 	scannedTargetsOut := fs.String("scanned-targets-out", "", "Path to scanned_targets.txt audit export file")
+	reportBackupArtifacts := fs.Bool("report-backup-artifacts", false, "Collect .bak, .wim, and .mtf file locations into a separate HTML/JSON backup artifact inventory section")
 	logLevel := fs.String("log-level", "", "Log level: debug, info, warn, error")
 	var wimEnabled optionalBoolFlag
 	var wimAutoMaxSize optionalInt64Flag
@@ -174,6 +175,7 @@ func runScan(args []string) error {
 		MDOut:                      *mdOut,
 		CredsOut:                   *credsOut,
 		ScannedTargetsOut:          *scannedTargetsOut,
+		ReportBackupArtifacts:      *reportBackupArtifacts,
 		WIMEnabled:                 wimEnabled.ptr(),
 		WIMAutoMaxSize:             wimAutoMaxSize.ptr(),
 		WIMAllowLarge:              wimAllowLarge.ptr(),
@@ -536,6 +538,7 @@ func printScanUsage(fs *flag.FlagSet) {
 	fmt.Println("  snablr scan --baseline previous-results.json --output-format all --json-out results.json --html-out report.html")
 	fmt.Println("  snablr scan --checkpoint-file state.json --resume")
 	fmt.Println("  snablr scan --wim-allow-large --wim-max-size 536870912")
+	fmt.Println("  snablr scan --output-format html --html-out report.html --report-backup-artifacts")
 	fmt.Println()
 	fmt.Println("Output formats:")
 	fmt.Println("  console  print findings to the terminal")

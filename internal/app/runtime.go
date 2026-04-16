@@ -166,6 +166,9 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if strings.TrimSpace(opts.ScannedTargetsOut) != "" {
 		cfg.Output.ScannedTargetsOut = opts.ScannedTargetsOut
 	}
+	if opts.ReportBackupArtifacts {
+		cfg.Output.ReportBackupArtifacts = true
+	}
 	if opts.WIMEnabled != nil {
 		cfg.WIM.Enabled = *opts.WIMEnabled
 	}

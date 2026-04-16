@@ -24,16 +24,18 @@ type JSONWriter struct {
 	manifest            string
 	suppression         *suppressionSummary
 	validationMode      *validationModeCollector
+	backupArtifacts     *backupArtifactCollector
 	w                   io.Writer
 }
 
 func NewJSONWriter(w io.Writer, closer io.Closer, pretty bool) *JSONWriter {
 	return &JSONWriter{
-		w:              w,
-		closer:         closer,
-		pretty:         pretty,
-		summary:        newSummaryCollector(),
-		validationMode: newValidationModeCollector(),
+		w:               w,
+		closer:          closer,
+		pretty:          pretty,
+		summary:         newSummaryCollector(),
+		validationMode:  newValidationModeCollector(),
+		backupArtifacts: newBackupArtifactCollector(),
 	}
 }
 
@@ -56,6 +58,13 @@ func (j *JSONWriter) RecordShare(host, share string) {
 
 func (j *JSONWriter) RecordFile(meta scanner.FileMetadata) {
 	j.summary.RecordFile(meta)
+	j.backupArtifacts.RecordFile(meta)
+}
+
+func (j *JSONWriter) SetBackupArtifactInventoryEnabled(enabled bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.backupArtifacts.SetEnabled(enabled)
 }
 
 func (j *JSONWriter) RecordSkip(meta scanner.FileMetadata, reason string) {
@@ -145,13 +154,14 @@ func (j *JSONWriter) Close() error {
 	}
 
 	report := jsonReport{
-		Profile:           strings.TrimSpace(j.profile),
-		Summary:           adjustedSummarySnapshot(j.summary.Snapshot(), j.findings, augmented),
-		Metrics:           j.metrics,
-		CategorySummaries: buildCategorySummaries(augmented),
-		AccessPaths:       buildAccessPathSummaries(augmented),
-		Suppression:       j.suppression,
-		Findings:          make([]jsonFinding, 0, len(augmented)),
+		Profile:                 strings.TrimSpace(j.profile),
+		Summary:                 adjustedSummarySnapshot(j.summary.Snapshot(), j.findings, augmented),
+		Metrics:                 j.metrics,
+		CategorySummaries:       buildCategorySummaries(augmented),
+		AccessPaths:             buildAccessPathSummaries(augmented),
+		Suppression:             j.suppression,
+		BackupArtifactInventory: j.backupArtifacts.Snapshot(),
+		Findings:                make([]jsonFinding, 0, len(augmented)),
 	}
 	performanceSummary := buildPerformanceSummary(report.Summary, augmented)
 	report.Performance = performanceSummaryToJSON(performanceSummary)
@@ -190,18 +200,19 @@ func (j *JSONWriter) Close() error {
 }
 
 type jsonReport struct {
-	Profile               string                  `json:"profile,omitempty"`
-	Summary               summarySnapshot         `json:"summary"`
-	Metrics               metrics.Snapshot        `json:"metrics"`
-	CategorySummaries     []categorySummary       `json:"category_summaries,omitempty"`
-	AccessPaths           []accessPathSummary     `json:"access_paths,omitempty"`
-	Suppression           *suppressionSummary     `json:"suppression,omitempty"`
-	DiffSummary           *jsonDiffSummary        `json:"diff_summary,omitempty"`
-	Performance           *jsonPerformanceSummary `json:"performance,omitempty"`
-	PerformanceComparison *jsonPerformanceCompare `json:"performance_comparison,omitempty"`
-	ValidationMode        *validationModeSummary  `json:"validation_mode,omitempty"`
-	Validation            *validationSummary      `json:"validation,omitempty"`
-	Findings              []jsonFinding           `json:"findings"`
+	Profile                 string                   `json:"profile,omitempty"`
+	Summary                 summarySnapshot          `json:"summary"`
+	Metrics                 metrics.Snapshot         `json:"metrics"`
+	CategorySummaries       []categorySummary        `json:"category_summaries,omitempty"`
+	AccessPaths             []accessPathSummary      `json:"access_paths,omitempty"`
+	Suppression             *suppressionSummary      `json:"suppression,omitempty"`
+	BackupArtifactInventory *backupArtifactInventory `json:"backup_artifact_inventory,omitempty"`
+	DiffSummary             *jsonDiffSummary         `json:"diff_summary,omitempty"`
+	Performance             *jsonPerformanceSummary  `json:"performance,omitempty"`
+	PerformanceComparison   *jsonPerformanceCompare  `json:"performance_comparison,omitempty"`
+	ValidationMode          *validationModeSummary   `json:"validation_mode,omitempty"`
+	Validation              *validationSummary       `json:"validation,omitempty"`
+	Findings                []jsonFinding            `json:"findings"`
 }
 
 type jsonPerformanceSummary struct {

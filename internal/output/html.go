@@ -21,17 +21,18 @@ import (
 var reportTemplates embed.FS
 
 type HTMLWriter struct {
-	closer   io.Closer
-	findings []scanner.Finding
-	baseline []scanner.Finding
-	mu       sync.Mutex
-	metrics  metrics.Snapshot
-	summary  *summaryCollector
-	template *template.Template
-	profile  string
-	manifest string
-	suppression *suppressionSummary
-	w        io.Writer
+	closer          io.Closer
+	findings        []scanner.Finding
+	baseline        []scanner.Finding
+	mu              sync.Mutex
+	metrics         metrics.Snapshot
+	summary         *summaryCollector
+	template        *template.Template
+	profile         string
+	manifest        string
+	suppression     *suppressionSummary
+	backupArtifacts *backupArtifactCollector
+	w               io.Writer
 }
 
 type htmlCategoryGroup struct {
@@ -40,12 +41,12 @@ type htmlCategoryGroup struct {
 }
 
 type htmlFinding struct {
-	Finding       scanner.Finding
-	DiffStatus    string
-	ChangedFields []string
-	SearchText    string
-	ScopeText     string
-	Duplicates    []scanner.Finding
+	Finding        scanner.Finding
+	DiffStatus     string
+	ChangedFields  []string
+	SearchText     string
+	ScopeText      string
+	Duplicates     []scanner.Finding
 	TotalLocations int
 }
 
@@ -113,10 +114,11 @@ func NewHTMLWriter(w io.Writer, closer io.Closer) (*HTMLWriter, error) {
 	}
 
 	return &HTMLWriter{
-		w:        w,
-		closer:   closer,
-		summary:  newSummaryCollector(),
-		template: tmpl,
+		w:               w,
+		closer:          closer,
+		summary:         newSummaryCollector(),
+		template:        tmpl,
+		backupArtifacts: newBackupArtifactCollector(),
 	}, nil
 }
 
@@ -139,6 +141,13 @@ func (h *HTMLWriter) RecordShare(host, share string) {
 
 func (h *HTMLWriter) RecordFile(meta scanner.FileMetadata) {
 	h.summary.RecordFile(meta)
+	h.backupArtifacts.RecordFile(meta)
+}
+
+func (h *HTMLWriter) SetBackupArtifactInventoryEnabled(enabled bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.backupArtifacts.SetEnabled(enabled)
 }
 
 func (h *HTMLWriter) RecordSkip(meta scanner.FileMetadata, reason string) {
@@ -212,44 +221,46 @@ func (h *HTMLWriter) Close() error {
 	}
 
 	data := struct {
-		Version           string
-		Profile           string
-		Summary           summarySnapshot
-		Metrics           metrics.Snapshot
-		SeveritySummaries []severitySummary
-		CategorySummaries []categorySummary
+		Version                     string
+		Profile                     string
+		Summary                     summarySnapshot
+		Metrics                     metrics.Snapshot
+		SeveritySummaries           []severitySummary
+		CategorySummaries           []categorySummary
 		SupportingCategorySummaries []categorySummary
-		AccessPaths       []accessPathSummary
-		TopAccessPaths    []accessPathSummary
-		Suppression       *suppressionSummary
-		HostSummaries     []hostSummary
-		DiffSummary       *diff.Summary
-		ChangedFindings   []diff.ChangedFinding
-		RemovedFindings   []scanner.Finding
-		CategoryGroups    []htmlCategoryGroup
-		SupportingCategoryGroups []htmlCategoryGroup
-		SupportingFindingCount   int
-		FilterOptions     reportFilterOptions
-		Validation        *validationSummary
+		BackupArtifactInventory     *backupArtifactInventory
+		AccessPaths                 []accessPathSummary
+		TopAccessPaths              []accessPathSummary
+		Suppression                 *suppressionSummary
+		HostSummaries               []hostSummary
+		DiffSummary                 *diff.Summary
+		ChangedFindings             []diff.ChangedFinding
+		RemovedFindings             []scanner.Finding
+		CategoryGroups              []htmlCategoryGroup
+		SupportingCategoryGroups    []htmlCategoryGroup
+		SupportingFindingCount      int
+		FilterOptions               reportFilterOptions
+		Validation                  *validationSummary
 	}{
-		Version:           version.Short(),
-		Profile:           h.profile,
-		Summary:           summary,
-		Metrics:           h.metrics,
-		SeveritySummaries: severitySummaries,
-		CategorySummaries: categorySummaries,
+		Version:                     version.Short(),
+		Profile:                     h.profile,
+		Summary:                     summary,
+		Metrics:                     h.metrics,
+		SeveritySummaries:           severitySummaries,
+		CategorySummaries:           categorySummaries,
 		SupportingCategorySummaries: supportingCategorySummaries,
-		AccessPaths:       buildAccessPathSummaries(groupedCanonical),
-		HostSummaries:     hostSummaries,
-		Suppression:       h.suppression,
-		DiffSummary:       diffSummary(diffResult),
-		ChangedFindings:   changedFindings(diffResult),
-		RemovedFindings:   removedFindings(diffResult),
-		CategoryGroups:    categoryGroups,
-		SupportingCategoryGroups: supportingCategoryGroups,
-		SupportingFindingCount:   len(supportingFindings),
-		FilterOptions:     filterOptions,
-		Validation:        validation,
+		BackupArtifactInventory:     h.backupArtifacts.Snapshot(),
+		AccessPaths:                 buildAccessPathSummaries(groupedCanonical),
+		HostSummaries:               hostSummaries,
+		Suppression:                 h.suppression,
+		DiffSummary:                 diffSummary(diffResult),
+		ChangedFindings:             changedFindings(diffResult),
+		RemovedFindings:             removedFindings(diffResult),
+		CategoryGroups:              categoryGroups,
+		SupportingCategoryGroups:    supportingCategoryGroups,
+		SupportingFindingCount:      len(supportingFindings),
+		FilterOptions:               filterOptions,
+		Validation:                  validation,
 	}
 	data.TopAccessPaths = topAccessPaths(data.AccessPaths, 8)
 

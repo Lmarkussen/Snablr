@@ -1943,6 +1943,70 @@ func TestHTMLWriterBoundsLargeDatabaseEvidence(t *testing.T) {
 	}
 }
 
+func TestHTMLWriterOmitsBackupArtifactInventoryByDefault(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer, err := NewHTMLWriter(&buf, nil)
+	if err != nil {
+		t.Fatalf("NewHTMLWriter returned error: %v", err)
+	}
+	writer.RecordFile(scanner.FileMetadata{
+		Host:      "fs01",
+		Share:     "Backups",
+		FilePath:  "Images/domain-backup.wim",
+		Name:      "domain-backup.wim",
+		Extension: ".wim",
+		Size:      1024,
+	})
+	if err := writer.WriteFinding(sampleFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	if strings.Contains(out, "Backup Artifact Inventory") {
+		t.Fatalf("expected backup artifact inventory section to stay absent by default, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Matches Found") {
+		t.Fatalf("expected normal report content to remain present, got:\n%s", out)
+	}
+}
+
+func TestHTMLWriterRendersBackupArtifactInventoryWhenEnabled(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer, err := NewHTMLWriter(&buf, nil)
+	if err != nil {
+		t.Fatalf("NewHTMLWriter returned error: %v", err)
+	}
+	writer.SetBackupArtifactInventoryEnabled(true)
+	for _, meta := range []scanner.FileMetadata{
+		{Host: "fs01", Share: "Backups", ShareType: "disk", FilePath: "Images/domain-backup.wim", Name: "domain-backup.wim", Extension: ".wim", Size: 2048},
+		{Host: "fs01", Share: "Backups", ShareType: "disk", FilePath: "Tape/archive.mtf", Name: "archive.mtf", Extension: ".mtf", Size: 4096},
+		{Host: "fs02", Share: "Users", ShareType: "disk", FilePath: "Profiles/alice/config.bak", Name: "config.bak", Extension: ".bak", Size: 512},
+		{Host: "fs02", Share: "Users", ShareType: "disk", FilePath: "Profiles/alice/readme.txt", Name: "readme.txt", Extension: ".txt", Size: 128},
+	} {
+		writer.RecordFile(meta)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"Backup Artifact Inventory", "Backup / Imaging Artifacts", `.wim: 1`, `.mtf: 1`, `.bak: 1`, `\\fs01\Backups\Images\domain-backup.wim`, `\\fs01\Backups\Tape\archive.mtf`, `\\fs02\Users\Profiles\alice\config.bak`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected html output to contain %q, got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "readme.txt") {
+		t.Fatalf("did not expect non-target extension to appear in backup artifact inventory, got:\n%s", out)
+	}
+}
+
 func TestAugmentFindingsForReportingDeduplicatesSameFileSameEvidence(t *testing.T) {
 	t.Parallel()
 
@@ -2466,6 +2530,86 @@ func TestJSONWriterIncludesSQLiteMetadataAndCorrelation(t *testing.T) {
 	if !foundSQLite || !foundCorrelation {
 		t.Fatalf("expected sqlite metadata and correlation finding, got %#v", report.Findings)
 	}
+}
+
+func TestJSONWriterIncludesBackupArtifactInventoryOnlyWhenEnabled(t *testing.T) {
+	t.Parallel()
+
+	t.Run("disabled", func(t *testing.T) {
+		var buf bytes.Buffer
+		writer := NewJSONWriter(&buf, nil, true)
+		writer.RecordFile(scanner.FileMetadata{
+			Host:      "fs01",
+			Share:     "Backups",
+			FilePath:  "Images/domain-backup.wim",
+			Name:      "domain-backup.wim",
+			Extension: ".wim",
+			Size:      1024,
+		})
+		if err := writer.WriteFinding(sampleFinding()); err != nil {
+			t.Fatalf("WriteFinding returned error: %v", err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatalf("Close returned error: %v", err)
+		}
+
+		var report jsonReport
+		if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+			t.Fatalf("json.Unmarshal returned error: %v", err)
+		}
+		if report.BackupArtifactInventory != nil {
+			t.Fatalf("expected backup artifact inventory to be absent by default, got %#v", report.BackupArtifactInventory)
+		}
+		if len(report.Findings) != 1 {
+			t.Fatalf("expected findings to remain unchanged, got %#v", report.Findings)
+		}
+	})
+
+	t.Run("enabled", func(t *testing.T) {
+		var buf bytes.Buffer
+		writer := NewJSONWriter(&buf, nil, true)
+		writer.SetBackupArtifactInventoryEnabled(true)
+		for _, meta := range []scanner.FileMetadata{
+			{Host: "fs01", Share: "Backups", FilePath: "Images/domain-backup.wim", Name: "domain-backup.wim", Extension: ".wim", Size: 2048},
+			{Host: "fs01", Share: "Backups", FilePath: "Tape/archive.mtf", Name: "archive.mtf", Extension: ".mtf", Size: 4096},
+			{Host: "fs02", Share: "Users", FilePath: "Profiles/alice/config.bak", Name: "config.bak", Extension: ".bak", Size: 512},
+			{Host: "fs02", Share: "Users", FilePath: "Profiles/alice/readme.txt", Name: "readme.txt", Extension: ".txt", Size: 128},
+		} {
+			writer.RecordFile(meta)
+		}
+		if err := writer.WriteFinding(sampleFinding()); err != nil {
+			t.Fatalf("WriteFinding returned error: %v", err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatalf("Close returned error: %v", err)
+		}
+
+		var report jsonReport
+		if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+			t.Fatalf("json.Unmarshal returned error: %v", err)
+		}
+		if report.BackupArtifactInventory == nil {
+			t.Fatalf("expected backup artifact inventory to be present when enabled")
+		}
+		if report.BackupArtifactInventory.Total != 3 {
+			t.Fatalf("expected 3 backup artifacts, got %#v", report.BackupArtifactInventory)
+		}
+		if len(report.Findings) != 1 {
+			t.Fatalf("expected findings to remain unchanged, got %#v", report.Findings)
+		}
+		foundExts := make(map[string]bool)
+		for _, item := range report.BackupArtifactInventory.Items {
+			foundExts[item.Extension] = true
+			if strings.HasSuffix(item.FilePath, ".txt") {
+				t.Fatalf("did not expect non-target extension in inventory: %#v", item)
+			}
+		}
+		for _, want := range []string{".wim", ".mtf", ".bak"} {
+			if !foundExts[want] {
+				t.Fatalf("expected inventory to contain %s entry, got %#v", want, report.BackupArtifactInventory.Items)
+			}
+		}
+	})
 }
 
 func TestHTMLWriterRendersSQLiteMetadata(t *testing.T) {

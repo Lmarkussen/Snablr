@@ -38,6 +38,7 @@ type ScanOptions struct {
 	MDOut                      string
 	CredsOut                   string
 	ScannedTargetsOut          string
+	ReportBackupArtifacts      bool
 	WIMEnabled                 *bool
 	WIMAutoMaxSize             *int64
 	WIMAllowLarge              *bool

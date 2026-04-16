@@ -893,6 +893,7 @@
           <a href="#severity-summary">Severity Summary</a>
           <a href="#category-summary">Category Summary</a>
           <a href="#host-summary">Host Summary</a>
+          {{- if and .BackupArtifactInventory (gt .BackupArtifactInventory.Total 0) }}<a href="#backup-artifact-inventory">Backup Artifact Inventory</a>{{- end }}
           {{- if .Validation }}<a href="#validation-summary">Validation</a>{{- end }}
           <a href="#findings">Findings</a>
         </div>
@@ -1401,6 +1402,55 @@
         {{- end }}
       </div>
     </section>
+
+    {{- if and .BackupArtifactInventory (gt .BackupArtifactInventory.Total 0) }}
+    <section id="backup-artifact-inventory">
+      <div class="section-head">
+        <h2>Backup Artifact Inventory</h2>
+        <span class="section-note">Optional inventory of .bak, .wim, and .mtf files collected when backup artifact reporting is explicitly enabled. These entries are not treated as findings.</span>
+      </div>
+      <details class="group">
+        <summary class="group-summary">
+          <div class="group-top">
+            <div class="group-title">
+              <h3>Backup / Imaging Artifacts</h3>
+              <span class="badge">{{ .BackupArtifactInventory.Total }} total</span>
+            </div>
+            <div class="group-stats">
+              {{- range .BackupArtifactInventory.ByType }}
+              <span>{{ .Extension }}: {{ .Count }}</span>
+              {{- end }}
+            </div>
+          </div>
+          <p class="group-guidance">Inventory only. Use this to review where backup or imaging artifacts live without promoting them into the findings workflow.</p>
+        </summary>
+        <div class="table-card">
+          <table>
+            <thead>
+              <tr>
+                <th>Host</th>
+                <th>Share</th>
+                <th>Type</th>
+                <th>Size</th>
+                <th>Path</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{- range .BackupArtifactInventory.Items }}
+              <tr>
+                <td>{{ valueOrDash .Host }}</td>
+                <td>{{ valueOrDash .Share }}</td>
+                <td><span class="badge">{{ .Extension }}</span></td>
+                <td>{{ if gt .Size 0 }}{{ .Size }} bytes{{ else }}-{{ end }}</td>
+                <td><span class="tooltip path-text" data-tip="{{ .UNCPath }}"><span>{{ .UNCPath }}</span></span></td>
+              </tr>
+              {{- end }}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+    {{- end }}
 
     <section id="findings">
       <div class="section-head">

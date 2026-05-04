@@ -161,3 +161,49 @@ func TestRequiresLDAPSigning(t *testing.T) {
 		})
 	}
 }
+
+func TestLDAPAddressUsesCorrectDefaultPorts(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		input       string
+		defaultPort int
+		wantAddr    string
+		wantHost    string
+	}{
+		{
+			name:        "ldap default port",
+			input:       "10.100.11.31",
+			defaultPort: defaultLDAPPort,
+			wantAddr:    "10.100.11.31:389",
+			wantHost:    "10.100.11.31",
+		},
+		{
+			name:        "ldaps default port",
+			input:       "10.100.11.31",
+			defaultPort: defaultLDAPSPort,
+			wantAddr:    "10.100.11.31:636",
+			wantHost:    "10.100.11.31",
+		},
+		{
+			name:        "preserve explicit port",
+			input:       "10.100.11.31:1636",
+			defaultPort: defaultLDAPSPort,
+			wantAddr:    "10.100.11.31:1636",
+			wantHost:    "10.100.11.31",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			gotAddr, gotHost := ldapAddress(tc.input, tc.defaultPort)
+			if gotAddr != tc.wantAddr || gotHost != tc.wantHost {
+				t.Fatalf("ldapAddress(%q, %d) = (%q, %q), want (%q, %q)", tc.input, tc.defaultPort, gotAddr, gotHost, tc.wantAddr, tc.wantHost)
+			}
+		})
+	}
+}

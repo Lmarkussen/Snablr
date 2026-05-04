@@ -12,6 +12,7 @@ import (
 
 const (
 	defaultLDAPPort    = 389
+	defaultLDAPSPort   = 636
 	defaultLDAPTimeout = 5 * time.Second
 	defaultPageSize    = 500
 )

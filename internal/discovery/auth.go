@@ -96,7 +96,7 @@ func authenticateLDAP(conn *ldap.Conn, opts LDAPOptions, domain, domainControlle
 }
 
 func dialLDAPS(dc string, timeout time.Duration) (*ldap.Conn, error) {
-	address, host := ldapAddress(dc, defaultLDAPPort)
+	address, host := ldapAddress(dc, defaultLDAPSPort)
 	conn, err := ldap.DialURL("ldaps://"+address, ldap.DialWithDialer(&net.Dialer{Timeout: timeout}), ldap.DialWithTLSConfig(&tls.Config{
 		ServerName:         host,
 		InsecureSkipVerify: true,

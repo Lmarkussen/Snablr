@@ -93,16 +93,22 @@ Behavior:
 ### Credentials
 
 - `username`
-  SMB and LDAP username
+  SMB username, and LDAP username when `auth` is `password`
 - `password`
-  SMB and LDAP password
+  SMB password, and LDAP password when `auth` is `password`
+- `auth`
+  LDAP discovery authentication mode only. Use `password` by default, or `kerberos` for LDAP SASL/GSSAPI with an existing credential cache. SMB scanning still requires `username` and `password`.
+- `kerberos_ccache`
+  Optional FILE credential cache path for LDAP Kerberos auth. If empty, Snablr reads `KRB5CCNAME`.
+- `ldap_spn`
+  Optional LDAP Kerberos service principal override, such as `ldap/DC01.TEST.LOCAL`.
 
 Committed configs should use placeholders, not real secrets.
 
 Typical override pattern:
 
 ```bash
-snablr scan --config examples/config.domain.yaml --user 'DOMAIN\user' --pass 'REPLACE_ME'
+snablr scan --config examples/config.domain.yaml --user 'TEST\user' --pass 'REPLACE_ME'
 ```
 
 ### LDAP Discovery
@@ -117,20 +123,28 @@ snablr scan --config examples/config.domain.yaml --user 'DOMAIN\user' --pass 'RE
   Manual LDAP search base override
 - `discover_dfs`
   Enable DFS discovery so linked shares can be added to the pipeline
+- `auth`
+  LDAP authentication mode: `password` or `kerberos`
+- `kerberos_ccache`
+  Optional Kerberos FILE credential cache path for LDAP GSSAPI auth
+- `ldap_spn`
+  Optional LDAP service principal override for Kerberos auth
 
 How LDAP discovery works:
 
 1. Snablr checks for explicit targets
 2. if none are present, it tries to detect domain context
 3. it finds a domain controller or uses `dc`
-4. it attempts LDAP simple bind with the configured credentials
-5. if the server requires stronger authentication or signing, it retries over LDAPS automatically
+4. it authenticates using password simple bind by default, or LDAP SASL/GSSAPI when `auth` is `kerberos`
+5. in password mode, if the server requires stronger authentication or signing, it retries over LDAPS automatically
 6. it queries LDAP for computer objects
 7. it merges those discovered hosts into the target pipeline
 
 Notes:
 
-- the automatic fallback is transport-level only; it does not currently switch to Kerberos bind automatically
+- Kerberos is opt-in and currently applies only to LDAP/DFS discovery
+- SMB scanning still requires `username` and `password`; SMB Kerberos is not supported with the current SMB backend
+- Kerberos mode requires `kinit`, a valid FILE ccache, realm configuration, DNS, and time sync
 - logs indicate which LDAP method was used so discovery behavior stays transparent during troubleshooting
 
 ### Share And Path Filters
@@ -635,8 +649,8 @@ Override discovery behavior:
 ```bash
 snablr scan \
   --config examples/config.domain.yaml \
-  --dc dc01.example.local \
-  --base-dn 'OU=Servers,DC=example,DC=local'
+  --dc DC01.TEST.LOCAL \
+  --base-dn 'OU=Servers,DC=TEST,DC=LOCAL'
 ```
 
 Override WIM inspection for one run:

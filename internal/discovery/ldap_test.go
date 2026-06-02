@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"fmt"
+	"net"
 	"reflect"
 	"testing"
 
@@ -11,15 +12,83 @@ import (
 func TestBindCandidatesBareUsername(t *testing.T) {
 	t.Parallel()
 
-	got := bindCandidates("snaffleuser", "evilhaxxor.local")
+	got := bindCandidates("testuser", "TEST.LOCAL")
 	want := []bindCandidate{
-		{Label: "username", Value: "snaffleuser"},
-		{Label: "UPN", Value: "snaffleuser@evilhaxxor.local"},
-		{Label: "DOMAIN\\USER", Value: `EVILHAXXOR\snaffleuser`},
+		{Label: "username", Value: "testuser"},
+		{Label: "UPN", Value: "testuser@test.local"},
+		{Label: "DOMAIN\\USER", Value: `TEST\testuser`},
 	}
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected bind candidates:\nwant: %#v\ngot:  %#v", want, got)
+	}
+}
+
+func TestNormalizeAuthModeDefaultsToPassword(t *testing.T) {
+	t.Parallel()
+
+	if got := normalizeAuthMode(""); got != AuthModePassword {
+		t.Fatalf("normalizeAuthMode empty = %q, want %q", got, AuthModePassword)
+	}
+	if got := normalizeAuthMode(" Kerberos "); got != AuthModeKerberos {
+		t.Fatalf("normalizeAuthMode kerberos = %q, want %q", got, AuthModeKerberos)
+	}
+}
+
+func TestResolveKerberosCCacheRequiresCache(t *testing.T) {
+	t.Setenv("KRB5CCNAME", "")
+
+	if _, err := resolveKerberosCCache(""); err == nil {
+		t.Fatal("expected missing kerberos ccache to fail")
+	}
+}
+
+func TestResolveKerberosCCacheAcceptsFilePrefix(t *testing.T) {
+	t.Parallel()
+
+	got, err := resolveKerberosCCache("FILE:test.ccache")
+	if err != nil {
+		t.Fatalf("resolveKerberosCCache returned error: %v", err)
+	}
+	if got != "test.ccache" {
+		t.Fatalf("resolveKerberosCCache returned %q", got)
+	}
+}
+
+func TestResolveKerberosCCacheRejectsUnsupportedType(t *testing.T) {
+	t.Parallel()
+
+	if _, err := resolveKerberosCCache("DIR:test.ccache"); err == nil {
+		t.Fatal("expected unsupported ccache type to fail")
+	}
+}
+
+func TestResolveLDAPSPNDefaultsFromHostname(t *testing.T) {
+	t.Parallel()
+
+	got, err := resolveLDAPSPN("DC01.TEST.LOCAL", "")
+	if err != nil {
+		t.Fatalf("resolveLDAPSPN returned error: %v", err)
+	}
+	if got != "ldap/dc01.test.local" {
+		t.Fatalf("resolveLDAPSPN returned %q", got)
+	}
+}
+
+func TestResolveLDAPSPNRequiresOverrideForIPDomainController(t *testing.T) {
+	t.Parallel()
+
+	dc := net.IPv4(0xc0, 0x00, 0x02, 0x0a).String()
+	if _, err := resolveLDAPSPN(dc, ""); err == nil {
+		t.Fatal("expected IP domain controller without ldap SPN to fail")
+	}
+
+	got, err := resolveLDAPSPN(dc, "ldap/DC01.TEST.LOCAL")
+	if err != nil {
+		t.Fatalf("resolveLDAPSPN with override returned error: %v", err)
+	}
+	if got != "ldap/DC01.TEST.LOCAL" {
+		t.Fatalf("resolveLDAPSPN override returned %q", got)
 	}
 }
 
@@ -33,18 +102,18 @@ func TestBindCandidatesExplicitFormatsRemainSingleAttempt(t *testing.T) {
 	}{
 		{
 			name:     "explicit upn",
-			username: "snaffleuser@evilhaxxor.local",
+			username: "testuser@TEST.LOCAL",
 			want: []bindCandidate{{
 				Label: "explicit UPN",
-				Value: "snaffleuser@evilhaxxor.local",
+				Value: "testuser@TEST.LOCAL",
 			}},
 		},
 		{
 			name:     "explicit down-level",
-			username: `EVILHAXXOR\snaffleuser`,
+			username: `TEST\testuser`,
 			want: []bindCandidate{{
 				Label: "explicit DOMAIN\\USER",
-				Value: `EVILHAXXOR\snaffleuser`,
+				Value: `TEST\testuser`,
 			}},
 		},
 	}
@@ -54,7 +123,7 @@ func TestBindCandidatesExplicitFormatsRemainSingleAttempt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := bindCandidates(tc.username, "evilhaxxor.local"); !reflect.DeepEqual(got, tc.want) {
+			if got := bindCandidates(tc.username, "TEST.LOCAL"); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("unexpected bind candidates:\nwant: %#v\ngot:  %#v", tc.want, got)
 			}
 		})
@@ -64,10 +133,10 @@ func TestBindCandidatesExplicitFormatsRemainSingleAttempt(t *testing.T) {
 func TestBindCandidatesWithoutDomain(t *testing.T) {
 	t.Parallel()
 
-	got := bindCandidates("snaffleuser", "")
+	got := bindCandidates("testuser", "")
 	want := []bindCandidate{{
 		Label: "username",
-		Value: "snaffleuser",
+		Value: "testuser",
 	}}
 
 	if !reflect.DeepEqual(got, want) {
@@ -79,9 +148,9 @@ func TestDownLevelBindDomain(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]string{
-		"evilhaxxor.local": "EVILHAXXOR",
-		"EXAMPLE":          "EXAMPLE",
-		"":                 "",
+		"TEST.LOCAL": "TEST",
+		"TEST":       "TEST",
+		"":           "",
 	}
 
 	for input, want := range cases {
@@ -94,8 +163,8 @@ func TestDownLevelBindDomain(t *testing.T) {
 func TestDomainFromNamingContext(t *testing.T) {
 	t.Parallel()
 
-	got := domainFromNamingContext("DC=evilhaxxor,DC=local")
-	if got != "evilhaxxor.local" {
+	got := domainFromNamingContext("DC=TEST,DC=LOCAL")
+	if got != "test.local" {
 		t.Fatalf("domainFromNamingContext returned %q", got)
 	}
 }
@@ -165,6 +234,7 @@ func TestRequiresLDAPSigning(t *testing.T) {
 func TestLDAPAddressUsesCorrectDefaultPorts(t *testing.T) {
 	t.Parallel()
 
+	testHost := net.IPv4(0xc0, 0x00, 0x02, 0x14).String()
 	cases := []struct {
 		name        string
 		input       string
@@ -174,24 +244,24 @@ func TestLDAPAddressUsesCorrectDefaultPorts(t *testing.T) {
 	}{
 		{
 			name:        "ldap default port",
-			input:       "10.100.11.31",
+			input:       testHost,
 			defaultPort: defaultLDAPPort,
-			wantAddr:    "10.100.11.31:389",
-			wantHost:    "10.100.11.31",
+			wantAddr:    net.JoinHostPort(testHost, "389"),
+			wantHost:    testHost,
 		},
 		{
 			name:        "ldaps default port",
-			input:       "10.100.11.31",
+			input:       testHost,
 			defaultPort: defaultLDAPSPort,
-			wantAddr:    "10.100.11.31:636",
-			wantHost:    "10.100.11.31",
+			wantAddr:    net.JoinHostPort(testHost, "636"),
+			wantHost:    testHost,
 		},
 		{
 			name:        "preserve explicit port",
-			input:       "10.100.11.31:1636",
+			input:       net.JoinHostPort(testHost, "1636"),
 			defaultPort: defaultLDAPSPort,
-			wantAddr:    "10.100.11.31:1636",
-			wantHost:    "10.100.11.31",
+			wantAddr:    net.JoinHostPort(testHost, "1636"),
+			wantHost:    testHost,
 		},
 	}
 

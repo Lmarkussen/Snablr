@@ -67,11 +67,20 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if strings.TrimSpace(opts.Profile) != "" {
 		cfg.Scan.Profile = opts.Profile
 	}
+	if strings.TrimSpace(opts.AuthMode) != "" {
+		cfg.Scan.AuthMode = opts.AuthMode
+	}
 	if strings.TrimSpace(opts.Username) != "" {
 		cfg.Scan.Username = opts.Username
 	}
 	if opts.Password != "" {
 		cfg.Scan.Password = opts.Password
+	}
+	if strings.TrimSpace(opts.KerberosCCache) != "" {
+		cfg.Scan.KerberosCCache = opts.KerberosCCache
+	}
+	if strings.TrimSpace(opts.LDAPSPN) != "" {
+		cfg.Scan.LDAPSPN = opts.LDAPSPN
 	}
 	if len(opts.Share) > 0 {
 		cfg.Scan.Share = append([]string{}, opts.Share...)
@@ -202,11 +211,20 @@ func applyDiscoverOverrides(cfg *config.Config, opts DiscoverOptions) {
 	if strings.TrimSpace(opts.TargetsFile) != "" {
 		cfg.Scan.TargetsFile = opts.TargetsFile
 	}
+	if strings.TrimSpace(opts.AuthMode) != "" {
+		cfg.Scan.AuthMode = opts.AuthMode
+	}
 	if strings.TrimSpace(opts.Username) != "" {
 		cfg.Scan.Username = opts.Username
 	}
 	if opts.Password != "" {
 		cfg.Scan.Password = opts.Password
+	}
+	if strings.TrimSpace(opts.KerberosCCache) != "" {
+		cfg.Scan.KerberosCCache = opts.KerberosCCache
+	}
+	if strings.TrimSpace(opts.LDAPSPN) != "" {
+		cfg.Scan.LDAPSPN = opts.LDAPSPN
 	}
 	if strings.TrimSpace(opts.Domain) != "" {
 		cfg.Scan.Domain = opts.Domain
@@ -235,10 +253,20 @@ func applyDiscoverOverrides(cfg *config.Config, opts DiscoverOptions) {
 }
 
 func validateScanConfig(cfg config.Config) error {
+	authMode := normalizeLDAPAuthMode(cfg.Scan.AuthMode)
+	if authMode != discovery.AuthModePassword && authMode != discovery.AuthModeKerberos {
+		return fmt.Errorf("unsupported auth mode %q: use password or kerberos", cfg.Scan.AuthMode)
+	}
 	if strings.TrimSpace(cfg.Scan.Username) == "" {
+		if authMode == discovery.AuthModeKerberos {
+			return fmt.Errorf("SMB Kerberos is not supported with the current SMB backend; SMB scanning requires --username and --password even when --auth kerberos is used for LDAP discovery")
+		}
 		return fmt.Errorf("missing SMB username: set scan.username in config or pass --username (run `snablr scan --help` for examples)")
 	}
 	if cfg.Scan.Password == "" {
+		if authMode == discovery.AuthModeKerberos {
+			return fmt.Errorf("SMB Kerberos is not supported with the current SMB backend; SMB scanning requires --username and --password even when --auth kerberos is used for LDAP discovery")
+		}
 		return fmt.Errorf("missing SMB password: set scan.password in config or pass --password (run `snablr scan --help` for examples)")
 	}
 	if _, err := cfg.Scan.MaxScanDuration(); err != nil {
@@ -352,17 +380,29 @@ func validateScanConfig(cfg config.Config) error {
 }
 
 func validateDiscoverConfig(scanCfg config.ScanConfig) error {
+	authMode := normalizeLDAPAuthMode(scanCfg.AuthMode)
+	if authMode != discovery.AuthModePassword && authMode != discovery.AuthModeKerberos {
+		return fmt.Errorf("unsupported auth mode %q: use password or kerberos", scanCfg.AuthMode)
+	}
 	if len(scanCfg.Targets) == 0 && strings.TrimSpace(scanCfg.TargetsFile) == "" && scanCfg.NoLDAP {
 		return fmt.Errorf("no targets available: provide --targets/--targets-file or allow LDAP discovery by removing --no-ldap")
 	}
 	needsLDAPCreds := (!scanCfg.NoLDAP && len(scanCfg.Targets) == 0 && strings.TrimSpace(scanCfg.TargetsFile) == "") || scanCfg.DiscoverDFS
-	if needsLDAPCreds && strings.TrimSpace(scanCfg.Username) == "" {
+	if needsLDAPCreds && authMode == discovery.AuthModePassword && strings.TrimSpace(scanCfg.Username) == "" {
 		return fmt.Errorf("ldap discovery needs credentials: set scan.username in config or pass --username")
 	}
-	if needsLDAPCreds && scanCfg.Password == "" {
+	if needsLDAPCreds && authMode == discovery.AuthModePassword && scanCfg.Password == "" {
 		return fmt.Errorf("ldap discovery needs credentials: set scan.password in config or pass --password")
 	}
 	return nil
+}
+
+func normalizeLDAPAuthMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return discovery.AuthModePassword
+	}
+	return mode
 }
 
 func RunRulesList(opts RulesOptions) error {

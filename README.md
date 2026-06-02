@@ -181,7 +181,7 @@ You need:
 - a username and password that can authenticate to that host
 
 ```bash
-snablr scan --targets 10.0.0.5 --user USER --pass PASS --output-format all --json-out results.json --html-out report.html
+snablr scan --targets FILE01.TEST.LOCAL --user USER --pass PASS --output-format all --json-out results.json --html-out report.html
 ```
 
 What this does:
@@ -265,7 +265,7 @@ Open `report.html` in a browser after the scan completes.
 If you are running from the repo root and the binary is not on `PATH`, use:
 
 ```bash
-./bin/snablr scan --targets 10.0.0.5 --user USER --pass PASS --output-format all --json-out results.json --html-out report.html
+./bin/snablr scan --targets FILE01.TEST.LOCAL --user USER --pass PASS --output-format all --json-out results.json --html-out report.html
 ```
 
 ### 5. Try A Domain-Aware Scan
@@ -325,7 +325,7 @@ Quick start:
 go build -o bin/snablr-seed ./cmd/snablr-seed
 
 ./bin/snablr-seed \
-  --targets 172.16.0.90 \
+  --targets FILE01.TEST.LOCAL \
   --user USER \
   --pass PASS \
   --count-per-category 25 \
@@ -336,7 +336,7 @@ go build -o bin/snablr-seed ./cmd/snablr-seed
 Verification workflow:
 
 ```bash
-./bin/snablr scan --targets 172.16.0.90 --user USER --pass PASS --json-out results.json
+./bin/snablr scan --targets FILE01.TEST.LOCAL --user USER --pass PASS --json-out results.json
 ./bin/snablr-seed verify --manifest seed-manifest.json --results results.json
 ```
 
@@ -363,8 +363,8 @@ If you are unsure where to start:
 
 ```bash
 snablr scan \
-  --targets 10.0.0.5 \
-  --user 'EXAMPLE\user' \
+  --targets FILE01.TEST.LOCAL \
+  --user 'TEST\user' \
   --pass 'REPLACE_ME' \
   --output-format console
 ```
@@ -381,9 +381,48 @@ If `targets` and `targets_file` are empty, Snablr tries to detect domain context
 
 ```bash
 snablr scan \
-  --user 'EXAMPLE\user' \
+  --user 'TEST\user' \
   --pass 'REPLACE_ME' \
   --output-format console
+```
+
+### Use Kerberos For LDAP Discovery
+
+Kerberos support is opt-in and currently applies only to LDAP/DFS discovery. SMB scanning still uses the configured `--username` and `--password`; SMB Kerberos is not supported with the current SMB backend.
+
+Prerequisites:
+
+- a valid Kerberos ticket from `kinit`
+- `KRB5CCNAME` pointing at a FILE credential cache, or `--kerberos-ccache`
+- a reachable domain controller hostname for SPN generation, or `--ldap-spn`
+- working Kerberos realm configuration, DNS, and time sync
+
+```bash
+KRB5CCNAME=FILE:krb5cc_TEST snablr discover \
+  --auth kerberos \
+  --domain TEST.LOCAL \
+  --dc DC01.TEST.LOCAL
+```
+
+When the connection target cannot be used directly as the Kerberos service principal, pass an explicit LDAP SPN:
+
+```bash
+KRB5CCNAME=FILE:krb5cc_TEST snablr discover \
+  --auth kerberos \
+  --domain TEST.LOCAL \
+  --dc DC01.TEST.LOCAL \
+  --ldap-spn ldap/DC01.TEST.LOCAL
+```
+
+For explicit target scans, `--auth kerberos` does not authenticate to SMB. This remains a valid scan mode only when SMB credentials are also supplied:
+
+```bash
+KRB5CCNAME=FILE:krb5cc_TEST snablr scan \
+  --auth kerberos \
+  --targets FILE01.TEST.LOCAL \
+  --domain TEST.LOCAL \
+  --username USER \
+  --password PASS
 ```
 
 ### Restrict Scan Scope
@@ -419,14 +458,14 @@ Use this when you want an end-to-end lab validation loop with synthetic content.
 
 ```bash
 snablr-seed \
-  --targets 172.16.0.90 \
+  --targets FILE01.TEST.LOCAL \
   --user USER \
   --pass PASS \
   --seed-prefix SnablrLab \
   --manifest-out seed-manifest.json
 
 snablr scan \
-  --targets 172.16.0.90 \
+  --targets FILE01.TEST.LOCAL \
   --user USER \
   --pass PASS \
   --path SnablrLab \
@@ -445,8 +484,8 @@ When no manual targets are supplied, Snablr can:
 1. detect the domain from environment variables, hostname data, or resolver configuration
 2. find a domain controller through DNS SRV lookups
 3. query LDAP RootDSE for the default naming context
-4. attempt LDAP simple bind with the configured credentials
-5. automatically retry over LDAPS if the server requires stronger authentication or signing
+4. authenticate with password simple bind by default, or Kerberos SASL/GSSAPI when `--auth kerberos` is explicitly enabled
+5. automatically retry password simple bind over LDAPS if the server requires stronger authentication or signing
 6. enumerate computer objects from that base DN
 7. merge and deduplicate those discovered hosts into the normal target pipeline
 
@@ -456,6 +495,9 @@ You can override discovery with:
 - `--domain`
 - `--dc`
 - `--base-dn`
+- `--auth password|kerberos`
+- `--kerberos-ccache`
+- `--ldap-spn`
 
 See:
 - [Getting Started](docs/getting-started.md)

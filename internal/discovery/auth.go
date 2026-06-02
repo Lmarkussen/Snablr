@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
+	"github.com/go-ldap/ldap/v3/gssapi"
+	"github.com/jcmturner/gokrb5/v8/credentials"
 )
 
 type ldapSession struct {
@@ -50,6 +53,24 @@ func connectLDAPSession(opts LDAPOptions, domainContext *DomainContext, logger L
 		return ldapSession{}, err
 	}
 
+	if normalizeAuthMode(opts.AuthMode) == AuthModeKerberos {
+		authedConn, method, err := authenticateLDAP(conn, opts, domainContext.DomainName, domainContext.DomainController, logger)
+		if err != nil {
+			conn.Close()
+			return ldapSession{}, err
+		}
+		rootDSE, err := preBindRootDSE(authedConn, domainContext, logger)
+		if err != nil {
+			authedConn.Close()
+			return ldapSession{}, err
+		}
+		return ldapSession{
+			Conn:       authedConn,
+			RootDSE:    rootDSE,
+			AuthMethod: method,
+		}, nil
+	}
+
 	rootDSE, err := preBindRootDSE(conn, domainContext, logger)
 	if err != nil {
 		conn.Close()
@@ -70,6 +91,18 @@ func connectLDAPSession(opts LDAPOptions, domainContext *DomainContext, logger L
 }
 
 func authenticateLDAP(conn *ldap.Conn, opts LDAPOptions, domain, domainController string, logger Logger) (*ldap.Conn, string, error) {
+	switch normalizeAuthMode(opts.AuthMode) {
+	case AuthModeKerberos:
+		method, err := bindLDAPKerberos(conn, opts, domainController, logger)
+		if err != nil {
+			return nil, "", err
+		}
+		return conn, method, nil
+	case AuthModePassword:
+	default:
+		return nil, "", fmt.Errorf("ldap discovery: unsupported auth mode %q", opts.AuthMode)
+	}
+
 	if method, err := bindLDAPSimple(conn, opts, domain, logger); err == nil {
 		return conn, method, nil
 	} else if !requiresLDAPSigning(err) {
@@ -93,6 +126,114 @@ func authenticateLDAP(conn *ldap.Conn, opts LDAPOptions, domain, domainControlle
 		return nil, "", fmt.Errorf("ldap discovery: stronger authentication required and LDAPS fallback bind failed: %w", err)
 	}
 	return ldapsConn, "ldaps-simple/" + method, nil
+}
+
+func bindLDAPKerberos(conn *ldap.Conn, opts LDAPOptions, domainController string, logger Logger) (string, error) {
+	ccachePath, err := resolveKerberosCCache(opts.KerberosCCache)
+	if err != nil {
+		return "", err
+	}
+	if err := validateKerberosCCache(ccachePath); err != nil {
+		return "", err
+	}
+
+	spn, err := resolveLDAPSPN(domainController, opts.LDAPSPN)
+	if err != nil {
+		return "", err
+	}
+
+	krb5Config := strings.TrimSpace(os.Getenv("KRB5_CONFIG"))
+	if krb5Config == "" {
+		krb5Config = "/etc/krb5.conf"
+	}
+	client, err := gssapi.NewClientFromCCache(ccachePath, krb5Config)
+	if err != nil {
+		return "", fmt.Errorf("ldap discovery: invalid kerberos ccache or krb5 config: %w", err)
+	}
+	defer client.Close()
+
+	if err := conn.GSSAPIBind(client, spn, ""); err != nil {
+		return "", fmt.Errorf("ldap discovery: kerberos GSSAPI bind failed for %s: %w", spn, err)
+	}
+	if logger != nil {
+		logger.Infof("ldap discovery: kerberos GSSAPI bind successful using %s", spn)
+	}
+	return "ldap-kerberos-gssapi", nil
+}
+
+func normalizeAuthMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return AuthModePassword
+	}
+	return mode
+}
+
+func resolveKerberosCCache(override string) (string, error) {
+	value := strings.TrimSpace(override)
+	if value == "" {
+		value = strings.TrimSpace(os.Getenv("KRB5CCNAME"))
+	}
+	if value == "" {
+		return "", fmt.Errorf("ldap discovery: kerberos auth requires a credential cache; set KRB5CCNAME or pass --kerberos-ccache")
+	}
+	if strings.HasPrefix(value, "FILE:") {
+		value = strings.TrimPrefix(value, "FILE:")
+	}
+	if strings.Contains(value, ":") {
+		return "", fmt.Errorf("ldap discovery: unsupported kerberos credential cache type %q; use a FILE ccache path", value)
+	}
+	return value, nil
+}
+
+func validateKerberosCCache(path string) error {
+	ccache, err := credentials.LoadCCache(path)
+	if err != nil {
+		return fmt.Errorf("ldap discovery: unable to load kerberos ccache %s: %w", path, err)
+	}
+	entries := ccache.GetEntries()
+	if len(entries) == 0 {
+		return fmt.Errorf("ldap discovery: kerberos ccache %s contains no usable tickets", path)
+	}
+	now := time.Now().UTC()
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		if !entry.StartTime.IsZero() && now.Before(entry.StartTime) {
+			continue
+		}
+		if !entry.EndTime.IsZero() && now.Before(entry.EndTime) {
+			return nil
+		}
+	}
+	return fmt.Errorf("ldap discovery: kerberos ccache %s contains no valid unexpired tickets", path)
+}
+
+func resolveLDAPSPN(domainController, override string) (string, error) {
+	spn := strings.TrimSpace(override)
+	if spn != "" {
+		return spn, nil
+	}
+	host := ldapHost(domainController)
+	if host == "" {
+		return "", fmt.Errorf("ldap discovery: kerberos auth requires a domain controller hostname or --ldap-spn")
+	}
+	if net.ParseIP(host) != nil {
+		return "", fmt.Errorf("ldap discovery: kerberos auth requires --ldap-spn when --dc is an IP address")
+	}
+	return "ldap/" + strings.ToLower(host), nil
+}
+
+func ldapHost(dc string) string {
+	dc = strings.TrimSpace(dc)
+	if dc == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(dc); err == nil {
+		return strings.TrimSpace(host)
+	}
+	return dc
 }
 
 func dialLDAPS(dc string, timeout time.Duration) (*ldap.Conn, error) {

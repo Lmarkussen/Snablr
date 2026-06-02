@@ -7,8 +7,11 @@ scan:
   targets: []
   targets_file: ""
   profile: default
+  auth: password
   username: ""
   password: ""
+  kerberos_ccache: ""
+  ldap_spn: ""
   share: []
   exclude_share: []
   path: []

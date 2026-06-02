@@ -135,6 +135,9 @@ func collectTargets(ctx context.Context, cfg config.ScanConfig, logger Logger) (
 		discovered, err := DiscoverLDAP(ctx, LDAPOptions{
 			Username:         cfg.Username,
 			Password:         cfg.Password,
+			AuthMode:         cfg.AuthMode,
+			KerberosCCache:   cfg.KerberosCCache,
+			LDAPSPN:          cfg.LDAPSPN,
 			Domain:           cfg.Domain,
 			DomainController: cfg.DomainController,
 			BaseDN:           cfg.BaseDN,
@@ -161,6 +164,9 @@ func collectTargets(ctx context.Context, cfg config.ScanConfig, logger Logger) (
 		discoveredDFS, err := DiscoverDFS(ctx, LDAPOptions{
 			Username:         cfg.Username,
 			Password:         cfg.Password,
+			AuthMode:         cfg.AuthMode,
+			KerberosCCache:   cfg.KerberosCCache,
+			LDAPSPN:          cfg.LDAPSPN,
 			Domain:           cfg.Domain,
 			DomainController: cfg.DomainController,
 			BaseDN:           cfg.BaseDN,

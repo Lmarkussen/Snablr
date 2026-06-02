@@ -7,8 +7,11 @@ scan:
   # Leave targets empty so Snablr can discover domain hosts automatically.
   targets: []
   targets_file: ""
-  username: "EXAMPLE\\snablr"
+  auth: password
+  username: "TEST\\snablr"
   password: "REPLACE_ME"
+  kerberos_ccache: ""
+  ldap_spn: ""
 
   # Optional scope limits. Leave empty for a broad domain-aware pass.
   share: []
@@ -24,7 +27,7 @@ scan:
 
   # LDAP discovery defaults.
   no_ldap: false
-  domain: "example.local"
+  domain: "TEST.LOCAL"
   dc: ""
   base_dn: ""
   discover_dfs: true

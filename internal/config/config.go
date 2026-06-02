@@ -34,8 +34,11 @@ type ScanConfig struct {
 	Targets                    []string `yaml:"targets"`
 	TargetsFile                string   `yaml:"targets_file"`
 	Profile                    string   `yaml:"profile"`
+	AuthMode                   string   `yaml:"auth"`
 	Username                   string   `yaml:"username"`
 	Password                   string   `yaml:"password"`
+	KerberosCCache             string   `yaml:"kerberos_ccache"`
+	LDAPSPN                    string   `yaml:"ldap_spn"`
 	Share                      []string `yaml:"share"`
 	ExcludeShare               []string `yaml:"exclude_share"`
 	Path                       []string `yaml:"path"`
@@ -188,6 +191,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Scan.MaxFileSize <= 0 {
 		cfg.Scan.MaxFileSize = 10 * 1024 * 1024
+	}
+	if strings.TrimSpace(cfg.Scan.AuthMode) == "" {
+		cfg.Scan.AuthMode = "password"
 	}
 	if cfg.Scan.ReachabilityTimeoutSeconds <= 0 {
 		cfg.Scan.ReachabilityTimeoutSeconds = 3

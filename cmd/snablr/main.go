@@ -69,6 +69,9 @@ func runScan(args []string) error {
 	targets := fs.String("targets", "", "Comma-separated target hosts")
 	targetsFile := fs.String("targets-file", "", "Path to file containing target hosts")
 	profile := fs.String("profile", "", "Scan profile: default, validation, or aggressive")
+	authMode := fs.String("auth", "", "LDAP discovery authentication mode only: password or kerberos (default: password; SMB still requires --username/--password)")
+	kerberosCCache := fs.String("kerberos-ccache", "", "Kerberos FILE credential cache path for LDAP GSSAPI auth; defaults to KRB5CCNAME")
+	ldapSPN := fs.String("ldap-spn", "", "LDAP Kerberos service principal override, for example ldap/DC01.TEST.LOCAL")
 
 	var username string
 	var password string
@@ -142,8 +145,11 @@ func runScan(args []string) error {
 		Targets:                    parseTargets(*targets),
 		TargetsFile:                *targetsFile,
 		Profile:                    *profile,
+		AuthMode:                   *authMode,
 		Username:                   username,
 		Password:                   password,
+		KerberosCCache:             *kerberosCCache,
+		LDAPSPN:                    *ldapSPN,
 		Share:                      append([]string{}, shareFilters...),
 		ExcludeShare:               append([]string{}, excludeShareFilters...),
 		Path:                       append([]string{}, pathFilters...),
@@ -195,6 +201,9 @@ func runDiscover(args []string) error {
 	configPath := fs.String("config", "configs/config.yaml", "Path to the YAML config file")
 	targets := fs.String("targets", "", "Comma-separated target hosts")
 	targetsFile := fs.String("targets-file", "", "Path to file containing target hosts")
+	authMode := fs.String("auth", "", "LDAP discovery authentication mode only: password or kerberos (default: password)")
+	kerberosCCache := fs.String("kerberos-ccache", "", "Kerberos FILE credential cache path for LDAP GSSAPI auth; defaults to KRB5CCNAME")
+	ldapSPN := fs.String("ldap-spn", "", "LDAP Kerberos service principal override, for example ldap/DC01.TEST.LOCAL")
 
 	var username string
 	var password string
@@ -223,8 +232,11 @@ func runDiscover(args []string) error {
 		ConfigPath:                 *configPath,
 		Targets:                    parseTargets(*targets),
 		TargetsFile:                *targetsFile,
+		AuthMode:                   *authMode,
 		Username:                   username,
 		Password:                   password,
+		KerberosCCache:             *kerberosCCache,
+		LDAPSPN:                    *ldapSPN,
 		Domain:                     *domain,
 		NoLDAP:                     *noLDAP,
 		DomainController:           *dc,
@@ -496,11 +508,11 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("Good First Steps:")
 	fmt.Println("  1. snablr version")
-	fmt.Println("  2. snablr scan --targets 10.0.0.5 --username USER --password PASS --output-format all --json-out results.json --html-out report.html")
+	fmt.Println("  2. snablr scan --targets FILE01.TEST.LOCAL --username USER --password PASS --output-format all --json-out results.json --html-out report.html")
 	fmt.Println("  3. open report.html in a browser")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  snablr scan --targets 10.0.0.5 --username USER --password PASS")
+	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --username USER --password PASS")
 	fmt.Println("  snablr scan --config configs/config.yaml")
 	fmt.Println("  snablr scan --username USER --password PASS")
 	fmt.Println("  snablr scan --output-format all --json-out results.json --html-out report.html")
@@ -528,11 +540,13 @@ func printScanUsage(fs *flag.FlagSet) {
 	fmt.Println("When to use it:")
 	fmt.Println("  - direct target scan: use --targets or --targets-file")
 	fmt.Println("  - domain-aware scan: omit targets and provide credentials so LDAP discovery can run")
+	fmt.Println("  - Kerberos auth currently applies only to LDAP/DFS discovery; the current SMB backend still requires --username and --password")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  snablr scan --targets 10.0.0.5 --username USER --password PASS")
+	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --username USER --password PASS")
 	fmt.Println("  snablr scan --username USER --password PASS")
-	fmt.Println("  snablr scan --domain example.local --dc dc01.example.local --username USER --password PASS")
+	fmt.Println("  snablr scan --domain TEST.LOCAL --dc DC01.TEST.LOCAL --username USER --password PASS")
+	fmt.Println("  KRB5CCNAME=FILE:krb5cc_TEST snablr scan --auth kerberos --domain TEST.LOCAL --dc DC01.TEST.LOCAL --username USER --password PASS")
 	fmt.Println("  snablr scan --output-format all --json-out results.json --html-out report.html")
 	fmt.Println("  snablr scan --share Finance --path Reports/ --max-depth 4")
 	fmt.Println("  snablr scan --baseline previous-results.json --output-format all --json-out results.json --html-out report.html")
@@ -568,8 +582,9 @@ func printDiscoverUsage(fs *flag.FlagSet) {
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  snablr discover --username USER --password PASS")
-	fmt.Println("  snablr discover --targets fileserver01,fileserver02 --skip-reachability-check")
-	fmt.Println("  snablr discover --discover-dfs --domain example.local --dc dc01.example.local --username USER --password PASS")
+	fmt.Println("  snablr discover --targets FILE01.TEST.LOCAL,FILE02.TEST.LOCAL --skip-reachability-check")
+	fmt.Println("  snablr discover --discover-dfs --domain TEST.LOCAL --dc DC01.TEST.LOCAL --username USER --password PASS")
+	fmt.Println("  KRB5CCNAME=FILE:krb5cc_TEST snablr discover --auth kerberos --domain TEST.LOCAL --dc DC01.TEST.LOCAL")
 	fmt.Println()
 	fmt.Println("Flags:")
 	fs.PrintDefaults()

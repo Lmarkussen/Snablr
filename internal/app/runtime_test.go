@@ -1,9 +1,11 @@
 package app
 
 import (
+	"strings"
 	"testing"
 
 	"snablr/internal/config"
+	"snablr/internal/discovery"
 )
 
 func TestApplyScanOverridesLeavesWIMConfigUntouchedWhenFlagsUnset(t *testing.T) {
@@ -101,5 +103,118 @@ func TestValidateScanConfigRejectsInvalidWIMBounds(t *testing.T) {
 	cfg.WIM.MaxTotalBytes = 1024
 	if err := validateScanConfig(cfg); err == nil {
 		t.Fatal("expected invalid WIM extraction byte bounds to fail validation")
+	}
+}
+
+func TestApplyScanOverridesAppliesLDAPAuthOptions(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	applyScanOverrides(&cfg, ScanOptions{
+		AuthMode:       discovery.AuthModeKerberos,
+		KerberosCCache: "test.ccache",
+		LDAPSPN:        "ldap/DC01.TEST.LOCAL",
+	})
+
+	if cfg.Scan.AuthMode != discovery.AuthModeKerberos {
+		t.Fatalf("expected auth mode override, got %q", cfg.Scan.AuthMode)
+	}
+	if cfg.Scan.KerberosCCache != "test.ccache" {
+		t.Fatalf("expected kerberos ccache override, got %q", cfg.Scan.KerberosCCache)
+	}
+	if cfg.Scan.LDAPSPN != "ldap/DC01.TEST.LOCAL" {
+		t.Fatalf("expected ldap spn override, got %q", cfg.Scan.LDAPSPN)
+	}
+}
+
+func TestValidateScanConfigKeepsPasswordModeAsDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.Scan.AuthMode = ""
+	cfg.Scan.Username = "user"
+	cfg.Scan.Password = "pass"
+	cfg.Scan.Profile = ""
+
+	if err := validateScanConfig(cfg); err != nil {
+		t.Fatalf("validateScanConfig returned error: %v", err)
+	}
+}
+
+func TestValidateScanConfigKerberosStillRequiresSMBCredentials(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.Scan.AuthMode = discovery.AuthModeKerberos
+	cfg.Scan.Username = ""
+	cfg.Scan.Password = ""
+	cfg.Scan.Profile = ""
+
+	err := validateScanConfig(cfg)
+	if err == nil {
+		t.Fatal("expected kerberos scan without SMB credentials to fail")
+	}
+	if !strings.Contains(err.Error(), "SMB Kerberos is not supported with the current SMB backend") ||
+		!strings.Contains(err.Error(), "SMB scanning requires --username and --password") {
+		t.Fatalf("expected SMB Kerberos unsupported error, got %v", err)
+	}
+}
+
+func TestValidateScanConfigKerberosExplicitTargetsWithoutSMBCredsFailsClearly(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.Scan.AuthMode = discovery.AuthModeKerberos
+	cfg.Scan.Targets = []string{"FILE01.TEST.LOCAL"}
+	cfg.Scan.Username = ""
+	cfg.Scan.Password = ""
+	cfg.Scan.Profile = ""
+
+	err := validateScanConfig(cfg)
+	if err == nil {
+		t.Fatal("expected kerberos explicit-target scan without SMB credentials to fail")
+	}
+	if !strings.Contains(err.Error(), "SMB Kerberos is not supported with the current SMB backend") ||
+		!strings.Contains(err.Error(), "SMB scanning requires --username and --password") {
+		t.Fatalf("expected clear SMB Kerberos unsupported error, got %v", err)
+	}
+}
+
+func TestValidateScanConfigKerberosExplicitTargetsWithSMBCredsIsAllowed(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.Scan.AuthMode = discovery.AuthModeKerberos
+	cfg.Scan.Targets = []string{"FILE01.TEST.LOCAL"}
+	cfg.Scan.Username = "user"
+	cfg.Scan.Password = "pass"
+	cfg.Scan.Profile = ""
+
+	if err := validateScanConfig(cfg); err != nil {
+		t.Fatalf("validateScanConfig returned error: %v", err)
+	}
+}
+
+func TestValidateDiscoverConfigAllowsKerberosWithoutPassword(t *testing.T) {
+	t.Parallel()
+
+	err := validateDiscoverConfig(config.ScanConfig{
+		AuthMode: discovery.AuthModeKerberos,
+		Domain:   "TEST.LOCAL",
+	})
+	if err != nil {
+		t.Fatalf("validateDiscoverConfig returned error: %v", err)
+	}
+}
+
+func TestValidateDiscoverConfigRejectsUnsupportedAuthMode(t *testing.T) {
+	t.Parallel()
+
+	err := validateDiscoverConfig(config.ScanConfig{
+		AuthMode: "invalid",
+		Domain:   "TEST.LOCAL",
+	})
+	if err == nil {
+		t.Fatal("expected unsupported auth mode to fail")
 	}
 }

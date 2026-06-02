@@ -127,22 +127,45 @@ func TestRequiresLDAPPreflight(t *testing.T) {
 	if !requiresLDAPPreflight(config.ScanConfig{
 		Username:         "user",
 		Password:         "pass",
-		DomainController: "dc01.example.local",
+		DomainController: "DC01.TEST.LOCAL",
 	}) {
 		t.Fatal("expected LDAP preflight when no explicit targets are supplied")
 	}
 	if !requiresLDAPPreflight(config.ScanConfig{
-		Targets:          []string{"10.0.0.5"},
+		Targets:          []string{"FILE01.TEST.LOCAL"},
 		DiscoverDFS:      true,
-		DomainController: "dc01.example.local",
+		DomainController: "DC01.TEST.LOCAL",
 	}) {
 		t.Fatal("expected LDAP preflight when DFS discovery is enabled")
 	}
 	if requiresLDAPPreflight(config.ScanConfig{
-		Targets: []string{"10.0.0.5"},
+		Targets: []string{"FILE01.TEST.LOCAL"},
 		NoLDAP:  true,
 	}) {
 		t.Fatal("did not expect LDAP preflight for direct-target scan without LDAP/DFS")
+	}
+}
+
+func TestScanPreflightValidatorsPassLDAPAuthOptions(t *testing.T) {
+	t.Parallel()
+
+	validators := scanPreflightValidators(config.Config{
+		Scan: config.ScanConfig{
+			AuthMode:         discovery.AuthModeKerberos,
+			KerberosCCache:   "test.ccache",
+			LDAPSPN:          "ldap/DC01.TEST.LOCAL",
+			DomainController: "DC01.TEST.LOCAL",
+		},
+	}, nil)
+	if len(validators) != 1 {
+		t.Fatalf("expected one preflight validator, got %d", len(validators))
+	}
+	validator, ok := validators[0].(ldapPreflightValidator)
+	if !ok {
+		t.Fatalf("expected ldap preflight validator, got %T", validators[0])
+	}
+	if validator.opts.AuthMode != discovery.AuthModeKerberos || validator.opts.KerberosCCache != "test.ccache" || validator.opts.LDAPSPN != "ldap/DC01.TEST.LOCAL" {
+		t.Fatalf("ldap auth options were not propagated: %#v", validator.opts)
 	}
 }
 
@@ -176,8 +199,8 @@ func TestRunScanPreflightFailureStopsBeforeWriterAndDiscovery(t *testing.T) {
 	err := RunScan(context.Background(), ScanOptions{
 		Username:         "user",
 		Password:         "pass",
-		Domain:           "example.local",
-		DomainController: "dc01.example.local",
+		Domain:           "TEST.LOCAL",
+		DomainController: "DC01.TEST.LOCAL",
 	})
 	if err == nil || !strings.Contains(err.Error(), "invalid credentials") {
 		t.Fatalf("expected preflight failure to be returned, got %v", err)
@@ -226,7 +249,7 @@ func TestRunScanResolvesTargetsBeforeCreatingWriter(t *testing.T) {
 	err := RunScan(context.Background(), ScanOptions{
 		Username: "user",
 		Password: "pass",
-		Targets:  []string{"10.0.0.5"},
+		Targets:  []string{"FILE01.TEST.LOCAL"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "stop after discovery") {
 		t.Fatalf("expected synthetic discovery stop, got %v", err)

@@ -5,8 +5,11 @@ type ScanOptions struct {
 	Targets                    []string
 	TargetsFile                string
 	Profile                    string
+	AuthMode                   string
 	Username                   string
 	Password                   string
+	KerberosCCache             string
+	LDAPSPN                    string
 	Share                      []string
 	ExcludeShare               []string
 	Path                       []string
@@ -101,6 +104,9 @@ type DiscoverOptions struct {
 	TargetsFile                string
 	Username                   string
 	Password                   string
+	AuthMode                   string
+	KerberosCCache             string
+	LDAPSPN                    string
 	Domain                     string
 	NoLDAP                     bool
 	DomainController           string

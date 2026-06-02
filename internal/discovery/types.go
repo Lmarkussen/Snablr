@@ -2,6 +2,11 @@ package discovery
 
 import "time"
 
+const (
+	AuthModePassword = "password"
+	AuthModeKerberos = "kerberos"
+)
+
 type DiscoveredHost struct {
 	Hostname          string
 	DNSHostname       string
@@ -37,6 +42,9 @@ type DomainContext struct {
 type LDAPOptions struct {
 	Username         string
 	Password         string
+	AuthMode         string
+	KerberosCCache   string
+	LDAPSPN          string
 	Domain           string
 	DomainController string
 	BaseDN           string

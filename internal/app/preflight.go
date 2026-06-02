@@ -86,6 +86,9 @@ func scanPreflightValidators(cfg config.Config, logger *logx.Logger) []preflight
 			opts: discovery.LDAPOptions{
 				Username:         cfg.Scan.Username,
 				Password:         cfg.Scan.Password,
+				AuthMode:         cfg.Scan.AuthMode,
+				KerberosCCache:   cfg.Scan.KerberosCCache,
+				LDAPSPN:          cfg.Scan.LDAPSPN,
 				Domain:           cfg.Scan.Domain,
 				DomainController: cfg.Scan.DomainController,
 				BaseDN:           cfg.Scan.BaseDN,

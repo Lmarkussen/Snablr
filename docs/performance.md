@@ -4,9 +4,10 @@ Snablr includes a few default optimizations intended for larger environments wit
 
 ## What Changed
 
-- Adaptive worker scaling:
-  - `worker_count: 0` now means "auto".
-  - Auto mode resolves to a CPU-based worker count, capped to stay readable and predictable.
+- Safe worker scaling:
+  - `worker_count` defaults to `15` to avoid overloading SMB/file servers.
+  - Higher values may improve scan speed but can put significant load on file servers.
+  - `worker_count: 0` still means adaptive CPU-based scaling when explicitly configured.
   - Operators can still set an explicit `worker_count` to pin concurrency.
 
 - Reduced unnecessary content reads:
@@ -25,7 +26,7 @@ Snablr includes a few default optimizations intended for larger environments wit
 
 ## Operational Guidance
 
-- Leave `worker_count` at `0` unless you have a reason to cap it manually.
+- Leave `worker_count` at the default `15` in production unless you have measured capacity to raise it.
 - Keep `max_file_size` conservative for very large environments.
 - Use `--share`, `--exclude-share`, `--path`, `--exclude-path`, and `--max-depth` to reduce the search space early.
 - Use checkpoints for long-running scans so interrupted runs can resume without redoing completed work.

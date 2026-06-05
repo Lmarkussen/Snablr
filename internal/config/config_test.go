@@ -90,6 +90,30 @@ func TestLoadAppliesArchiveDefaultsAndHonorsExplicitDisable(t *testing.T) {
 	}
 }
 
+func TestDefaultWorkerCountIsProductionSafe(t *testing.T) {
+	t.Parallel()
+
+	cfg := Default()
+	if cfg.Scan.WorkerCount != 15 {
+		t.Fatalf("expected default worker_count 15, got %d", cfg.Scan.WorkerCount)
+	}
+}
+
+func TestLoadPreservesExplicitAdaptiveWorkerCount(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "configs", "config.yaml"), "scan:\n  worker_count: 0\n")
+
+	cfg, err := Load(filepath.Join(root, "configs", "config.yaml"))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Scan.WorkerCount != 0 {
+		t.Fatalf("expected explicit worker_count 0 to be preserved, got %d", cfg.Scan.WorkerCount)
+	}
+}
+
 func TestLoadAppliesProfileBeforeExplicitOverrides(t *testing.T) {
 	t.Parallel()
 

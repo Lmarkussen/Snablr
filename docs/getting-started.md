@@ -135,7 +135,7 @@ That profile demonstrates:
 
 - explicit targets
 - placeholder credentials
-- adaptive worker scaling
+- safe 15-worker default for SMB/file-server safety
 - combined JSON and HTML output
 
 ## First Scan: Domain-Aware

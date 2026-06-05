@@ -36,3 +36,19 @@ func TestOptionalInt64FlagRecordsExplicitOverride(t *testing.T) {
 		t.Fatalf("expected explicit int64 override, got %#v", ptr)
 	}
 }
+
+func TestOptionalIntFlagRecordsExplicitZeroOverride(t *testing.T) {
+	t.Parallel()
+
+	var value optionalIntFlag
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.Var(&value, "worker-count", "")
+
+	if err := fs.Parse([]string{"--worker-count", "0"}); err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	ptr := value.ptr()
+	if ptr == nil || *ptr != 0 {
+		t.Fatalf("expected explicit int override 0, got %#v", ptr)
+	}
+}

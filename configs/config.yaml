@@ -17,7 +17,9 @@ scan:
   path: []
   exclude_path: []
   max_depth: 0
-  worker_count: 0
+  # Safe production default. Higher values may scan faster but can overload SMB/file servers.
+  # Set to 0 only when you explicitly want adaptive CPU-based scaling.
+  worker_count: 15
   max_file_size: 10485760
   no_ldap: false
   domain: ""

@@ -25,7 +25,7 @@ Snablr is intended for authorized defensive security work only. Run it only agai
 - Limited local-side `.zip` inspection with defensive size and member limits
 - Rule validation, fixture-based testing, and custom rule overlays
 - Prioritized scan planning for high-value targets, shares, and paths
-- Concurrent file scanning with adaptive worker scaling
+- Concurrent file scanning with a safe 15-worker production default; adaptive scaling remains available when explicitly requested
 - Checkpoint and resume support for longer scans
 - Bubble Tea live terminal UI for interactive console scans, plus JSON, HTML, CSV, and Markdown outputs
 - Structured HTML report filtering, confidence breakdowns, and seeded validation summaries

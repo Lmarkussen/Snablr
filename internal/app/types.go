@@ -17,7 +17,7 @@ type ScanOptions struct {
 	MaxDepth                   int
 	Domain                     string
 	RulesDirectory             string
-	WorkerCount                int
+	WorkerCount                *int
 	MaxFileSize                int64
 	NoLDAP                     bool
 	DomainController           string

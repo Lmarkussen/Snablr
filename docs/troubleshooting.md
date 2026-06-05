@@ -248,14 +248,15 @@ The scan is correct, but too slow or too memory-heavy for the environment.
 
 ### Current Optimizations
 
-- adaptive worker scaling when `worker_count` is `0`
+- safe default concurrency of `worker_count: 15`
+- adaptive worker scaling only when `worker_count` is explicitly set to `0`
 - early content-read skipping when content rules are extension-scoped
 - bounded batch planning during share walks
 - max file size checks before expensive reads
 
 ### What To Tune
 
-- leave `worker_count` at `0` first, then pin it only if necessary
+- leave `worker_count` at the default `15` in production first, then tune carefully if necessary
 - lower `max_file_size` for very broad scans
 - narrow with `share`, `exclude_share`, `path`, `exclude_path`, and `max_depth`
 - use `only_ad_shares` or `prioritize_ad_shares` when reviewing AD-heavy environments

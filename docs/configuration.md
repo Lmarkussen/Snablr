@@ -185,7 +185,9 @@ Recommended default:
   Number of file scanning workers
 
 Special behavior:
-- `0` means adaptive worker scaling
+- Defaults to `15` for SMB/file-server safety
+- Higher values may improve scan speed but can put significant load on file servers
+- `0` means adaptive CPU-based worker scaling when explicitly configured
 
 - `max_file_size`
   Maximum file size Snablr will consider for scanning

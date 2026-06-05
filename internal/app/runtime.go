@@ -100,8 +100,8 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if strings.TrimSpace(opts.RulesDirectory) != "" {
 		cfg.Rules.Directory = opts.RulesDirectory
 	}
-	if opts.WorkerCount > 0 {
-		cfg.Scan.WorkerCount = opts.WorkerCount
+	if opts.WorkerCount != nil {
+		cfg.Scan.WorkerCount = *opts.WorkerCount
 	}
 	if opts.MaxFileSize > 0 {
 		cfg.Scan.MaxFileSize = opts.MaxFileSize

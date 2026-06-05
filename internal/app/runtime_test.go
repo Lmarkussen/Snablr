@@ -78,6 +78,41 @@ func TestApplyScanOverridesAppliesWIMOverridesAfterProfileSelection(t *testing.T
 	}
 }
 
+func TestApplyScanOverridesLeavesWorkerDefaultWhenUnset(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	applyScanOverrides(&cfg, ScanOptions{})
+
+	if cfg.Scan.WorkerCount != 15 {
+		t.Fatalf("expected safe default worker count 15, got %d", cfg.Scan.WorkerCount)
+	}
+}
+
+func TestApplyScanOverridesAppliesExplicitWorkerCount(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	workers := 4
+	applyScanOverrides(&cfg, ScanOptions{WorkerCount: &workers})
+
+	if cfg.Scan.WorkerCount != workers {
+		t.Fatalf("expected explicit worker count %d, got %d", workers, cfg.Scan.WorkerCount)
+	}
+}
+
+func TestApplyScanOverridesAppliesExplicitAdaptiveWorkerCount(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	workers := 0
+	applyScanOverrides(&cfg, ScanOptions{WorkerCount: &workers})
+
+	if cfg.Scan.WorkerCount != workers {
+		t.Fatalf("expected explicit adaptive worker count 0, got %d", cfg.Scan.WorkerCount)
+	}
+}
+
 func TestValidateScanConfigRejectsInvalidWIMBounds(t *testing.T) {
 	t.Parallel()
 

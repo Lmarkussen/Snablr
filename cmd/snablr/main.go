@@ -92,7 +92,8 @@ func runScan(args []string) error {
 	maxDepth := fs.Int("max-depth", 0, "Maximum directory depth to recurse within a share")
 	domain := fs.String("domain", "", "Domain name override for LDAP discovery")
 	rulesDir := fs.String("rules-directory", "", "Directory containing YAML rules")
-	workerCount := fs.Int("worker-count", 0, "Number of worker goroutines; 0 uses adaptive scaling")
+	var workerCount optionalIntFlag
+	fs.Var(&workerCount, "worker-count", "Number of file scan workers (default 15 for SMB/file-server safety; higher values may increase load; 0 uses adaptive scaling)")
 	maxFileSize := fs.Int64("max-file-size", 0, "Maximum file size in bytes to scan")
 	noLDAP := fs.Bool("no-ldap", false, "Disable LDAP discovery when no explicit targets are supplied")
 	dc := fs.String("dc", "", "Domain controller to use for LDAP discovery")
@@ -157,7 +158,7 @@ func runScan(args []string) error {
 		MaxDepth:                   *maxDepth,
 		Domain:                     *domain,
 		RulesDirectory:             *rulesDir,
-		WorkerCount:                *workerCount,
+		WorkerCount:                workerCount.ptr(),
 		MaxFileSize:                *maxFileSize,
 		NoLDAP:                     *noLDAP,
 		DomainController:           *dc,
@@ -563,7 +564,7 @@ func printScanUsage(fs *flag.FlagSet) {
 	fmt.Println("Defaults:")
 	fmt.Println("  --config configs/config.yaml")
 	fmt.Println("  --output-format console")
-	fmt.Println("  --worker-count 0 (adaptive)")
+	fmt.Println("  --worker-count 15 (safe default; raise carefully, 0 enables adaptive)")
 	fmt.Println("  --max-file-size 10485760")
 	fmt.Println()
 	fmt.Println("Results are written to the paths you provide with --json-out, --html-out, --csv-out, and --md-out.")

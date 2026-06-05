@@ -24,7 +24,9 @@ scan:
     - Payroll/Old/
   max_depth: 4
 
-  worker_count: 0
+  # Safe production default. Higher values may scan faster but can overload SMB/file servers.
+  # Set to 0 only when you explicitly want adaptive CPU-based scaling.
+  worker_count: 15
   max_file_size: 5242880
 
   no_ldap: true

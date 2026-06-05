@@ -14,7 +14,7 @@ func Default() Config {
 			ExcludePath:                nil,
 			Profile:                    "default",
 			MaxDepth:                   0,
-			WorkerCount:                0,
+			WorkerCount:                15,
 			MaxFileSize:                10 * 1024 * 1024,
 			NoLDAP:                     false,
 			Domain:                     "",

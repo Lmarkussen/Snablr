@@ -10,6 +10,11 @@ scan:
   targets_file: ""
   username: "EXAMPLE\\scanuser"
   password: "REPLACE_ME"
+  smb_auth: password
+  nt_hash: ""
+  kerberos_ccache: ""
+  smb_hostname: ""
+  smb_spn: ""
 
   # Leave these empty for a simple direct host scan.
   share: []
@@ -35,6 +40,9 @@ scan:
   max_scan_time: "30m"
   checkpoint_file: ""
   resume: false
+  state_dir: ""
+  incremental: false
+  force_rescan: false
   skip_reachability_check: false
   reachability_timeout_seconds: 3
 

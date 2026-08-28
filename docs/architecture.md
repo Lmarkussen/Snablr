@@ -101,6 +101,15 @@ Responsibilities:
 
 This layer does not know about LDAP discovery and does not own SMB connectivity.
 
+### Offline artifact pipeline
+
+- `internal/artifact` owns bounded file-backed artifact identities and metadata.
+- `internal/artifactbundle` correlates related artifacts such as SAM and SYSTEM.
+- `internal/registryhive` provides reusable REGF hive parsing.
+- `internal/systemkey` derives the SYSTEM boot key needed for offline SAM decoding.
+- `internal/samparse` parses validated offline SAM account data without exposing raw hashes in normal output.
+- `internal/smbkerberos` implements the pure-Go SMB Kerberos mechanism used by the patched SMB dependency.
+
 ### `internal/output`
 
 Findings rendering and export.
@@ -115,13 +124,17 @@ Responsibilities:
 
 ### `internal/state`
 
-Checkpoint and resume support.
+Checkpoint/resume and credential-independent incremental scan state.
 
 Responsibilities:
 
 - record completed hosts, shares, and files
 - write checkpoint JSON safely
 - skip completed work on resumed runs
+- persist object status/metadata and opaque credential access observations
+- keep directory/share discovery independent from content-inspection reuse
+
+The incremental inventory is separate from exact checkpoint/resume state. Object records describe server/share/path metadata, scan semantics, and completion status; access observations associate an opaque credential context with an observed object. No credential secret is part of the persisted schema.
 
 ### `internal/metrics`
 

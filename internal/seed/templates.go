@@ -394,6 +394,7 @@ func tarTemplateVariants() []templateVariant {
 
 func wimTemplateVariants() []templateVariant {
 	return []templateVariant{
+		archiveInnerPath(classify(triage(likely("valid-sam-system.wim", "wim-valid-sam-system", "critical", []string{"validated", "correlation"}, []string{"wim", "windows", "credentials"}, []string{"validated-sam-system"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true), "Windows/System32/config/SYSTEM"),
 		archiveInnerPath(classify(triage(likely("domain-backup.wim", "wim-ntds-system", "high", []string{"filename", "correlation"}, []string{"wim", "active-directory", "secret-store"}, []string{"wim-artifact-review", "secret-store-artifact-review"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true), "Windows/NTDS/ntds.dit"),
 		archiveInnerPath(classify(triage(likely("repair-media.wim", "wim-hives", "high", []string{"filename"}, []string{"wim", "windows", "secret-store"}, []string{"wim-artifact-review", "secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false), "Windows/System32/config/SAM"),
 		archiveInnerPath(classify(triage(likely("deploy-image.wim", "wim-unattend", "high", []string{"content", "validated"}, []string{"wim", "deployment", "credentials"}, []string{"wim-artifact-review", "unattended-install"}), seedTriageActionable), seedClassActionable, "high", false), "Windows/Panther/unattend.xml"),

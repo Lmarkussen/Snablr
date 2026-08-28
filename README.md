@@ -1,6 +1,6 @@
 # Snablr
 
-Snablr is a Go-based SMB share triage tool for defensive review of Windows file shares. It discovers likely scan targets, enumerates accessible shares, walks files, applies YAML-driven detection rules, and produces structured findings for remediation and hygiene review.
+Snablr is a Go-based SMB/share scanner for authorized defensive review of Windows file shares. It discovers likely scan targets, enumerates accessible shares, walks files, applies YAML-driven detection rules, and produces structured, low-noise findings for remediation and hygiene review.
 
 The project is inspired by the general Snaffler workflow, but it is implemented as a clean Go codebase with a rules-first design, resumable scans, offline rule testing, and reporting aimed at defensive triage rather than exploitation.
 
@@ -26,7 +26,9 @@ Snablr is intended for authorized defensive security work only. Run it only agai
 - Rule validation, fixture-based testing, and custom rule overlays
 - Prioritized scan planning for high-value targets, shares, and paths
 - Concurrent file scanning with a safe 15-worker production default; adaptive scaling remains available when explicitly requested
-- Checkpoint and resume support for longer scans
+- Checkpoint and resume support for longer scans, plus credential-independent incremental content state for credential pivots
+- Password, NTLM hash/pass-the-hash, and Kerberos FILE-ccache SMB authentication with signing verification
+- WIM inspection with bounded extraction and validated offline SAM+SYSTEM correlation
 - Bubble Tea live terminal UI for interactive console scans, plus JSON, HTML, CSV, and Markdown outputs
 - Structured HTML report filtering, confidence breakdowns, and seeded validation summaries
 - Explicit suppression and allowlisting with auditable suppressed-finding summaries
@@ -52,9 +54,75 @@ Snablr is organized around a small set of focused modules:
 - `output`
   Renders findings to console, JSON, HTML, CSV, and Markdown.
 - `state`
-  Stores checkpoint data for resumable scans.
+  Stores exact-resume checkpoints and credential-independent incremental object/access inventory.
 - `metrics`
   Tracks counters and phase timing for progress and reports.
+
+## Supported SMB Authentication
+
+Select the SMB authentication mode explicitly with `--smb-auth`:
+
+- `password` (the default) uses the supplied username and password.
+- `ntlm-hash` uses a precomputed 32-hex-character NT hash with `--nt-hash`; no password is needed.
+- `kerberos` uses an existing Kerberos FILE credential cache from `KRB5CCNAME` or `--kerberos-ccache`.
+
+There is no automatic fallback between these modes. Kerberos SMB connections require a usable hostname/SPN and an already-populated cache; Snablr does not obtain a TGT from a password, accept a keytab as a replacement for the cache, or silently fall back to NTLM. Authentication inputs are used for the connection and are not written to incremental state.
+
+Examples:
+
+```bash
+snablr scan --targets FILE01.example.com --no-ldap \
+  --smb-auth password --username 'DOMAIN\\user' --password '<password>'
+
+snablr scan --targets FILE01.example.com --no-ldap \
+  --smb-auth ntlm-hash --username 'DOMAIN\\user' --nt-hash '<32-hex-nt-hash>'
+
+KRB5CCNAME=/path/to/ccache snablr scan --targets FILE01.example.com --no-ldap \
+  --smb-auth kerberos --smb-hostname FILE01.example.com
+```
+
+Kerberos support is tested with SMB 3.1.1 signing and a FILE ccache. Server naming, DNS, realm configuration, and clock synchronization must still be correct for the target environment.
+
+## WIM and Offline Windows Artifacts
+
+When enabled and `wimlib-imagex` is installed, Snablr can inspect bounded WIM images and extract selected Windows artifacts for local analysis. Current offline parsing validates and correlates `SAM` with `SYSTEM`, including safe account and recovered-hash counts in the `windows.sam.bundle_parsed` finding; raw hashes and key material are not printed.
+
+WIM artifact detection/extraction also recognizes selected `SECURITY` and `NTDS.DIT` paths, but Snablr does not currently decrypt SECURITY secrets or perform NTDS domain-credential extraction. WIM inspection is bounded by configured image, member, byte, and size limits. If `wimlib-imagex` is unavailable or a limit is reached, the file is not treated as successfully inspected and can be retried later.
+
+## Incremental and Multi-Credential Pivot Scanning
+
+Use `--state-dir <directory>` with `--incremental` to retain a versioned `inventory.json` across scans. A typical pivot is:
+
+```text
+USER-A scan -> obtain USER-B credentials -> USER-B scan with the same state
+             -> rediscover shares/directories -> skip unchanged completed content
+             -> inspect newly accessible, changed, failed, or partial files
+```
+
+Share and directory enumeration runs for each credential context. Only content inspection is reused, and only for an unchanged object with compatible scan semantics whose previous inspection completed successfully. Access observations are recorded separately using opaque context identifiers derived from non-secret authentication identity metadata. Passwords, NT hashes, tickets, ccaches, session keys, and recovered secret values are not stored in the inventory.
+
+```bash
+# First credential context
+snablr scan --targets FILE01.example.com --no-ldap --share Finance \
+  --smb-auth password --username 'DOMAIN\\user-a' --password '<password-a>' \
+  --state-dir ./state --incremental
+
+# Credential pivot: rediscover access, reuse unchanged successful inspections
+snablr scan --targets FILE01.example.com --no-ldap --share Finance \
+  --smb-auth ntlm-hash --username 'DOMAIN\\user-b' --nt-hash '<32-hex-nt-hash-b>' \
+  --state-dir ./state --incremental
+
+# Explicitly inspect completed objects again
+snablr scan --targets FILE01.example.com --no-ldap \
+  --smb-auth password --username 'DOMAIN\\user-b' --password '<password-b>' \
+  --state-dir ./state --force-rescan
+```
+
+`--force-rescan` ignores reusable completed-object state for that run while updating the inventory. Failed, partial, interrupted, changed, and semantically incompatible objects are retried automatically. Without `--state-dir` or `--incremental`, normal scan behavior is unchanged.
+
+### Checkpoint/Resume Versus Incremental State
+
+Checkpoint/resume (`--checkpoint-file` and `--resume`) is for continuing an interrupted or exact scan workflow. Incremental state (`--state-dir` and `--incremental`) is a credential-independent content-inspection cache that still rediscovers access on every run. The two mechanisms can be used together, but they solve different problems.
 
 ## Installation
 
@@ -65,6 +133,7 @@ Snablr is organized around a small set of focused modules:
 - Network access to target SMB hosts on TCP `445`
 - Valid SMB credentials for target shares
 - LDAP connectivity and credentials if you want automatic domain discovery
+- `wimlib-imagex` for WIM inspection; install the `wimlib` package using your operating system's package manager. Without it, WIM files remain retryable but are not parsed.
 
 ### Download A Release Binary
 
@@ -178,10 +247,10 @@ Use this when you already know the host you want to review.
 You need:
 
 - one reachable Windows host with SMB enabled
-- a username and password that can authenticate to that host
+- credentials for one of the supported SMB authentication modes
 
 ```bash
-snablr scan --targets FILE01.TEST.LOCAL --user USER --pass PASS --output-format all --json-out results.json --html-out report.html
+snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --user USER --pass '<password>' --output-format all --json-out results.json --html-out report.html
 ```
 
 What this does:
@@ -386,9 +455,7 @@ snablr scan \
   --output-format console
 ```
 
-### Use Kerberos For LDAP Discovery
-
-Kerberos support is opt-in and currently applies only to LDAP/DFS discovery. SMB scanning still uses the configured `--username` and `--password`; SMB Kerberos is not supported with the current SMB backend.
+### Use Kerberos For SMB and LDAP Discovery
 
 Prerequisites:
 
@@ -414,16 +481,17 @@ KRB5CCNAME=FILE:krb5cc_TEST snablr discover \
   --ldap-spn ldap/DC01.TEST.LOCAL
 ```
 
-For explicit target scans, `--auth kerberos` does not authenticate to SMB. This remains a valid scan mode only when SMB credentials are also supplied:
+For an explicit SMB target, select Kerberos separately with `--smb-auth kerberos`:
 
 ```bash
 KRB5CCNAME=FILE:krb5cc_TEST snablr scan \
-  --auth kerberos \
   --targets FILE01.TEST.LOCAL \
-  --domain TEST.LOCAL \
-  --username USER \
-  --password PASS
+  --no-ldap \
+  --smb-auth kerberos \
+  --smb-hostname FILE01.TEST.LOCAL
 ```
+
+`--auth kerberos` remains the separate LDAP discovery authentication setting. SMB Kerberos requires the existing FILE ccache and does not fall back to password or NTLM hash authentication.
 
 ### Restrict Scan Scope
 
@@ -513,7 +581,9 @@ Once Snablr has a target list, it:
 4. enumerates accessible shares and share metadata
 5. walks files and directories with scope filters applied early
 6. loads file content only when content rules actually need it
-7. records findings, metrics, and optional checkpoints
+7. records findings, metrics, and optional checkpoint/incremental state
+
+With incremental state enabled, the walker still enumerates accessible directories and files for each credential. Completed unchanged files can skip the expensive content-inspection phase; discovery is never skipped solely because another credential traversed the directory before.
 
 This separation matters:
 
@@ -606,6 +676,7 @@ The [`examples`](examples) directory includes:
 - [Workflows](docs/workflows.md)
 - [Validation Report](docs/validation-report.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Roadmap](docs/roadmap.md)
 - [Security Policy](SECURITY.md)
 
 ## Development

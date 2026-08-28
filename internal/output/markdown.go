@@ -102,6 +102,12 @@ func (m *MarkdownWriter) Close() error {
 		fmt.Sprintf("- Matches found: %d", summary.MatchesFound),
 		fmt.Sprintf("- Read errors: %d", summary.ReadErrors),
 		fmt.Sprintf("- Targets reachable: %d", m.metrics.Counters.TargetsReachable),
+		fmt.Sprintf("- Incremental discovered: %d", m.metrics.Counters.IncrementalDiscovered),
+		fmt.Sprintf("- Incremental inspected: %d", m.metrics.Counters.IncrementalInspected),
+		fmt.Sprintf("- Incremental skipped unchanged: %d", m.metrics.Counters.IncrementalSkippedUnchanged),
+		fmt.Sprintf("- Incremental rescanned changed: %d", m.metrics.Counters.IncrementalRescannedChanged),
+		fmt.Sprintf("- Incremental retried: %d", m.metrics.Counters.IncrementalRetried),
+		fmt.Sprintf("- Incremental newly accessible known: %d", m.metrics.Counters.IncrementalNewAccessible),
 	} {
 		if _, err := fmt.Fprintln(m.w, line); err != nil {
 			return err

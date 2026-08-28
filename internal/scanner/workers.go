@@ -18,6 +18,10 @@ type Evaluator interface {
 	Evaluate(FileMetadata, []byte) Evaluation
 }
 
+type ContextEvaluator interface {
+	EvaluateContext(context.Context, FileMetadata, []byte) Evaluation
+}
+
 type Logger interface {
 	Infof(string, ...any)
 	Debugf(string, ...any)
@@ -178,7 +182,12 @@ func (p *WorkerPool) processJob(ctx context.Context, job Job) (result Result) {
 		}
 	}
 
-	evaluation := p.processor.Evaluate(meta, content)
+	if evaluator, ok := p.processor.(ContextEvaluator); ok {
+		result.Evaluation = evaluator.EvaluateContext(ctx, meta, content)
+	} else {
+		result.Evaluation = p.processor.Evaluate(meta, content)
+	}
+	evaluation := result.Evaluation
 	if evaluation.Skipped {
 		p.logSkip(meta, evaluation.SkipReason)
 	}
@@ -188,6 +197,12 @@ func (p *WorkerPool) processJob(ctx context.Context, job Job) (result Result) {
 	if job.OnComplete != nil {
 		p.invokeCompletion(job.OnComplete, meta, evaluation, err)
 		callbackCalled = true
+	}
+	for _, binary := range evaluation.BinaryArtifacts {
+		_ = binary.Close()
+	}
+	if evaluation.Cleanup != nil {
+		_ = evaluation.Cleanup()
 	}
 
 	result.Evaluation = evaluation

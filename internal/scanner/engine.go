@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"sync"
 
 	"snablr/internal/archiveinspect"
+	"snablr/internal/artifact"
+	"snablr/internal/artifactbundle"
 	"snablr/internal/awsinspect"
 	"snablr/internal/backupinspect"
 	"snablr/internal/browsercredinspect"
@@ -25,42 +28,48 @@ import (
 )
 
 type Options struct {
-	Workers          int
-	MaxFileSizeBytes int64
-	MaxReadBytes     int64
-	SnippetBytes     int
-	Archives         archiveinspect.Options
-	WIM              wiminspect.Options
-	SQLite           sqliteinspect.Options
-	Recorder         metrics.Recorder
-	ValidationMode   bool
+	Workers           int
+	MaxFileSizeBytes  int64
+	MaxReadBytes      int64
+	SnippetBytes      int
+	Archives          archiveinspect.Options
+	WIM               wiminspect.Options
+	SQLite            sqliteinspect.Options
+	Recorder          metrics.Recorder
+	ValidationMode    bool
+	BundleCoordinator *artifactbundle.Coordinator
+	SAMMaxBytes       int64
+	SYSTEMMaxBytes    int64
 }
 
 type Engine struct {
-	opts             Options
-	manager          *rules.Manager
-	sink             FindingSink
-	log              *logx.Logger
-	recorder         metrics.Recorder
-	filenameScanner  FilenameScanner
-	extensionScanner ExtensionScanner
-	contentScanner   ContentScanner
-	filenameRules    []rules.Rule
-	extensionRules   []rules.Rule
-	contentRules     []rules.Rule
-	contentExtHints  map[string]struct{}
-	archiveExtHints  map[string]struct{}
-	hasGenericText   bool
-	backupInspector  backupinspect.Inspector
-	awsInspector     awsinspect.Inspector
-	browserInspector browsercredinspect.Inspector
-	dbInspector      dbinspect.Inspector
-	keyInspector     keyinspect.Inspector
-	sqliteInspector  sqliteinspect.Inspector
-	wimInspector     wiminspect.Options
-	winCredInspector wincredinspect.Inspector
-	validationMode   bool
-	validationSink   ValidationObserver
+	opts              Options
+	manager           *rules.Manager
+	sink              FindingSink
+	log               *logx.Logger
+	recorder          metrics.Recorder
+	filenameScanner   FilenameScanner
+	extensionScanner  ExtensionScanner
+	contentScanner    ContentScanner
+	filenameRules     []rules.Rule
+	extensionRules    []rules.Rule
+	contentRules      []rules.Rule
+	contentExtHints   map[string]struct{}
+	archiveExtHints   map[string]struct{}
+	hasGenericText    bool
+	backupInspector   backupinspect.Inspector
+	awsInspector      awsinspect.Inspector
+	browserInspector  browsercredinspect.Inspector
+	dbInspector       dbinspect.Inspector
+	keyInspector      keyinspect.Inspector
+	sqliteInspector   sqliteinspect.Inspector
+	wimInspector      wiminspect.Options
+	winCredInspector  wincredinspect.Inspector
+	validationMode    bool
+	validationSink    ValidationObserver
+	bundleCoordinator *artifactbundle.Coordinator
+	samMaxBytes       int64
+	systemMaxBytes    int64
 }
 
 func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx.Logger) *Engine {
@@ -79,34 +88,41 @@ func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx
 	archiveExtHints := buildArchiveExtensionHints(contentExtHints)
 
 	return &Engine{
-		opts:             opts,
-		manager:          manager,
-		sink:             sink,
-		log:              log,
-		recorder:         opts.Recorder,
-		filenameScanner:  FilenameScanner{},
-		extensionScanner: ExtensionScanner{},
-		contentScanner:   NewContentScanner(opts.SnippetBytes, opts.ValidationMode, validationObserverForSink(sink), log),
-		filenameRules:    filenameRules,
-		extensionRules:   extensionRules,
-		contentRules:     contentRules,
-		contentExtHints:  contentExtHints,
-		archiveExtHints:  archiveExtHints,
-		hasGenericText:   hasGenericText,
-		backupInspector:  backupinspect.New(),
-		awsInspector:     awsinspect.New(),
-		browserInspector: browsercredinspect.New(),
-		dbInspector:      dbinspect.New(),
-		keyInspector:     keyinspect.New(),
-		sqliteInspector:  sqliteinspect.New(opts.SQLite),
-		wimInspector:     opts.WIM,
-		winCredInspector: wincredinspect.New(),
-		validationMode:   opts.ValidationMode,
-		validationSink:   validationObserverForSink(sink),
+		opts:              opts,
+		manager:           manager,
+		sink:              sink,
+		log:               log,
+		recorder:          opts.Recorder,
+		filenameScanner:   FilenameScanner{},
+		extensionScanner:  ExtensionScanner{},
+		contentScanner:    NewContentScanner(opts.SnippetBytes, opts.ValidationMode, validationObserverForSink(sink), log),
+		filenameRules:     filenameRules,
+		extensionRules:    extensionRules,
+		contentRules:      contentRules,
+		contentExtHints:   contentExtHints,
+		archiveExtHints:   archiveExtHints,
+		hasGenericText:    hasGenericText,
+		backupInspector:   backupinspect.New(),
+		awsInspector:      awsinspect.New(),
+		browserInspector:  browsercredinspect.New(),
+		dbInspector:       dbinspect.New(),
+		keyInspector:      keyinspect.New(),
+		sqliteInspector:   sqliteinspect.New(opts.SQLite),
+		wimInspector:      opts.WIM,
+		winCredInspector:  wincredinspect.New(),
+		validationMode:    opts.ValidationMode,
+		validationSink:    validationObserverForSink(sink),
+		bundleCoordinator: opts.BundleCoordinator,
+		samMaxBytes:       opts.SAMMaxBytes,
+		systemMaxBytes:    opts.SYSTEMMaxBytes,
 	}
 }
 
 func (e *Engine) Evaluate(meta FileMetadata, content []byte) Evaluation {
+	return e.EvaluateContext(context.Background(), meta, content)
+}
+
+func (e *Engine) EvaluateContext(ctx context.Context, meta FileMetadata, content []byte) Evaluation {
 	meta = meta.Normalized()
 	if meta.IsDir {
 		return Evaluation{
@@ -138,7 +154,7 @@ func (e *Engine) Evaluate(meta FileMetadata, content []byte) Evaluation {
 				SkipReason: skipReason,
 			}
 		}
-		return e.evaluateWIM(meta, content)
+		return e.evaluateWIM(ctx, meta, content)
 	}
 	if shouldInspect, skipReason, isSQLite := e.sqliteDecision(meta); isSQLite && !shouldInspect {
 		return Evaluation{
@@ -151,6 +167,11 @@ func (e *Engine) Evaluate(meta FileMetadata, content []byte) Evaluation {
 		return Evaluation{
 			Skipped:    true,
 			SkipReason: fmt.Sprintf("file exceeds max size limit of %d bytes", e.opts.MaxFileSizeBytes),
+		}
+	}
+	if e.bundleCoordinator != nil {
+		if kind, ok := artifact.KindForPath(meta.FilePath); ok && (kind == artifact.KindSAM || kind == artifact.KindSYSTEM) {
+			return e.evaluateLooseBinary(ctx, meta, content, kind)
 		}
 	}
 
@@ -201,6 +222,11 @@ func (e *Engine) NeedsContent(meta FileMetadata) bool {
 	if e.opts.MaxFileSizeBytes > 0 && meta.Size > e.opts.MaxFileSizeBytes {
 		return false
 	}
+	if e.bundleCoordinator != nil {
+		if kind, ok := artifact.KindForPath(meta.FilePath); ok && (kind == artifact.KindSAM || kind == artifact.KindSYSTEM) {
+			return true
+		}
+	}
 	return e.shouldReadContent(meta, e.contentRules) ||
 		e.awsInspector.NeedsContent(awsCandidate(meta)) ||
 		e.dbInspector.NeedsContent(dbCandidate(meta)) ||
@@ -250,6 +276,59 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 	evaluation.Findings = adjustBrowserArtifactVisibility(evaluation.Findings)
 	e.recordValidationFindings(evaluation.Findings)
 	return evaluation
+}
+
+func (e *Engine) evaluateLooseBinary(ctx context.Context, meta FileMetadata, content []byte, kind artifact.Kind) Evaluation {
+	evaluation := e.evaluateStandard(meta, nil, false)
+	if len(content) == 0 {
+		return evaluation
+	}
+	limit := e.samMaxBytes
+	if kind == artifact.KindSYSTEM {
+		limit = e.systemMaxBytes
+	}
+	if limit <= 0 {
+		limit = 64 * 1024 * 1024
+	}
+	binary, err := artifact.NewTempFile(os.TempDir(), kind, artifact.Origin{
+		Host: meta.Host, Share: meta.Share, ContainerPath: meta.FilePath, ContainerType: "loose",
+	})
+	if err != nil {
+		return evaluation
+	}
+	if _, err := binary.WriteFrom(ctx, bytes.NewReader(content), limit); err != nil {
+		_ = binary.Close()
+		return evaluation
+	}
+	addResult, addErr := e.bundleCoordinator.Add(ctx, binary)
+	if addErr != nil || !bundleAccepted(addResult.State) {
+		evaluation.BinaryArtifacts = append(evaluation.BinaryArtifacts, binary)
+		return evaluation
+	}
+	if addResult.Result != nil && addResult.Result.Status == artifactbundle.BundleParsed {
+		finding := findingFromSAMBundle(meta, addResult.Result)
+		evaluation.Findings = append(evaluation.Findings, finding)
+		e.recordValidationFindings([]Finding{finding})
+	}
+	return evaluation
+}
+
+func bundleAccepted(state artifactbundle.AddState) bool {
+	switch state {
+	case artifactbundle.ArtifactWaiting, artifactbundle.ArtifactParsed,
+		artifactbundle.ArtifactMalformed, artifactbundle.ArtifactUnsupported,
+		artifactbundle.ArtifactFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *Engine) submitBinaryArtifact(ctx context.Context, binary artifact.Binary) (artifactbundle.AddResult, error) {
+	if e.bundleCoordinator == nil {
+		return artifactbundle.AddResult{}, artifactbundle.ErrClosed
+	}
+	return e.bundleCoordinator.Add(ctx, binary)
 }
 
 func (e *Engine) evaluateArchive(meta FileMetadata, content []byte) Evaluation {
@@ -306,7 +385,7 @@ func (e *Engine) evaluateArchive(meta FileMetadata, content []byte) Evaluation {
 	return evaluation
 }
 
-func (e *Engine) evaluateWIM(meta FileMetadata, content []byte) Evaluation {
+func (e *Engine) evaluateWIM(ctx context.Context, meta FileMetadata, content []byte) Evaluation {
 	evaluation := Evaluation{NeedContent: true}
 	if len(content) == 0 {
 		evaluation.Skipped = true
@@ -315,7 +394,9 @@ func (e *Engine) evaluateWIM(meta FileMetadata, content []byte) Evaluation {
 	}
 	evaluation.ContentRead = true
 
-	result, err := wiminspect.Inspect(content, e.wimInspector)
+	result, err := wiminspect.Inspect(ctx, content, e.wimInspector, artifact.Origin{
+		Host: meta.Host, Share: meta.Share, ContainerPath: meta.FilePath,
+	})
 	if err != nil {
 		evaluation.Skipped = true
 		evaluation.SkipReason = fmt.Sprintf("wim inspection failed: %v", err)
@@ -327,7 +408,35 @@ func (e *Engine) evaluateWIM(meta FileMetadata, content []byte) Evaluation {
 		return evaluation
 	}
 
+	evaluation.Cleanup = result.Cleanup
+	evaluation.BinaryArtifacts = make([]artifact.Binary, 0, len(result.BinaryMembers))
 	findings := make([]Finding, 0)
+	for _, binary := range result.BinaryMembers {
+		if binary.Artifact.Kind() == artifact.KindSAM || binary.Artifact.Kind() == artifact.KindSYSTEM {
+			addResult, addErr := e.submitBinaryArtifact(ctx, binary.Artifact)
+			if addErr == nil && bundleAccepted(addResult.State) {
+				if addResult.Result != nil && addResult.Result.Status == artifactbundle.BundleParsed {
+					finding := findingFromSAMBundle(meta, addResult.Result)
+					findings = append(findings, finding)
+					e.recordValidationFindings([]Finding{finding})
+				}
+				continue
+			}
+		}
+		evaluation.BinaryArtifacts = append(evaluation.BinaryArtifacts, binary.Artifact)
+	}
+	for _, member := range result.BinaryMembers {
+		memberMeta := meta
+		memberMeta.ArchivePath = meta.FilePath
+		memberMeta.ArchiveMemberPath = member.Path
+		memberMeta.ArchiveLocalInspect = result.InspectedLocally
+		memberMeta.FilePath = archiveDisplayPath(meta.FilePath, member.Path)
+		memberMeta.Name = member.Name
+		memberMeta.Extension = member.Extension
+		memberMeta.Size = member.Size
+		metadataEvaluation := e.evaluateStandard(memberMeta, nil, false)
+		findings = append(findings, metadataEvaluation.Findings...)
+	}
 	for _, member := range result.Members {
 		memberMeta := meta
 		memberMeta.ArchivePath = meta.FilePath

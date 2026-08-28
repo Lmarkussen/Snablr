@@ -69,8 +69,12 @@ func runScan(args []string) error {
 	targets := fs.String("targets", "", "Comma-separated target hosts")
 	targetsFile := fs.String("targets-file", "", "Path to file containing target hosts")
 	profile := fs.String("profile", "", "Scan profile: default, validation, or aggressive")
-	authMode := fs.String("auth", "", "LDAP discovery authentication mode only: password or kerberos (default: password; SMB still requires --username/--password)")
-	kerberosCCache := fs.String("kerberos-ccache", "", "Kerberos FILE credential cache path for LDAP GSSAPI auth; defaults to KRB5CCNAME")
+	authMode := fs.String("auth", "", "LDAP discovery authentication mode only: password or kerberos (default: password)")
+	smbAuthMode := fs.String("smb-auth", "", "SMB authentication mode: password, ntlm-hash, or kerberos (default: password)")
+	ntHash := fs.String("nt-hash", "", "Precomputed 32-character NT hash for --smb-auth ntlm-hash")
+	kerberosCCache := fs.String("kerberos-ccache", "", "Kerberos FILE credential cache path for LDAP/SMB GSSAPI auth; defaults to KRB5CCNAME")
+	smbHostname := fs.String("smb-hostname", "", "Canonical SMB hostname for Kerberos SPN construction")
+	smbSPN := fs.String("smb-spn", "", "Explicit SMB Kerberos service principal, for example cifs/fileserver.example.com")
 	ldapSPN := fs.String("ldap-spn", "", "LDAP Kerberos service principal override, for example ldap/DC01.TEST.LOCAL")
 
 	var username string
@@ -107,6 +111,9 @@ func runScan(args []string) error {
 	maxScanTime := fs.String("max-scan-time", "", "Maximum total scan time, for example 30m or 2h")
 	checkpointFile := fs.String("checkpoint-file", "", "Path to the checkpoint JSON file")
 	resume := fs.Bool("resume", false, "Resume from an existing checkpoint file")
+	stateDir := fs.String("state-dir", "", "Directory for credential-independent incremental scan state (enables incremental scanning)")
+	incremental := fs.Bool("incremental", false, "Reuse unchanged completed file inspections from --state-dir")
+	forceRescan := fs.Bool("force-rescan", false, "Ignore reusable completed objects in incremental state")
 	skipReachability := fs.Bool("skip-reachability-check", false, "Skip TCP 445 reachability testing before scanning")
 	reachabilityTimeout := fs.Int("reachability-timeout", 0, "Reachability timeout in seconds")
 	outputFormat := fs.String("output-format", "", "Output format: console, json, html, all, or a comma-separated combination like html,json")
@@ -126,6 +133,13 @@ func runScan(args []string) error {
 	var wimMaxMembers optionalIntFlag
 	var wimMaxMemberBytes optionalInt64Flag
 	var wimMaxTotalBytes optionalInt64Flag
+	var wimMaxBinaryArtifacts optionalIntFlag
+	var wimMaxBinaryBytes optionalInt64Flag
+	var wimMaxSAMBytes optionalInt64Flag
+	var wimMaxSYSTEMBytes optionalInt64Flag
+	var wimMaxSECURITYBytes optionalInt64Flag
+	var wimMaxNTDSBytes optionalInt64Flag
+	var wimMaxImages optionalIntFlag
 	fs.Var(&wimEnabled, "wim-enabled", "Enable or disable WIM inspection (overrides config)")
 	fs.Var(&wimAutoMaxSize, "wim-auto-max-size", "Automatic WIM inspection size limit in bytes (overrides config)")
 	fs.Var(&wimAllowLarge, "wim-allow-large", "Allow WIM inspection above the automatic size limit up to --wim-max-size (overrides config)")
@@ -133,6 +147,13 @@ func runScan(args []string) error {
 	fs.Var(&wimMaxMembers, "wim-max-members", "Maximum number of targeted WIM members to inspect (overrides config)")
 	fs.Var(&wimMaxMemberBytes, "wim-max-member-bytes", "Maximum bytes to inspect from a single extracted WIM member (overrides config)")
 	fs.Var(&wimMaxTotalBytes, "wim-max-total-bytes", "Maximum total extracted WIM bytes to inspect per image (overrides config)")
+	fs.Var(&wimMaxBinaryArtifacts, "wim-max-binary-artifacts", "Maximum binary WIM artifacts to extract per image (overrides config)")
+	fs.Var(&wimMaxBinaryBytes, "wim-max-binary-bytes", "Maximum total binary WIM bytes to extract per image (overrides config)")
+	fs.Var(&wimMaxSAMBytes, "wim-max-sam-bytes", "Maximum extracted SAM bytes (overrides config)")
+	fs.Var(&wimMaxSYSTEMBytes, "wim-max-system-bytes", "Maximum extracted SYSTEM bytes (overrides config)")
+	fs.Var(&wimMaxSECURITYBytes, "wim-max-security-bytes", "Maximum extracted SECURITY bytes (overrides config)")
+	fs.Var(&wimMaxNTDSBytes, "wim-max-ntds-bytes", "Maximum extracted NTDS.DIT bytes (overrides config)")
+	fs.Var(&wimMaxImages, "wim-max-images", "Maximum WIM image indexes to inspect (overrides config)")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -147,9 +168,13 @@ func runScan(args []string) error {
 		TargetsFile:                *targetsFile,
 		Profile:                    *profile,
 		AuthMode:                   *authMode,
+		SMBAuth:                    *smbAuthMode,
 		Username:                   username,
 		Password:                   password,
+		NTHash:                     *ntHash,
 		KerberosCCache:             *kerberosCCache,
+		SMBHostname:                *smbHostname,
+		SMBSPN:                     *smbSPN,
 		LDAPSPN:                    *ldapSPN,
 		Share:                      append([]string{}, shareFilters...),
 		ExcludeShare:               append([]string{}, excludeShareFilters...),
@@ -172,6 +197,9 @@ func runScan(args []string) error {
 		MaxScanTime:                *maxScanTime,
 		CheckpointFile:             *checkpointFile,
 		Resume:                     *resume,
+		StateDir:                   *stateDir,
+		Incremental:                *incremental,
+		ForceRescan:                *forceRescan,
 		SkipReachabilityCheck:      *skipReachability,
 		ReachabilityTimeoutSeconds: *reachabilityTimeout,
 		OutputFormat:               *outputFormat,
@@ -190,6 +218,13 @@ func runScan(args []string) error {
 		WIMMaxMembers:              wimMaxMembers.ptr(),
 		WIMMaxMemberBytes:          wimMaxMemberBytes.ptr(),
 		WIMMaxTotalBytes:           wimMaxTotalBytes.ptr(),
+		WIMMaxBinaryArtifacts:      wimMaxBinaryArtifacts.ptr(),
+		WIMMaxBinaryBytes:          wimMaxBinaryBytes.ptr(),
+		WIMMaxSAMBytes:             wimMaxSAMBytes.ptr(),
+		WIMMaxSYSTEMBytes:          wimMaxSYSTEMBytes.ptr(),
+		WIMMaxSECURITYBytes:        wimMaxSECURITYBytes.ptr(),
+		WIMMaxNTDSBytes:            wimMaxNTDSBytes.ptr(),
+		WIMMaxImages:               wimMaxImages.ptr(),
 		LogLevel:                   *logLevel,
 	})
 }
@@ -509,15 +544,15 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("Good First Steps:")
 	fmt.Println("  1. snablr version")
-	fmt.Println("  2. snablr scan --targets FILE01.TEST.LOCAL --username USER --password PASS --output-format all --json-out results.json --html-out report.html")
+	fmt.Println("  2. snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>' --output-format all --json-out results.json --html-out report.html")
 	fmt.Println("  3. open report.html in a browser")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --username USER --password PASS")
+	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>'")
 	fmt.Println("  snablr scan --config configs/config.yaml")
-	fmt.Println("  snablr scan --username USER --password PASS")
+	fmt.Println("  snablr scan --username USER --password '<password>'")
 	fmt.Println("  snablr scan --output-format all --json-out results.json --html-out report.html")
-	fmt.Println("  snablr discover --discover-dfs --username USER --password PASS")
+	fmt.Println("  snablr discover --discover-dfs --username USER --password '<password>'")
 	fmt.Println("  snablr rules test --rule configs/rules/default/content.yml --input testdata/rules/fixtures/content/password-assignment.conf --verbose")
 	fmt.Println("  snablr diff --old results-old.json --new results-new.json")
 	fmt.Println("  snablr benchmark --config examples/eval/benchmark.yaml --out benchmark.json")
@@ -541,13 +576,18 @@ func printScanUsage(fs *flag.FlagSet) {
 	fmt.Println("When to use it:")
 	fmt.Println("  - direct target scan: use --targets or --targets-file")
 	fmt.Println("  - domain-aware scan: omit targets and provide credentials so LDAP discovery can run")
-	fmt.Println("  - Kerberos auth currently applies only to LDAP/DFS discovery; the current SMB backend still requires --username and --password")
+	fmt.Println("  - SMB auth: select password, ntlm-hash, or kerberos with --smb-auth; LDAP discovery auth is selected separately with --auth")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --username USER --password PASS")
-	fmt.Println("  snablr scan --username USER --password PASS")
-	fmt.Println("  snablr scan --domain TEST.LOCAL --dc DC01.TEST.LOCAL --username USER --password PASS")
-	fmt.Println("  KRB5CCNAME=FILE:krb5cc_TEST snablr scan --auth kerberos --domain TEST.LOCAL --dc DC01.TEST.LOCAL --username USER --password PASS")
+	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>'")
+	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth ntlm-hash --username USER --nt-hash '<32-hex-nt-hash>'")
+	fmt.Println("  KRB5CCNAME=/path/to/ccache snablr scan --targets FILE01.TEST.LOCAL --no-ldap --smb-auth kerberos --smb-hostname FILE01.TEST.LOCAL")
+	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>' --state-dir ./state --incremental")
+	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth ntlm-hash --username USER --nt-hash '<32-hex-nt-hash>' --state-dir ./state --incremental")
+	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>' --state-dir ./state --force-rescan")
+	fmt.Println("  snablr scan --username USER --password '<password>'")
+	fmt.Println("  snablr scan --domain TEST.LOCAL --dc DC01.TEST.LOCAL --username USER --password '<password>'")
+	fmt.Println("  KRB5CCNAME=/path/to/ccache snablr scan --auth kerberos --domain TEST.LOCAL --dc DC01.TEST.LOCAL --smb-auth kerberos --smb-hostname FILE01.TEST.LOCAL")
 	fmt.Println("  snablr scan --output-format all --json-out results.json --html-out report.html")
 	fmt.Println("  snablr scan --share Finance --path Reports/ --max-depth 4")
 	fmt.Println("  snablr scan --baseline previous-results.json --output-format all --json-out results.json --html-out report.html")
@@ -582,9 +622,9 @@ func printDiscoverUsage(fs *flag.FlagSet) {
 	fmt.Println("  starting an SMB file scan.")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  snablr discover --username USER --password PASS")
+	fmt.Println("  snablr discover --username USER --password '<password>'")
 	fmt.Println("  snablr discover --targets FILE01.TEST.LOCAL,FILE02.TEST.LOCAL --skip-reachability-check")
-	fmt.Println("  snablr discover --discover-dfs --domain TEST.LOCAL --dc DC01.TEST.LOCAL --username USER --password PASS")
+	fmt.Println("  snablr discover --discover-dfs --domain TEST.LOCAL --dc DC01.TEST.LOCAL --username USER --password '<password>'")
 	fmt.Println("  KRB5CCNAME=FILE:krb5cc_TEST snablr discover --auth kerberos --domain TEST.LOCAL --dc DC01.TEST.LOCAL")
 	fmt.Println()
 	fmt.Println("Flags:")

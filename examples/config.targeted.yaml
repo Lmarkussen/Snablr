@@ -10,6 +10,11 @@ scan:
   targets_file: ""
   username: "EXAMPLE\\triage"
   password: "REPLACE_ME"
+  smb_auth: password
+  nt_hash: ""
+  kerberos_ccache: ""
+  smb_hostname: ""
+  smb_spn: ""
 
   # Restrict scanning to a likely high-value share and path prefix.
   share:
@@ -40,6 +45,9 @@ scan:
   max_scan_time: "20m"
   checkpoint_file: "state/targeted-scan.json"
   resume: true
+  state_dir: ""
+  incremental: false
+  force_rescan: false
   skip_reachability_check: false
   reachability_timeout_seconds: 2
 

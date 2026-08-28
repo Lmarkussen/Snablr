@@ -96,10 +96,18 @@ Behavior:
   SMB username, and LDAP username when `auth` is `password`
 - `password`
   SMB password, and LDAP password when `auth` is `password`
+- `smb_auth`
+  SMB authentication mode. Use `password` (the default), `ntlm-hash`, or `kerberos`.
+- `nt_hash`
+  A precomputed 32-hex-character NT hash used only when `smb_auth` is `ntlm-hash`. LM hashes are not required. Password and NT hash inputs are mutually exclusive.
 - `auth`
-  LDAP discovery authentication mode only. Use `password` by default, or `kerberos` for LDAP SASL/GSSAPI with an existing credential cache. SMB scanning still requires `username` and `password`.
+  LDAP discovery authentication mode. Use `password` by default, or `kerberos` for LDAP SASL/GSSAPI with an existing credential cache.
 - `kerberos_ccache`
-  Optional FILE credential cache path for LDAP Kerberos auth. If empty, Snablr reads `KRB5CCNAME`.
+  Optional FILE credential cache path for LDAP or SMB Kerberos auth. If empty, Snablr reads `KRB5CCNAME`.
+- `smb_hostname`
+  Canonical SMB hostname used to construct `cifs/<hostname>` for SMB Kerberos when `smb_spn` is not set.
+- `smb_spn`
+  Explicit SMB Kerberos service principal, such as `cifs/fileserver.example.com`.
 - `ldap_spn`
   Optional LDAP Kerberos service principal override, such as `ldap/DC01.TEST.LOCAL`.
 
@@ -110,6 +118,22 @@ Typical override pattern:
 ```bash
 snablr scan --config examples/config.domain.yaml --user 'TEST\user' --pass 'REPLACE_ME'
 ```
+
+For explicit NTLM-hash authentication:
+
+```bash
+snablr scan --targets FILE01.TEST.LOCAL --no-ldap --smb-auth ntlm-hash --username 'TEST\user' --nt-hash '<32-hex-characters>'
+```
+
+The hash is supplied directly to the existing NTLMv2 SMB backend and is not printed or included in findings.
+
+For SMB Kerberos using an existing FILE ccache:
+
+```bash
+snablr scan --targets fileserver.example.com --no-ldap --smb-auth kerberos --kerberos-ccache /path/to/ccache --smb-hostname fileserver.example.com
+```
+
+SMB Kerberos requires a hostname or explicit `smb_spn` for IP targets, does not fall back to NTLM, and does not accept a password or NT hash in Kerberos mode.
 
 ### LDAP Discovery
 
@@ -142,8 +166,8 @@ How LDAP discovery works:
 
 Notes:
 
-- Kerberos is opt-in and currently applies only to LDAP/DFS discovery
-- SMB scanning still requires `username` and `password`; SMB Kerberos is not supported with the current SMB backend
+- Kerberos is opt-in and selected independently for LDAP (`auth`) and SMB (`smb_auth`)
+- SMB Kerberos uses an existing FILE ccache and a usable hostname/SPN; it does not fall back to password or NTLM hash authentication
 - Kerberos mode requires `kinit`, a valid FILE ccache, realm configuration, DNS, and time sync
 - logs indicate which LDAP method was used so discovery behavior stays transparent during troubleshooting
 
@@ -212,11 +236,34 @@ Larger values increase coverage but also increase I/O and memory pressure.
 - `resume`
   Resume from a previous checkpoint
 
+- `state_dir`
+  Directory containing the persistent credential-independent incremental inventory. Setting this enables incremental content-scan reuse; share and directory enumeration still runs for every credential context.
+- `incremental`
+  Explicitly enable incremental inventory use. Requires `state_dir`.
+- `force_rescan`
+  Ignore reusable completed objects for this run while updating the inventory. Requires incremental scanning.
+
 Resume behavior:
 
 - file completion is keyed by path plus file metadata
 - resumed scans reprocess files whose size or modified timestamp changed
 - this avoids the earlier path-only skip behavior for changed files without adding heavy content hashing by default
+
+Incremental behavior:
+
+- use `--state-dir ./state` (or `scan.state_dir`) to persist `inventory.json`
+- every credential context enumerates shares and directories again
+- only unchanged, completed files with matching scan semantics are skipped
+- changed, failed, partial, interrupted, or semantically incompatible files are inspected again
+- credential context IDs are one-way hashes of auth mode and principal metadata; secrets are never persisted
+- a corrupt or unsupported inventory is ignored for that run so scanning fails open rather than silently suppressing content
+- incremental runs do not replay findings from earlier runs; unchanged files are simply absent from the new run's findings
+
+### WIM requirements
+
+WIM inspection requires the external `wimlib-imagex` executable. Snablr invokes it with bounded image/member/byte limits and reads the selected output locally. If it is unavailable, the WIM inspection is recorded as incomplete/retryable rather than treated as a successful content inspection. The current offline parser validates SAM+SYSTEM bundles; SECURITY and NTDS.DIT paths can be detected/extracted where configured but are not currently decrypted or parsed into domain credentials.
+
+See [Roadmap](roadmap.md) for intentionally unimplemented artifact and discovery work.
 
 ### Scan Profiles
 
@@ -325,6 +372,13 @@ wim:
   max_members: 8
   max_member_bytes: 1048576
   max_total_bytes: 4194304
+  max_binary_artifacts: 8
+  max_binary_bytes: 67108864
+  max_sam_bytes: 33554432
+  max_system_bytes: 67108864
+  max_security_bytes: 67108864
+  max_ntds_bytes: 536870912
+  max_images: 4
 ```
 
 Fields:
@@ -343,6 +397,14 @@ Fields:
   Maximum bytes read from any single extracted WIM member.
 - `max_total_bytes`
   Maximum total extracted bytes read across one WIM image.
+- `max_binary_artifacts`
+  Maximum number of binary Windows artifacts extracted from one WIM.
+- `max_binary_bytes`
+  Maximum total extracted binary bytes from one WIM.
+- `max_sam_bytes`, `max_system_bytes`, `max_security_bytes`, `max_ntds_bytes`
+  Per-artifact binary extraction limits.
+- `max_images`
+  Maximum WIM image indexes inspected.
 
 CLI note:
 

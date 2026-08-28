@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"sort"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"snablr/internal/discovery"
 	"snablr/internal/rules"
 	"snablr/internal/scanner"
+	"snablr/internal/smb"
+	"snablr/internal/smbkerberos"
 	"snablr/pkg/logx"
 )
 
@@ -70,14 +73,26 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if strings.TrimSpace(opts.AuthMode) != "" {
 		cfg.Scan.AuthMode = opts.AuthMode
 	}
+	if strings.TrimSpace(opts.SMBAuth) != "" {
+		cfg.Scan.SMBAuth = opts.SMBAuth
+	}
 	if strings.TrimSpace(opts.Username) != "" {
 		cfg.Scan.Username = opts.Username
 	}
 	if opts.Password != "" {
 		cfg.Scan.Password = opts.Password
 	}
+	if opts.NTHash != "" {
+		cfg.Scan.NTHash = opts.NTHash
+	}
 	if strings.TrimSpace(opts.KerberosCCache) != "" {
 		cfg.Scan.KerberosCCache = opts.KerberosCCache
+	}
+	if strings.TrimSpace(opts.SMBHostname) != "" {
+		cfg.Scan.SMBHostname = opts.SMBHostname
+	}
+	if strings.TrimSpace(opts.SMBSPN) != "" {
+		cfg.Scan.SMBSPN = opts.SMBSPN
 	}
 	if strings.TrimSpace(opts.LDAPSPN) != "" {
 		cfg.Scan.LDAPSPN = opts.LDAPSPN
@@ -145,6 +160,15 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if opts.Resume {
 		cfg.Scan.Resume = true
 	}
+	if strings.TrimSpace(opts.StateDir) != "" {
+		cfg.Scan.StateDir = opts.StateDir
+	}
+	if opts.Incremental {
+		cfg.Scan.Incremental = true
+	}
+	if opts.ForceRescan {
+		cfg.Scan.ForceRescan = true
+	}
 	if opts.SkipReachabilityCheck {
 		cfg.Scan.SkipReachabilityCheck = true
 	}
@@ -198,6 +222,27 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	}
 	if opts.WIMMaxTotalBytes != nil {
 		cfg.WIM.MaxTotalBytes = *opts.WIMMaxTotalBytes
+	}
+	if opts.WIMMaxBinaryArtifacts != nil {
+		cfg.WIM.MaxBinaryArtifacts = *opts.WIMMaxBinaryArtifacts
+	}
+	if opts.WIMMaxBinaryBytes != nil {
+		cfg.WIM.MaxBinaryBytes = *opts.WIMMaxBinaryBytes
+	}
+	if opts.WIMMaxSAMBytes != nil {
+		cfg.WIM.MaxSAMBytes = *opts.WIMMaxSAMBytes
+	}
+	if opts.WIMMaxSYSTEMBytes != nil {
+		cfg.WIM.MaxSYSTEMBytes = *opts.WIMMaxSYSTEMBytes
+	}
+	if opts.WIMMaxSECURITYBytes != nil {
+		cfg.WIM.MaxSECURITYBytes = *opts.WIMMaxSECURITYBytes
+	}
+	if opts.WIMMaxNTDSBytes != nil {
+		cfg.WIM.MaxNTDSBytes = *opts.WIMMaxNTDSBytes
+	}
+	if opts.WIMMaxImages != nil {
+		cfg.WIM.MaxImages = *opts.WIMMaxImages
 	}
 	if strings.TrimSpace(opts.LogLevel) != "" {
 		cfg.App.LogLevel = opts.LogLevel
@@ -257,15 +302,56 @@ func validateScanConfig(cfg config.Config) error {
 	if authMode != discovery.AuthModePassword && authMode != discovery.AuthModeKerberos {
 		return fmt.Errorf("unsupported auth mode %q: use password or kerberos", cfg.Scan.AuthMode)
 	}
-	if strings.TrimSpace(cfg.Scan.Username) == "" {
+	smbAuthMode := strings.ToLower(strings.TrimSpace(cfg.Scan.SMBAuth))
+	if smbAuthMode == "" {
+		smbAuthMode = string(smb.AuthModePassword)
+	}
+	if smbAuthMode == string(smb.AuthModeKerberos) {
+		ccache, err := smbkerberos.ResolveCCache(cfg.Scan.KerberosCCache)
+		if err != nil {
+			return err
+		}
+		if err := smbkerberos.ValidateCCache(ccache); err != nil {
+			return err
+		}
+		if cfg.Scan.Password != "" || cfg.Scan.NTHash != "" {
+			return fmt.Errorf("password and NT hash cannot be supplied with SMB Kerberos authentication")
+		}
+		if len(cfg.Scan.Targets) > 0 && strings.TrimSpace(cfg.Scan.SMBHostname) == "" && strings.TrimSpace(cfg.Scan.SMBSPN) == "" {
+			for _, target := range cfg.Scan.Targets {
+				if host := strings.TrimSpace(target); host != "" && net.ParseIP(host) != nil {
+					return fmt.Errorf("SMB Kerberos requires --smb-hostname or --smb-spn for IP targets")
+				}
+			}
+		}
+	}
+	if smbAuthMode != string(smb.AuthModePassword) && smbAuthMode != string(smb.AuthModeNTHash) && smbAuthMode != string(smb.AuthModeKerberos) {
+		return fmt.Errorf("unsupported SMB authentication mode %q: use password, ntlm-hash, or kerberos", cfg.Scan.SMBAuth)
+	}
+	if strings.TrimSpace(cfg.Scan.Username) == "" && smbAuthMode != string(smb.AuthModeKerberos) {
 		if authMode == discovery.AuthModeKerberos {
-			return fmt.Errorf("SMB Kerberos is not supported with the current SMB backend; SMB scanning requires --username and --password even when --auth kerberos is used for LDAP discovery")
+			return fmt.Errorf("missing SMB username: SMB authentication is configured separately from LDAP discovery")
 		}
 		return fmt.Errorf("missing SMB username: set scan.username in config or pass --username (run `snablr scan --help` for examples)")
 	}
-	if cfg.Scan.Password == "" {
+	if smbAuthMode == string(smb.AuthModeNTHash) {
+		if cfg.Scan.Password != "" {
+			return fmt.Errorf("password cannot be supplied with SMB NTLM-hash authentication")
+		}
+		if strings.TrimSpace(cfg.Scan.NTHash) == "" {
+			return fmt.Errorf("missing NT hash: set scan.nt_hash or pass --nt-hash")
+		}
+		if _, err := smb.ParseNTHash(cfg.Scan.NTHash); err != nil {
+			return err
+		}
+	} else {
+		if cfg.Scan.NTHash != "" {
+			return fmt.Errorf("NT hash cannot be supplied with SMB password authentication")
+		}
+	}
+	if smbAuthMode == string(smb.AuthModePassword) && cfg.Scan.Password == "" {
 		if authMode == discovery.AuthModeKerberos {
-			return fmt.Errorf("SMB Kerberos is not supported with the current SMB backend; SMB scanning requires --username and --password even when --auth kerberos is used for LDAP discovery")
+			return fmt.Errorf("missing SMB password: SMB authentication is configured separately from LDAP discovery")
 		}
 		return fmt.Errorf("missing SMB password: set scan.password in config or pass --password (run `snablr scan --help` for examples)")
 	}
@@ -277,6 +363,12 @@ func validateScanConfig(cfg config.Config) error {
 	}
 	if cfg.Scan.Resume && strings.TrimSpace(cfg.Scan.CheckpointFile) == "" {
 		return fmt.Errorf("resume requires a checkpoint file: set scan.checkpoint_file or pass --checkpoint-file")
+	}
+	if cfg.Scan.Incremental && strings.TrimSpace(cfg.Scan.StateDir) == "" {
+		return fmt.Errorf("incremental scanning requires a state directory: set scan.state_dir or pass --state-dir")
+	}
+	if cfg.Scan.ForceRescan && !cfg.Scan.Incremental && strings.TrimSpace(cfg.Scan.StateDir) == "" {
+		return fmt.Errorf("force_rescan requires incremental scanning: set scan.incremental and scan.state_dir or pass --incremental --state-dir")
 	}
 	if cfg.Archives.AutoZIPMaxSize < 0 {
 		return fmt.Errorf("archives.auto_zip_max_size cannot be negative")
@@ -319,6 +411,12 @@ func validateScanConfig(cfg config.Config) error {
 	}
 	if cfg.WIM.MaxTotalBytes < 0 {
 		return fmt.Errorf("wim.max_total_bytes cannot be negative")
+	}
+	if cfg.WIM.MaxBinaryArtifacts < 0 || cfg.WIM.MaxImages < 0 {
+		return fmt.Errorf("wim binary artifact and image limits cannot be negative")
+	}
+	if cfg.WIM.MaxBinaryBytes < 0 || cfg.WIM.MaxSAMBytes < 0 || cfg.WIM.MaxSYSTEMBytes < 0 || cfg.WIM.MaxSECURITYBytes < 0 || cfg.WIM.MaxNTDSBytes < 0 {
+		return fmt.Errorf("wim binary byte limits cannot be negative")
 	}
 	if cfg.WIM.Enabled {
 		if cfg.WIM.AutoWIMMaxSize == 0 {

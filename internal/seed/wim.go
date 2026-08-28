@@ -1,12 +1,18 @@
 package seed
 
 import (
+	"bytes"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
+
+	"snablr/internal/registryhive"
+	"snablr/internal/registryhive/testfixture"
+	"snablr/internal/systemkey"
 )
 
 func wimGenerationAvailable() bool {
@@ -43,10 +49,41 @@ func wimMembersForVariant(ctx renderContext, variant templateVariant) []wimMembe
 			{Path: "Deploy/Control/customsettings.ini", Content: wimCustomSettingsINI(ctx)},
 			{Path: "Deploy/Control/tasksequence.xml", Content: wimTaskSequenceXML(ctx)},
 		}
+	case "wim-valid-sam-system":
+		return validSAMSystemMembers()
 	default:
 		return []wimMemberTemplate{
 			{Path: "Windows/Temp/readme.txt", ContentStyle: "readme-noise"},
 		}
+	}
+}
+
+func validSAMSystemMembers() []wimMemberTemplate {
+	current := uint32(1)
+	system := testfixture.Build(testfixture.Spec{
+		Current: &current, IncludeSelect: true, IncludeCurrent: true,
+		IncludeControl: true, IncludeLSA: true,
+		Fragments: map[string]string{"JD": "00112233", "Skew1": "22334455", "GBG": "66778899", "Data": "aabbccdd"},
+	})
+	hive, err := registryhive.Open(bytes.NewReader(system), int64(len(system)), registryhive.Options{})
+	if err != nil {
+		panic(fmt.Sprintf("build valid SAM WIM: open SYSTEM fixture: %v", err))
+	}
+	key, err := systemkey.Derive(hive)
+	if err != nil {
+		panic(fmt.Sprintf("build valid SAM WIM: derive boot key: %v", err))
+	}
+	var ntHash [16]byte
+	if _, err := hex.Decode(ntHash[:], []byte("8846f7eaee8fb117ad06bdd830b7586c")); err != nil {
+		panic(fmt.Sprintf("build valid SAM WIM: decode test vector: %v", err))
+	}
+	sam := testfixture.BuildSAM(testfixture.SAMSpec{
+		BootKey: key.BootKey, KeyRevision: 1, IncludeDomain: true,
+		Accounts: []testfixture.SAMAccount{{RID: 500, Username: "snablr_test_admin", NTHash: ntHash, HashRevision: 1}},
+	})
+	return []wimMemberTemplate{
+		{Path: "Windows/System32/config/SAM", Content: sam},
+		{Path: "Windows/System32/config/SYSTEM", Content: system},
 	}
 }
 

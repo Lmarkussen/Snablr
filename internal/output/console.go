@@ -307,7 +307,7 @@ func (c *ConsoleWriter) Close() error {
 		return err
 	}
 	if c.metrics.Counters.TargetsLoaded > 0 || c.metrics.Counters.TargetsReachable > 0 || c.metrics.Counters.SharesEnumerated > 0 {
-		if _, err := fmt.Fprintf(c.w, "Metrics: targets_loaded=%d targets_reachable=%d shares_enumerated=%d files_visited=%d files_skipped=%d files_read=%d matches_found=%d\n",
+		if _, err := fmt.Fprintf(c.w, "Metrics: targets_loaded=%d targets_reachable=%d shares_enumerated=%d files_visited=%d files_skipped=%d files_read=%d matches_found=%d incremental_discovered=%d incremental_inspected=%d incremental_skipped_unchanged=%d incremental_rescanned_changed=%d incremental_retried=%d incremental_new_accessible_known=%d\n",
 			c.metrics.Counters.TargetsLoaded,
 			c.metrics.Counters.TargetsReachable,
 			c.metrics.Counters.SharesEnumerated,
@@ -315,6 +315,12 @@ func (c *ConsoleWriter) Close() error {
 			c.metrics.Counters.FilesSkipped,
 			c.metrics.Counters.FilesRead,
 			c.metrics.Counters.MatchesFound,
+			c.metrics.Counters.IncrementalDiscovered,
+			c.metrics.Counters.IncrementalInspected,
+			c.metrics.Counters.IncrementalSkippedUnchanged,
+			c.metrics.Counters.IncrementalRescannedChanged,
+			c.metrics.Counters.IncrementalRetried,
+			c.metrics.Counters.IncrementalNewAccessible,
 		); err != nil {
 			return err
 		}

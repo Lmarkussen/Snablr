@@ -113,6 +113,41 @@ func TestApplyScanOverridesAppliesExplicitAdaptiveWorkerCount(t *testing.T) {
 	}
 }
 
+func TestApplyScanOverridesAppliesIncrementalStateOptions(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	applyScanOverrides(&cfg, ScanOptions{
+		StateDir:    "./state",
+		Incremental: true,
+		ForceRescan: true,
+	})
+	if cfg.Scan.StateDir != "./state" || !cfg.Scan.Incremental || !cfg.Scan.ForceRescan {
+		t.Fatalf("incremental overrides not applied: %#v", cfg.Scan)
+	}
+}
+
+func TestValidateScanConfigRequiresIncrementalStateDirectory(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Scan.Username = "user"
+	cfg.Scan.Password = "pass"
+	cfg.Scan.Incremental = true
+	if err := validateScanConfig(cfg); err == nil || !strings.Contains(err.Error(), "state directory") {
+		t.Fatalf("expected state directory validation error, got %v", err)
+	}
+}
+
+func TestValidateScanConfigStateDirectoryEnablesIncrementalUse(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Scan.Username = "user"
+	cfg.Scan.Password = "pass"
+	cfg.Scan.StateDir = "./state"
+	if err := validateScanConfig(cfg); err != nil {
+		t.Fatalf("state_dir should enable incremental use: %v", err)
+	}
+}
+
 func TestValidateScanConfigRejectsInvalidWIMBounds(t *testing.T) {
 	t.Parallel()
 
@@ -176,6 +211,96 @@ func TestValidateScanConfigKeepsPasswordModeAsDefault(t *testing.T) {
 	}
 }
 
+func TestValidateScanConfigNTHashMode(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.Scan.AuthMode = discovery.AuthModePassword
+	cfg.Scan.SMBAuth = "ntlm-hash"
+	cfg.Scan.Username = `DOMAIN\user`
+	cfg.Scan.Password = ""
+	cfg.Scan.NTHash = "0123456789abcdef0123456789abcdef"
+	if err := validateScanConfig(cfg); err != nil {
+		t.Fatalf("valid NT hash configuration rejected: %v", err)
+	}
+}
+
+func TestValidateScanConfigRejectsAmbiguousNTHashConfiguration(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		mutate  func(*config.Config)
+		message string
+	}{
+		{"missing hash", func(cfg *config.Config) { cfg.Scan.NTHash = "" }, "missing NT hash"},
+		{"bad hash", func(cfg *config.Config) { cfg.Scan.NTHash = "not-a-hash" }, "invalid NT hash"},
+		{"password with hash", func(cfg *config.Config) { cfg.Scan.Password = "secret" }, "password cannot be supplied"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Scan.SMBAuth = "ntlm-hash"
+			cfg.Scan.Username = "user"
+			cfg.Scan.NTHash = "0123456789abcdef0123456789abcdef"
+			tt.mutate(&cfg)
+			err := validateScanConfig(cfg)
+			if err == nil || !strings.Contains(err.Error(), tt.message) {
+				t.Fatalf("expected %q error, got %v", tt.message, err)
+			}
+		})
+	}
+}
+
+func TestValidateScanConfigRejectsNTHashInPasswordMode(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Scan.SMBAuth = "password"
+	cfg.Scan.Username = "user"
+	cfg.Scan.Password = "secret"
+	cfg.Scan.NTHash = "0123456789abcdef0123456789abcdef"
+	if err := validateScanConfig(cfg); err == nil || !strings.Contains(err.Error(), "NT hash cannot be supplied") {
+		t.Fatalf("expected password/hash conflict, got %v", err)
+	}
+}
+
+func TestValidateScanConfigRequiresKerberosCCache(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Scan.SMBAuth = "kerberos"
+	if err := validateScanConfig(cfg); err == nil || !strings.Contains(err.Error(), "kerberos ccache unavailable") {
+		t.Fatalf("expected SMB Kerberos ccache error, got %v", err)
+	}
+}
+
+func TestResolveSMBSPN(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		target   string
+		hostname string
+		override string
+		want     string
+		wantErr  bool
+	}{
+		{name: "explicit override", target: "10.0.0.1", override: "cifs/files.example.com", want: "cifs/files.example.com"},
+		{name: "hostname", target: "10.0.0.1", hostname: "Files.Example.COM", want: "cifs/files.example.com"},
+		{name: "target fqdn", target: "Files.Example.COM", want: "cifs/files.example.com"},
+		{name: "ip rejected", target: "10.0.0.1", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := resolveSMBSPN(test.target, test.hostname, test.override)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil || got != test.want {
+				t.Fatalf("resolveSMBSPN = %q, %v; want %q", got, err, test.want)
+			}
+		})
+	}
+}
+
 func TestValidateScanConfigKerberosStillRequiresSMBCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -189,9 +314,8 @@ func TestValidateScanConfigKerberosStillRequiresSMBCredentials(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected kerberos scan without SMB credentials to fail")
 	}
-	if !strings.Contains(err.Error(), "SMB Kerberos is not supported with the current SMB backend") ||
-		!strings.Contains(err.Error(), "SMB scanning requires --username and --password") {
-		t.Fatalf("expected SMB Kerberos unsupported error, got %v", err)
+	if !strings.Contains(err.Error(), "missing SMB username") {
+		t.Fatalf("expected SMB username error, got %v", err)
 	}
 }
 
@@ -209,9 +333,8 @@ func TestValidateScanConfigKerberosExplicitTargetsWithoutSMBCredsFailsClearly(t 
 	if err == nil {
 		t.Fatal("expected kerberos explicit-target scan without SMB credentials to fail")
 	}
-	if !strings.Contains(err.Error(), "SMB Kerberos is not supported with the current SMB backend") ||
-		!strings.Contains(err.Error(), "SMB scanning requires --username and --password") {
-		t.Fatalf("expected clear SMB Kerberos unsupported error, got %v", err)
+	if !strings.Contains(err.Error(), "missing SMB username") {
+		t.Fatalf("expected clear SMB username error, got %v", err)
 	}
 }
 

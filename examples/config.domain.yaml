@@ -8,9 +8,13 @@ scan:
   targets: []
   targets_file: ""
   auth: password
+  smb_auth: password
   username: "TEST\\snablr"
   password: "REPLACE_ME"
+  nt_hash: ""
   kerberos_ccache: ""
+  smb_hostname: ""
+  smb_spn: ""
   ldap_spn: ""
 
   # Optional scope limits. Leave empty for a broad domain-aware pass.
@@ -41,6 +45,9 @@ scan:
   max_scan_time: "2h"
   checkpoint_file: "state/domain-scan.json"
   resume: true
+  state_dir: ""
+  incremental: false
+  force_rescan: false
 
   # Reachability checks reduce wasted SMB connection attempts.
   skip_reachability_check: false

@@ -1,6 +1,7 @@
 package smb
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hirochachacha/go-smb2"
+	"snablr/internal/smbkerberos"
 )
 
 const (
@@ -19,9 +21,60 @@ const (
 )
 
 var (
-	ErrNotConnected = errors.New("smb client is not connected")
-	ErrFileTooLarge = errors.New("remote file exceeds configured read limit")
+	ErrNotConnected  = errors.New("smb client is not connected")
+	ErrFileTooLarge  = errors.New("remote file exceeds configured read limit")
+	ErrInvalidAuth   = errors.New("invalid SMB authentication configuration")
+	ErrInvalidNTHash = errors.New("invalid NT hash")
 )
+
+type AuthMode string
+
+const (
+	AuthModePassword AuthMode = "password"
+	AuthModeNTHash   AuthMode = "ntlm-hash"
+	AuthModeKerberos AuthMode = "kerberos"
+)
+
+// Auth contains resolved SMB credentials. It is intentionally not serialized
+// or formatted; callers must keep password and NT hash inputs distinct.
+type Auth struct {
+	Mode     AuthMode
+	Username string
+	Domain   string
+	Password string
+	NTHash   [16]byte
+	CCache   string
+	SPN      string
+}
+
+func NewPasswordAuth(username, domain, password string) Auth {
+	return Auth{Mode: AuthModePassword, Username: username, Domain: domain, Password: password}
+}
+
+func NewNTHashAuth(username, domain, encodedHash string) (Auth, error) {
+	hash, err := ParseNTHash(encodedHash)
+	if err != nil {
+		return Auth{}, err
+	}
+	return Auth{Mode: AuthModeNTHash, Username: username, Domain: domain, NTHash: hash}, nil
+}
+
+func NewKerberosAuth(username, domain, ccache, spn string) Auth {
+	return Auth{Mode: AuthModeKerberos, Username: username, Domain: domain, CCache: ccache, SPN: spn}
+}
+
+func ParseNTHash(encoded string) ([16]byte, error) {
+	var hash [16]byte
+	if len(encoded) != 32 {
+		return hash, fmt.Errorf("%w: expected 32 hexadecimal characters", ErrInvalidNTHash)
+	}
+	decoded, err := hex.DecodeString(encoded)
+	if err != nil || len(decoded) != len(hash) {
+		return hash, fmt.Errorf("%w: expected 32 hexadecimal characters", ErrInvalidNTHash)
+	}
+	copy(hash[:], decoded)
+	return hash, nil
+}
 
 type RemoteFile struct {
 	Host       string
@@ -80,6 +133,10 @@ func (c *Client) SetMaxReadSize(limit int64) {
 }
 
 func (c *Client) Connect(host, user, pass string) error {
+	return c.ConnectWithAuth(host, NewPasswordAuth(user, "", pass))
+}
+
+func (c *Client) ConnectWithAuth(host string, auth Auth) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -92,9 +149,26 @@ func (c *Client) Connect(host, user, pass string) error {
 		return err
 	}
 
-	domain, username := splitUser(user)
-	if username == "" {
+	parsedDomain, username := splitUser(auth.Username)
+	if username == "" && auth.Mode != AuthModeKerberos {
 		return fmt.Errorf("username cannot be empty")
+	}
+	domain := auth.Domain
+	if parsedDomain != "" {
+		domain = parsedDomain
+	}
+	if auth.Mode != AuthModePassword && auth.Mode != AuthModeNTHash && auth.Mode != AuthModeKerberos {
+		return fmt.Errorf("%w: unsupported SMB authentication mode %q", ErrInvalidAuth, auth.Mode)
+	}
+	if auth.Mode == AuthModeNTHash && auth.Password != "" {
+		return fmt.Errorf("%w: password cannot be supplied with NT hash authentication", ErrInvalidAuth)
+	}
+	if auth.Mode == AuthModeKerberos && (auth.Password != "" || auth.NTHash != [16]byte{}) {
+		return fmt.Errorf("%w: password and NT hash cannot be supplied with SMB Kerberos authentication", ErrInvalidAuth)
+	}
+
+	if auth.Mode == AuthModeKerberos && strings.TrimSpace(auth.SPN) == "" {
+		return fmt.Errorf("%w: SMB Kerberos requires a service principal", ErrInvalidAuth)
 	}
 
 	conn, err := net.DialTimeout("tcp", dialAddr, c.dialTimeout)
@@ -102,13 +176,23 @@ func (c *Client) Connect(host, user, pass string) error {
 		return fmt.Errorf("dial %s: %w", dialAddr, err)
 	}
 
-	dialer := &smb2.Dialer{
-		Initiator: &smb2.NTLMInitiator{
-			User:     username,
-			Password: pass,
-			Domain:   domain,
-		},
+	var initiator smb2.Initiator
+	if auth.Mode == AuthModeKerberos {
+		ccache, err := smbkerberos.ResolveCCache(auth.CCache)
+		if err != nil {
+			_ = conn.Close()
+			return err
+		}
+		mechanism, err := smbkerberos.NewFromCCache(ccache, smbkerberos.ResolveConfig(), auth.SPN)
+		if err != nil {
+			_ = conn.Close()
+			return err
+		}
+		initiator = mechanism
+	} else {
+		initiator = newNTLMInitiator(auth, username, domain)
 	}
+	dialer := &smb2.Dialer{Initiator: initiator}
 
 	session, err := dialer.Dial(conn)
 	if err != nil {
@@ -119,12 +203,22 @@ func (c *Client) Connect(host, user, pass string) error {
 	c.host = host
 	c.serverName = serverName
 	c.user = username
-	c.password = pass
+	c.password = auth.Password
 	c.domain = domain
 	c.conn = conn
 	c.session = session
 
 	return nil
+}
+
+func newNTLMInitiator(auth Auth, username, domain string) *smb2.NTLMInitiator {
+	initiator := &smb2.NTLMInitiator{User: username, Domain: domain}
+	if auth.Mode == AuthModeNTHash {
+		initiator.Hash = append([]byte(nil), auth.NTHash[:]...)
+		return initiator
+	}
+	initiator.Password = auth.Password
+	return initiator
 }
 
 func (c *Client) Close() error {

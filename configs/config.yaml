@@ -8,9 +8,13 @@ scan:
   targets_file: ""
   profile: default
   auth: password
+  smb_auth: password
   username: ""
   password: ""
+  nt_hash: ""
   kerberos_ccache: ""
+  smb_hostname: ""
+  smb_spn: ""
   ldap_spn: ""
   share: []
   exclude_share: []
@@ -31,6 +35,10 @@ scan:
   max_scan_time: ""
   checkpoint_file: ""
   resume: false
+  # Explicit state_dir enables credential-independent incremental content scanning.
+  state_dir: ""
+  incremental: false
+  force_rescan: false
   skip_reachability_check: false
   reachability_timeout_seconds: 3
 

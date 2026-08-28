@@ -17,6 +17,9 @@ require (
 	golang.org/x/text v0.31.0
 )
 
+// Maintained in-repository go-smb2 copy with the reviewed mechanism and async-response patches.
+replace github.com/hirochachacha/go-smb2 => ./third_party/go-smb2
+
 require (
 	github.com/Azure/go-ntlmssp v0.1.0 // indirect
 	github.com/alexbrainman/sspi v0.0.0-20250919150558-7d374ff0d59e // indirect

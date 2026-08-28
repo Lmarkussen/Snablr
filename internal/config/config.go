@@ -35,9 +35,13 @@ type ScanConfig struct {
 	TargetsFile                string   `yaml:"targets_file"`
 	Profile                    string   `yaml:"profile"`
 	AuthMode                   string   `yaml:"auth"`
+	SMBAuth                    string   `yaml:"smb_auth"`
 	Username                   string   `yaml:"username"`
 	Password                   string   `yaml:"password"`
+	NTHash                     string   `yaml:"nt_hash"`
 	KerberosCCache             string   `yaml:"kerberos_ccache"`
+	SMBHostname                string   `yaml:"smb_hostname"`
+	SMBSPN                     string   `yaml:"smb_spn"`
 	LDAPSPN                    string   `yaml:"ldap_spn"`
 	Share                      []string `yaml:"share"`
 	ExcludeShare               []string `yaml:"exclude_share"`
@@ -59,6 +63,9 @@ type ScanConfig struct {
 	MaxScanTime                string   `yaml:"max_scan_time"`
 	CheckpointFile             string   `yaml:"checkpoint_file"`
 	Resume                     bool     `yaml:"resume"`
+	StateDir                   string   `yaml:"state_dir"`
+	Incremental                bool     `yaml:"incremental"`
+	ForceRescan                bool     `yaml:"force_rescan"`
 	SkipReachabilityCheck      bool     `yaml:"skip_reachability_check"`
 	ReachabilityTimeoutSeconds int      `yaml:"reachability_timeout_seconds"`
 }
@@ -78,13 +85,20 @@ type ArchiveConfig struct {
 }
 
 type WIMConfig struct {
-	Enabled        bool  `yaml:"enabled"`
-	AutoWIMMaxSize int64 `yaml:"auto_wim_max_size"`
-	AllowLargeWIMs bool  `yaml:"allow_large_wims"`
-	MaxWIMSize     int64 `yaml:"max_wim_size"`
-	MaxMembers     int   `yaml:"max_members"`
-	MaxMemberBytes int64 `yaml:"max_member_bytes"`
-	MaxTotalBytes  int64 `yaml:"max_total_bytes"`
+	Enabled            bool  `yaml:"enabled"`
+	AutoWIMMaxSize     int64 `yaml:"auto_wim_max_size"`
+	AllowLargeWIMs     bool  `yaml:"allow_large_wims"`
+	MaxWIMSize         int64 `yaml:"max_wim_size"`
+	MaxMembers         int   `yaml:"max_members"`
+	MaxMemberBytes     int64 `yaml:"max_member_bytes"`
+	MaxTotalBytes      int64 `yaml:"max_total_bytes"`
+	MaxBinaryArtifacts int   `yaml:"max_binary_artifacts"`
+	MaxBinaryBytes     int64 `yaml:"max_binary_bytes"`
+	MaxSAMBytes        int64 `yaml:"max_sam_bytes"`
+	MaxSYSTEMBytes     int64 `yaml:"max_system_bytes"`
+	MaxSECURITYBytes   int64 `yaml:"max_security_bytes"`
+	MaxNTDSBytes       int64 `yaml:"max_ntds_bytes"`
+	MaxImages          int   `yaml:"max_images"`
 }
 
 type SQLiteConfig struct {
@@ -195,6 +209,9 @@ func applyDefaults(cfg *Config) {
 	if strings.TrimSpace(cfg.Scan.AuthMode) == "" {
 		cfg.Scan.AuthMode = "password"
 	}
+	if strings.TrimSpace(cfg.Scan.SMBAuth) == "" {
+		cfg.Scan.SMBAuth = "password"
+	}
 	if cfg.Scan.ReachabilityTimeoutSeconds <= 0 {
 		cfg.Scan.ReachabilityTimeoutSeconds = 3
 	}
@@ -236,6 +253,27 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.WIM.MaxTotalBytes <= 0 {
 		cfg.WIM.MaxTotalBytes = 4 * 1024 * 1024
+	}
+	if cfg.WIM.MaxBinaryArtifacts <= 0 {
+		cfg.WIM.MaxBinaryArtifacts = 8
+	}
+	if cfg.WIM.MaxBinaryBytes <= 0 {
+		cfg.WIM.MaxBinaryBytes = 64 * 1024 * 1024
+	}
+	if cfg.WIM.MaxSAMBytes <= 0 {
+		cfg.WIM.MaxSAMBytes = 32 * 1024 * 1024
+	}
+	if cfg.WIM.MaxSYSTEMBytes <= 0 {
+		cfg.WIM.MaxSYSTEMBytes = 64 * 1024 * 1024
+	}
+	if cfg.WIM.MaxSECURITYBytes <= 0 {
+		cfg.WIM.MaxSECURITYBytes = 64 * 1024 * 1024
+	}
+	if cfg.WIM.MaxNTDSBytes <= 0 {
+		cfg.WIM.MaxNTDSBytes = 512 * 1024 * 1024
+	}
+	if cfg.WIM.MaxImages <= 0 {
+		cfg.WIM.MaxImages = 4
 	}
 	if cfg.SQLite.MaxDBSize <= 0 {
 		cfg.SQLite.MaxDBSize = cfg.SQLite.AutoDBMaxSize
@@ -331,6 +369,13 @@ func ApplyScanProfile(cfg *Config, profile string) error {
 		cfg.WIM.MaxMembers = 6
 		cfg.WIM.MaxMemberBytes = 512 * 1024
 		cfg.WIM.MaxTotalBytes = 2 * 1024 * 1024
+		cfg.WIM.MaxBinaryArtifacts = 6
+		cfg.WIM.MaxBinaryBytes = 32 * 1024 * 1024
+		cfg.WIM.MaxSAMBytes = 16 * 1024 * 1024
+		cfg.WIM.MaxSYSTEMBytes = 32 * 1024 * 1024
+		cfg.WIM.MaxSECURITYBytes = 32 * 1024 * 1024
+		cfg.WIM.MaxNTDSBytes = 128 * 1024 * 1024
+		cfg.WIM.MaxImages = 2
 		cfg.SQLite.Enabled = true
 		cfg.SQLite.AutoDBMaxSize = 2 * 1024 * 1024
 		cfg.SQLite.AllowLargeDBs = false
@@ -361,6 +406,13 @@ func ApplyScanProfile(cfg *Config, profile string) error {
 		cfg.WIM.MaxMembers = 12
 		cfg.WIM.MaxMemberBytes = 2 * 1024 * 1024
 		cfg.WIM.MaxTotalBytes = 8 * 1024 * 1024
+		cfg.WIM.MaxBinaryArtifacts = 12
+		cfg.WIM.MaxBinaryBytes = 128 * 1024 * 1024
+		cfg.WIM.MaxSAMBytes = 32 * 1024 * 1024
+		cfg.WIM.MaxSYSTEMBytes = 64 * 1024 * 1024
+		cfg.WIM.MaxSECURITYBytes = 64 * 1024 * 1024
+		cfg.WIM.MaxNTDSBytes = 512 * 1024 * 1024
+		cfg.WIM.MaxImages = 4
 		cfg.SQLite.Enabled = true
 		cfg.SQLite.AutoDBMaxSize = 5 * 1024 * 1024
 		cfg.SQLite.AllowLargeDBs = true

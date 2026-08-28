@@ -1036,6 +1036,13 @@
         <span class="card-label">Read Errors</span>
         <span class="card-value">{{ .Summary.ReadErrors }}</span>
       </article>
+      {{- if gt .Metrics.Counters.IncrementalDiscovered 0 }}
+      <article class="card">
+        <span class="card-label">Incremental Reuse</span>
+        <span class="card-value">{{ .Metrics.Counters.IncrementalSkippedUnchanged }}</span>
+        <div class="card-meta">unchanged skipped · {{ .Metrics.Counters.IncrementalInspected }} inspected · {{ .Metrics.Counters.IncrementalNewAccessible }} newly accessible known</div>
+      </article>
+      {{- end }}
       <article class="card">
         <span class="card-label">Scan Duration</span>
         <span class="card-value">{{ formatDuration .Summary.StartedAt .Summary.EndedAt }}</span>

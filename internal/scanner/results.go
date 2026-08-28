@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"snablr/internal/artifact"
 	"snablr/internal/rules"
 )
 
@@ -150,11 +151,13 @@ type FileMetadata struct {
 }
 
 type Evaluation struct {
-	Skipped     bool
-	SkipReason  string
-	NeedContent bool
-	ContentRead bool
-	Findings    []Finding
+	Skipped         bool
+	SkipReason      string
+	NeedContent     bool
+	ContentRead     bool
+	Findings        []Finding
+	BinaryArtifacts []artifact.Binary
+	Cleanup         func() error
 }
 
 func (m FileMetadata) Normalized() FileMetadata {

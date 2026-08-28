@@ -6,9 +6,13 @@ type ScanOptions struct {
 	TargetsFile                string
 	Profile                    string
 	AuthMode                   string
+	SMBAuth                    string
 	Username                   string
 	Password                   string
+	NTHash                     string
 	KerberosCCache             string
+	SMBHostname                string
+	SMBSPN                     string
 	LDAPSPN                    string
 	Share                      []string
 	ExcludeShare               []string
@@ -31,6 +35,9 @@ type ScanOptions struct {
 	MaxScanTime                string
 	CheckpointFile             string
 	Resume                     bool
+	StateDir                   string
+	Incremental                bool
+	ForceRescan                bool
 	SkipReachabilityCheck      bool
 	ReachabilityTimeoutSeconds int
 	OutputFormat               string
@@ -49,6 +56,13 @@ type ScanOptions struct {
 	WIMMaxMembers              *int
 	WIMMaxMemberBytes          *int64
 	WIMMaxTotalBytes           *int64
+	WIMMaxBinaryArtifacts      *int
+	WIMMaxBinaryBytes          *int64
+	WIMMaxSAMBytes             *int64
+	WIMMaxSYSTEMBytes          *int64
+	WIMMaxSECURITYBytes        *int64
+	WIMMaxNTDSBytes            *int64
+	WIMMaxImages               *int
 	LogLevel                   string
 }
 

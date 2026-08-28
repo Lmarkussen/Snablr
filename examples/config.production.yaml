@@ -7,8 +7,13 @@ scan:
   profile: default
   targets: []
   targets_file: ""
+  smb_auth: password
   username: "EXAMPLE\\snablr"
   password: "REPLACE_ME"
+  nt_hash: ""
+  kerberos_ccache: ""
+  smb_hostname: ""
+  smb_spn: ""
   share: []
   exclude_share:
     - IPC$
@@ -31,6 +36,9 @@ scan:
   max_scan_time: "90m"
   checkpoint_file: "state/production-scan.json"
   resume: true
+  state_dir: ""
+  incremental: false
+  force_rescan: false
   skip_reachability_check: false
   reachability_timeout_seconds: 3
 

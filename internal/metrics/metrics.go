@@ -14,13 +14,19 @@ type PhaseTiming struct {
 }
 
 type Counters struct {
-	TargetsLoaded    int64 `json:"targets_loaded"`
-	TargetsReachable int64 `json:"targets_reachable"`
-	SharesEnumerated int64 `json:"shares_enumerated"`
-	FilesVisited     int64 `json:"files_visited"`
-	FilesSkipped     int64 `json:"files_skipped"`
-	FilesRead        int64 `json:"files_read"`
-	MatchesFound     int64 `json:"matches_found"`
+	TargetsLoaded               int64 `json:"targets_loaded"`
+	TargetsReachable            int64 `json:"targets_reachable"`
+	SharesEnumerated            int64 `json:"shares_enumerated"`
+	FilesVisited                int64 `json:"files_visited"`
+	FilesSkipped                int64 `json:"files_skipped"`
+	FilesRead                   int64 `json:"files_read"`
+	MatchesFound                int64 `json:"matches_found"`
+	IncrementalDiscovered       int64 `json:"incremental_discovered,omitempty"`
+	IncrementalInspected        int64 `json:"incremental_inspected,omitempty"`
+	IncrementalSkippedUnchanged int64 `json:"incremental_skipped_unchanged,omitempty"`
+	IncrementalRescannedChanged int64 `json:"incremental_rescanned_changed,omitempty"`
+	IncrementalRetried          int64 `json:"incremental_retried,omitempty"`
+	IncrementalNewAccessible    int64 `json:"incremental_new_accessible_known,omitempty"`
 }
 
 type Snapshot struct {
@@ -83,6 +89,19 @@ func (c *Collector) IncFilesRead() {
 
 func (c *Collector) AddMatchesFound(n int) {
 	c.addCounter(func(counters *Counters) { counters.MatchesFound += int64(n) })
+}
+
+// SetIncrementalCounters records run-local inventory statistics without
+// expanding the Recorder interface used by discovery and scanner packages.
+func (c *Collector) SetIncrementalCounters(discovered, inspected, skippedUnchanged, rescannedChanged, retried, newAccessible int64) {
+	c.addCounter(func(counters *Counters) {
+		counters.IncrementalDiscovered = discovered
+		counters.IncrementalInspected = inspected
+		counters.IncrementalSkippedUnchanged = skippedUnchanged
+		counters.IncrementalRescannedChanged = rescannedChanged
+		counters.IncrementalRetried = retried
+		counters.IncrementalNewAccessible = newAccessible
+	})
 }
 
 func (c *Collector) Snapshot() Snapshot {

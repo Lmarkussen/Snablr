@@ -1,20 +1,26 @@
 package wiminspect
 
 import (
-	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
+
+	"snablr/internal/artifact"
 )
 
 type cliRunner interface {
 	LookPath(string) (string, error)
-	ListPaths(context.Context, string) ([]string, error)
-	ExtractFile(context.Context, string, string) ([]byte, error)
+	ListImages(context.Context, string) ([]int, error)
+	ListPaths(context.Context, string, int) ([]string, error)
+	ExtractFile(context.Context, string, int, string, io.Writer) error
 }
 
 type execRunner struct{}
@@ -43,17 +49,50 @@ func ShouldInspect(candidate Candidate, opts Options) (bool, string) {
 	return true, ""
 }
 
-func Inspect(content []byte, opts Options) (Result, error) {
+func Inspect(ctx context.Context, content []byte, opts Options, origin artifact.Origin) (Result, error) {
+	if opts.MaxBinaryArtifacts <= 0 {
+		opts.MaxBinaryArtifacts = 8
+	}
+	if opts.MaxBinaryBytes <= 0 {
+		opts.MaxBinaryBytes = 64 * 1024 * 1024
+	}
+	if opts.MaxSAMBytes <= 0 {
+		opts.MaxSAMBytes = 32 * 1024 * 1024
+	}
+	if opts.MaxSYSTEMBytes <= 0 {
+		opts.MaxSYSTEMBytes = 64 * 1024 * 1024
+	}
+	if opts.MaxSECURITYBytes <= 0 {
+		opts.MaxSECURITYBytes = 64 * 1024 * 1024
+	}
+	if opts.MaxNTDSBytes <= 0 {
+		opts.MaxNTDSBytes = 512 * 1024 * 1024
+	}
 	if _, err := runner.LookPath("wimlib-imagex"); err != nil {
 		return Result{}, fmt.Errorf("wimlib-imagex not available: %w", err)
 	}
 
-	tmpFile, err := os.CreateTemp("", "snablr-wiminspect-*.wim")
+	workspace, err := os.MkdirTemp("", "snablr-wiminspect-*")
+	if err != nil {
+		return Result{}, fmt.Errorf("create wim workspace: %w", err)
+	}
+	var cleanupOnce sync.Once
+	var cleanupErr error
+	keepWorkspace := false
+	cleanup := func() error {
+		cleanupOnce.Do(func() { cleanupErr = os.RemoveAll(workspace) })
+		return cleanupErr
+	}
+	defer func() {
+		if !keepWorkspace {
+			_ = cleanup()
+		}
+	}()
+	tmpFile, err := os.OpenFile(filepath.Join(workspace, "image.wim"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return Result{}, fmt.Errorf("create temp wim: %w", err)
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
 
 	if _, err := tmpFile.Write(content); err != nil {
 		_ = tmpFile.Close()
@@ -63,64 +102,168 @@ func Inspect(content []byte, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("close temp wim: %w", err)
 	}
 
-	ctx := context.Background()
-	paths, err := runner.ListPaths(ctx, tmpPath)
+	images, err := runner.ListImages(ctx, tmpPath)
 	if err != nil {
 		return Result{}, err
+	}
+	if opts.MaxImages <= 0 {
+		opts.MaxImages = 4
+	}
+	if len(images) > opts.MaxImages {
+		images = images[:opts.MaxImages]
 	}
 
 	result := Result{
 		Inspected:        true,
 		InspectedLocally: true,
 		Members:          make([]Member, 0),
+		BinaryMembers:    make([]BinaryMember, 0),
+		Cleanup:          cleanup,
 	}
 
-	totalBytes := int64(0)
-	for _, rawPath := range paths {
-		displayPath := cleanWIMDisplayPath(rawPath)
-		memberPath := normalizeWIMPath(rawPath)
-		if memberPath == "" || !isTargetedPath(memberPath) {
-			continue
+	binaryBytes := int64(0)
+	textBytes := int64(0)
+	for _, imageIndex := range images {
+		paths, err := runner.ListPaths(ctx, tmpPath, imageIndex)
+		if err != nil {
+			return Result{}, err
 		}
-		if opts.MaxMembers > 0 && len(result.Members) >= opts.MaxMembers {
-			break
-		}
-
-		member := Member{
-			Path:      strings.TrimPrefix(displayPath, "/"),
-			Name:      path.Base(displayPath),
-			Extension: strings.ToLower(filepath.Ext(displayPath)),
-		}
-
-		if shouldExtractContent(memberPath) {
-			data, err := runner.ExtractFile(ctx, tmpPath, displayPath)
-			if err != nil {
+		seenPaths := make(map[string]struct{}, len(paths))
+		for _, rawPath := range paths {
+			displayPath := cleanWIMDisplayPath(rawPath)
+			memberPath := normalizeWIMPath(rawPath)
+			if memberPath == "" || !isTargetedPath(memberPath) {
 				continue
 			}
-			if opts.MaxMemberBytes > 0 && int64(len(data)) > opts.MaxMemberBytes {
+			identity := strconv.Itoa(imageIndex) + "\x00" + memberPath
+			if _, seen := seenPaths[identity]; seen {
 				continue
 			}
-			if opts.MaxTotalBytes > 0 && totalBytes+int64(len(data)) > opts.MaxTotalBytes {
-				break
+			seenPaths[identity] = struct{}{}
+			if opts.MaxMembers > 0 && len(result.Members)+len(result.BinaryMembers) >= opts.MaxMembers {
+				continue
 			}
-			member.Content = data
-			member.Size = int64(len(data))
-			member.ContentRead = true
-			totalBytes += int64(len(data))
-		}
 
-		result.Members = append(result.Members, member)
+			member := Member{
+				Path:      strings.TrimPrefix(displayPath, "/"),
+				Name:      path.Base(displayPath),
+				Extension: strings.ToLower(filepath.Ext(displayPath)),
+			}
+
+			if binaryKind, ok := binaryKindForPath(memberPath); ok {
+				if opts.MaxBinaryArtifacts > 0 && len(result.BinaryMembers) >= opts.MaxBinaryArtifacts {
+					continue
+				}
+				limit := binaryLimit(binaryKind, opts)
+				if limit <= 0 {
+					continue
+				}
+				binaryOrigin := origin
+				binaryOrigin.ContainerType = "wim"
+				binaryOrigin.MemberPath = strings.TrimPrefix(displayPath, "/")
+				binaryOrigin.ImageIndex = imageIndex
+				// Binary artifacts outlive the WIM workspace when a scan-wide
+				// coordinator retains an incomplete pair. Keep them in the system
+				// temporary directory; artifact ownership controls their cleanup.
+				binary, err := artifact.NewTempFile(os.TempDir(), binaryKind, binaryOrigin)
+				if err != nil {
+					return Result{}, err
+				}
+				writer, err := binary.OpenWriter(limit)
+				if err != nil {
+					_ = binary.Close()
+					return Result{}, err
+				}
+				extractErr := runner.ExtractFile(ctx, tmpPath, imageIndex, displayPath, writer)
+				closeErr := writer.Close()
+				if extractErr != nil || closeErr != nil {
+					_ = binary.Close()
+					continue
+				}
+				statSize := binary.Size()
+				if opts.MaxBinaryBytes > 0 && binaryBytes+statSize > opts.MaxBinaryBytes {
+					_ = binary.Close()
+					continue
+				}
+				binaryBytes += statSize
+				result.BinaryMembers = append(result.BinaryMembers, BinaryMember{Path: strings.TrimPrefix(displayPath, "/"), Name: path.Base(displayPath), Extension: strings.ToLower(filepath.Ext(displayPath)), Size: statSize, Artifact: binary})
+				continue
+			}
+			if shouldExtractContent(memberPath) {
+				var data []byte
+				buf := &boundedBytesBuffer{max: opts.MaxMemberBytes}
+				err := runner.ExtractFile(ctx, tmpPath, imageIndex, displayPath, buf)
+				if err != nil {
+					continue
+				}
+				data = buf.Bytes()
+				if opts.MaxMemberBytes > 0 && int64(len(data)) > opts.MaxMemberBytes {
+					continue
+				}
+				if opts.MaxTotalBytes > 0 && textBytes+int64(len(data)) > opts.MaxTotalBytes {
+					continue
+				}
+				member.Content = data
+				member.Size = int64(len(data))
+				member.ContentRead = true
+				textBytes += int64(len(data))
+			}
+
+			result.Members = append(result.Members, member)
+		}
 	}
 
+	keepWorkspace = true
 	return result, nil
 }
+
+type boundedBytesBuffer struct {
+	data []byte
+	max  int64
+}
+
+func (b *boundedBytesBuffer) Write(p []byte) (int, error) {
+	if b.max >= 0 && int64(len(b.data))+int64(len(p)) > b.max {
+		return 0, artifact.ErrTooLarge
+	}
+	b.data = append(b.data, p...)
+	return len(p), nil
+}
+
+func (b *boundedBytesBuffer) Bytes() []byte { return b.data }
 
 func (execRunner) LookPath(name string) (string, error) {
 	return exec.LookPath(name)
 }
 
-func (execRunner) ListPaths(ctx context.Context, wimPath string) ([]string, error) {
-	cmd := exec.CommandContext(ctx, "wimlib-imagex", "dir", wimPath, "1")
+func (execRunner) ListImages(ctx context.Context, wimPath string) ([]int, error) {
+	cmd := exec.CommandContext(ctx, "wimlib-imagex", "info", wimPath)
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("list wim contents: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		return nil, fmt.Errorf("list wim contents: %w", err)
+	}
+	re := regexp.MustCompile(`(?i)^Image Count:\s*(\d+)\s*$`)
+	for _, line := range strings.Split(string(out), "\n") {
+		if m := re.FindStringSubmatch(strings.TrimSpace(line)); len(m) == 2 {
+			count, parseErr := strconv.Atoi(m[1])
+			if parseErr != nil || count < 1 {
+				return nil, fmt.Errorf("invalid WIM image count")
+			}
+			images := make([]int, count)
+			for i := range images {
+				images[i] = i + 1
+			}
+			return images, nil
+		}
+	}
+	return nil, fmt.Errorf("WIM image count not found")
+}
+
+func (execRunner) ListPaths(ctx context.Context, wimPath string, imageIndex int) ([]string, error) {
+	cmd := exec.CommandContext(ctx, "wimlib-imagex", "dir", wimPath, strconv.Itoa(imageIndex))
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
@@ -140,16 +283,33 @@ func (execRunner) ListPaths(ctx context.Context, wimPath string) ([]string, erro
 	return paths, nil
 }
 
-func (execRunner) ExtractFile(ctx context.Context, wimPath, memberPath string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "wimlib-imagex", "extract", wimPath, "1", memberPath, "--to-stdout")
-	out, err := cmd.Output()
+func (execRunner) ExtractFile(ctx context.Context, wimPath string, imageIndex int, memberPath string, dst io.Writer) error {
+	cmd := exec.CommandContext(ctx, "wimlib-imagex", "extract", wimPath, strconv.Itoa(imageIndex), memberPath, "--to-stdout")
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("extract %s: %s", memberPath, strings.TrimSpace(string(ee.Stderr)))
-		}
-		return nil, fmt.Errorf("extract %s: %w", memberPath, err)
+		return err
 	}
-	return bytes.Clone(out), nil
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("extract WIM member: %w", err)
+	}
+	_, copyErr := io.Copy(dst, stdout)
+	if copyErr != nil {
+		_ = cmd.Process.Kill()
+	}
+	waitErr := cmd.Wait()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if copyErr != nil {
+		return copyErr
+	}
+	if waitErr != nil {
+		if ee, ok := waitErr.(*exec.ExitError); ok {
+			return fmt.Errorf("extract WIM member: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		return fmt.Errorf("extract WIM member: %w", waitErr)
+	}
+	return nil
 }
 
 func normalizeWIMPath(value string) string {
@@ -189,4 +349,22 @@ func shouldExtractContent(memberPath string) bool {
 		return true
 	}
 	return strings.HasPrefix(memberPath, "/windows/panther/") && strings.HasSuffix(memberPath, ".xml")
+}
+
+func binaryKindForPath(memberPath string) (artifact.Kind, bool) {
+	return artifact.KindForPath(memberPath)
+}
+
+func binaryLimit(kind artifact.Kind, opts Options) int64 {
+	switch kind {
+	case artifact.KindSAM:
+		return opts.MaxSAMBytes
+	case artifact.KindSYSTEM:
+		return opts.MaxSYSTEMBytes
+	case artifact.KindSECURITY:
+		return opts.MaxSECURITYBytes
+	case artifact.KindNTDS:
+		return opts.MaxNTDSBytes
+	}
+	return 0
 }

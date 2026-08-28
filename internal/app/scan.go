@@ -5,17 +5,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"snablr/internal/archiveinspect"
+	"snablr/internal/artifactbundle"
 	"snablr/internal/config"
 	"snablr/internal/diff"
 	"snablr/internal/discovery"
 	"snablr/internal/metrics"
 	"snablr/internal/output"
 	"snablr/internal/planner"
+	"snablr/internal/rules"
 	"snablr/internal/scanner"
 	"snablr/internal/smb"
 	"snablr/internal/sqliteinspect"
@@ -95,6 +99,28 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		defer checkpoints.Close()
 	}
 
+	incrementalEnabled := incrementalScanEnabled(cfg)
+	var inventory *state.InventoryManager
+	if incrementalEnabled {
+		inventoryPath := filepath.Join(cfg.Scan.StateDir, "inventory.json")
+		inventory, err = state.NewInventoryManager(inventoryPath, 10*time.Second)
+		if err != nil {
+			logger.Warnf("incremental inventory unavailable; scanning without content skip state: %v", err)
+			inventory = nil
+		} else {
+			inventory.Start(scanCtx)
+			defer func() {
+				if closeErr := inventory.Close(); closeErr != nil {
+					logger.Warnf("incremental inventory save failed: %v", closeErr)
+				}
+			}()
+		}
+	}
+	semantics := scanSemanticsFingerprint(cfg, manager)
+	credentialContextID := state.CredentialContextID(cfg.Scan.SMBAuth, cfg.Scan.Username, cfg.Scan.Domain)
+
+	bundles := artifactbundle.New(artifactbundle.Options{})
+	defer func() { _ = bundles.Close() }()
 	engine := scanner.NewEngine(scanner.Options{
 		Workers:          cfg.Scan.WorkerCount,
 		MaxFileSizeBytes: cfg.Scan.MaxFileSize,
@@ -114,13 +140,20 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			InspectExtensionlessText: cfg.Archives.InspectExtensionlessText,
 		},
 		WIM: wiminspect.Options{
-			Enabled:        cfg.WIM.Enabled,
-			AutoWIMMaxSize: cfg.WIM.AutoWIMMaxSize,
-			AllowLargeWIMs: cfg.WIM.AllowLargeWIMs,
-			MaxWIMSize:     cfg.WIM.MaxWIMSize,
-			MaxMembers:     cfg.WIM.MaxMembers,
-			MaxMemberBytes: cfg.WIM.MaxMemberBytes,
-			MaxTotalBytes:  cfg.WIM.MaxTotalBytes,
+			Enabled:            cfg.WIM.Enabled,
+			AutoWIMMaxSize:     cfg.WIM.AutoWIMMaxSize,
+			AllowLargeWIMs:     cfg.WIM.AllowLargeWIMs,
+			MaxWIMSize:         cfg.WIM.MaxWIMSize,
+			MaxMembers:         cfg.WIM.MaxMembers,
+			MaxMemberBytes:     cfg.WIM.MaxMemberBytes,
+			MaxTotalBytes:      cfg.WIM.MaxTotalBytes,
+			MaxBinaryArtifacts: cfg.WIM.MaxBinaryArtifacts,
+			MaxBinaryBytes:     cfg.WIM.MaxBinaryBytes,
+			MaxSAMBytes:        cfg.WIM.MaxSAMBytes,
+			MaxSYSTEMBytes:     cfg.WIM.MaxSYSTEMBytes,
+			MaxSECURITYBytes:   cfg.WIM.MaxSECURITYBytes,
+			MaxNTDSBytes:       cfg.WIM.MaxNTDSBytes,
+			MaxImages:          cfg.WIM.MaxImages,
 		},
 		SQLite: sqliteinspect.Options{
 			Enabled:            cfg.SQLite.Enabled,
@@ -133,8 +166,11 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			MaxTotalBytes:      cfg.SQLite.MaxTotalBytes,
 			MaxInterestingCols: cfg.SQLite.MaxInterestingCols,
 		},
-		Recorder:       recorder,
-		ValidationMode: cfg.Scan.ValidationMode,
+		Recorder:          recorder,
+		ValidationMode:    cfg.Scan.ValidationMode,
+		BundleCoordinator: bundles,
+		SAMMaxBytes:       cfg.WIM.MaxSAMBytes,
+		SYSTEMMaxBytes:    cfg.WIM.MaxSYSTEMBytes,
 	}, manager, sink, logger)
 
 	resolvedTargets, err := resolveTargetsFunc(scanCtx, cfg.Scan, logger, recorder)
@@ -214,6 +250,16 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			}
 		}
 	}()
+	defer func() {
+		if inventory != nil {
+			stats := inventory.Stats()
+			recorder.SetIncrementalCounters(stats.Discovered, stats.Inspected, stats.SkippedUnchanged, stats.RescannedChanged, stats.Retried, stats.NewAccessibleKnown)
+			logger.Infof("incremental: discovered=%d inspected=%d skipped_unchanged=%d rescanned_changed=%d retried=%d newly_accessible_known=%d", stats.Discovered, stats.Inspected, stats.SkippedUnchanged, stats.RescannedChanged, stats.Retried, stats.NewAccessibleKnown)
+		}
+		if sink != nil {
+			output.SetMetricsSnapshot(sink, recorder.Snapshot())
+		}
+	}()
 
 	if strings.TrimSpace(cfg.Scan.Baseline) != "" {
 		baseline, err := diff.LoadJSON(cfg.Scan.Baseline)
@@ -256,7 +302,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			}
 			return err
 		}
-		if checkpoints != nil && checkpoints.ShouldSkipHost(target.Host) {
+		if !incrementalEnabled && checkpoints != nil && checkpoints.ShouldSkipHost(target.Host) {
 			logger.Infof("resume: skipping completed host %s", target.Host)
 			output.MarkTargetProcessed(sink)
 			if progress != nil {
@@ -268,7 +314,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		if progress != nil {
 			progress.SetCurrentHost(target.Host)
 		}
-		if err := scanHost(scanCtx, target.Host, target.Source, resolvedTargets.DFSTargets, checkpoints, recorder, cfg, engine, sink, logger); err != nil {
+		if err := scanHost(scanCtx, target.Host, target.Source, resolvedTargets.DFSTargets, checkpoints, inventory, credentialContextID, semantics, cfg.Scan.ForceRescan, recorder, cfg, engine, sink, logger); err != nil {
 			if errors.Is(err, context.Canceled) && output.WasCanceledByUser(sink) {
 				return nil
 			}
@@ -315,7 +361,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	return nil
 }
 
-func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.DFSTarget, checkpoints *state.Manager, recorder metrics.Recorder, cfg config.Config, engine *scanner.Engine, sink scanner.FindingSink, logger *logx.Logger) error {
+func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.DFSTarget, checkpoints *state.Manager, inventory *state.InventoryManager, credentialContextID, semantics string, forceRescan bool, recorder metrics.Recorder, cfg config.Config, engine *scanner.Engine, sink scanner.FindingSink, logger *logx.Logger) error {
 	logger.Infof("scanning host %s", host)
 	if observer, ok := sink.(scanner.ScanObserver); ok {
 		observer.RecordHost(host)
@@ -325,13 +371,37 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 	client.SetMaxReadSize(scanReadLimit(cfg))
 	defer client.Close()
 
-	if err := client.Connect(host, cfg.Scan.Username, cfg.Scan.Password); err != nil {
+	var auth smb.Auth
+	smbAuthMode := strings.ToLower(strings.TrimSpace(cfg.Scan.SMBAuth))
+	if smbAuthMode == string(smb.AuthModeNTHash) {
+		var err error
+		auth, err = smb.NewNTHashAuth(cfg.Scan.Username, cfg.Scan.Domain, cfg.Scan.NTHash)
+		if err != nil {
+			return err
+		}
+	} else if smbAuthMode == string(smb.AuthModeKerberos) {
+		spn, err := resolveSMBSPN(host, cfg.Scan.SMBHostname, cfg.Scan.SMBSPN)
+		if err != nil {
+			return err
+		}
+		auth = smb.NewKerberosAuth(cfg.Scan.Username, cfg.Scan.Domain, cfg.Scan.KerberosCCache, spn)
+	} else {
+		auth = smb.NewPasswordAuth(cfg.Scan.Username, cfg.Scan.Domain, cfg.Scan.Password)
+	}
+	if err := client.ConnectWithAuth(host, auth); err != nil {
 		return fmt.Errorf("%s: connect failed: %w", host, err)
 	}
 
 	shares, err := client.ListShares()
 	if err != nil {
-		return fmt.Errorf("%s: list shares failed: %w", host, err)
+		if len(cfg.Scan.Share) == 0 {
+			return fmt.Errorf("%s: list shares failed: %w", host, err)
+		}
+		shares = configuredShareFallback(cfg.Scan)
+		if len(shares) == 0 {
+			return fmt.Errorf("%s: list shares failed: %w", host, err)
+		}
+		logger.Warnf("%s: share enumeration unavailable; using explicitly configured share(s)", host)
 	}
 
 	dfsHints := dfsHintsForHost(host, dfsTargets)
@@ -413,7 +483,8 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 
 	var walkErrs []error
 	for _, sharePlan := range plannedShares {
-		if checkpoints != nil && checkpoints.ShouldSkipShare(host, sharePlan.Share) {
+		incrementalEnabled := incrementalScanEnabled(cfg)
+		if !incrementalEnabled && checkpoints != nil && checkpoints.ShouldSkipShare(host, sharePlan.Share) {
 			logger.Infof("resume: skipping completed share %s/%s", host, sharePlan.Share)
 			continue
 		}
@@ -441,7 +512,21 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 				if !ok {
 					continue
 				}
-				if checkpoints != nil && checkpoints.ShouldSkipFile(remote.Host, remote.Share, remote.Path, remote.Size, remote.ModifiedAt) {
+				var inventoryKey string
+				if inventory != nil {
+					decision, err := inventory.Prepare(state.FileObservation{
+						Server: remote.Host, Share: remote.Share, Path: remote.Path,
+						Size: remote.Size, ModifiedAt: remote.ModifiedAt,
+					}, credentialContextID, semantics, forceRescan)
+					if err != nil {
+						logger.Warnf("incremental inventory ignored for %s/%s/%s: %v", remote.Host, remote.Share, remote.Path, err)
+					} else if decision.Skip {
+						logger.Debugf("incremental: skipping unchanged file %s/%s/%s", remote.Host, remote.Share, remote.Path)
+						continue
+					} else {
+						inventoryKey = decision.Key
+					}
+				} else if !incrementalEnabled && checkpoints != nil && checkpoints.ShouldSkipFile(remote.Host, remote.Share, remote.Path, remote.Size, remote.ModifiedAt) {
 					logger.Debugf("resume: skipping completed file %s/%s/%s", remote.Host, remote.Share, remote.Path)
 					continue
 				}
@@ -483,12 +568,26 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 						}
 						return client.ReadFile(shareName, strings.ReplaceAll(remotePath, "/", `\`))
 					},
-					OnComplete: func(meta scanner.FileMetadata, _ scanner.Evaluation, err error) {
-						if checkpoints == nil {
+					OnComplete: func(meta scanner.FileMetadata, evaluation scanner.Evaluation, err error) {
+						if checkpoints != nil {
+							checkpoints.RecordFileResult(meta.Host, meta.Share, meta.FilePath, meta.Size, meta.ModifiedAt, err == nil)
+						}
+						if inventory == nil {
 							return
 						}
-						checkpoints.RecordFileResult(meta.Host, meta.Share, meta.FilePath, meta.Size, meta.ModifiedAt, err == nil)
+						if err != nil {
+							inventory.MarkFailed(inventoryKey)
+							return
+						}
+						if evaluation.Skipped && evaluation.NeedContent {
+							inventory.MarkPartial(inventoryKey)
+							return
+						}
+						inventory.MarkCompleted(inventoryKey)
 					},
+				}
+				if inventory != nil {
+					inventory.MarkScanning(inventoryKey)
 				}
 
 				select {
@@ -565,6 +664,57 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 	return nil
 }
 
+type scanSemantics struct {
+	SchemaVersion    int
+	ScannerVersion   string
+	Profile          string
+	MaxFileSize      int64
+	MaxReadBytes     int64
+	Archives         config.ArchiveConfig
+	WIM              config.WIMConfig
+	SQLite           config.SQLiteConfig
+	RulesFingerprint string
+}
+
+func scanSemanticsFingerprint(cfg config.Config, manager *rules.Manager) string {
+	ruleFingerprint := ""
+	if manager != nil {
+		ruleFingerprint = state.SemanticsFingerprint(manager.EnabledRules())
+	}
+	return state.SemanticsFingerprint(scanSemantics{
+		SchemaVersion:    1,
+		ScannerVersion:   "snablr-content-scan-v1",
+		Profile:          strings.TrimSpace(cfg.Scan.Profile),
+		MaxFileSize:      cfg.Scan.MaxFileSize,
+		MaxReadBytes:     scanReadLimit(cfg),
+		Archives:         cfg.Archives,
+		WIM:              cfg.WIM,
+		SQLite:           cfg.SQLite,
+		RulesFingerprint: ruleFingerprint,
+	})
+}
+
+func incrementalScanEnabled(cfg config.Config) bool {
+	return cfg.Scan.Incremental || strings.TrimSpace(cfg.Scan.StateDir) != ""
+}
+
+func resolveSMBSPN(target, hostname, override string) (string, error) {
+	if value := strings.TrimSpace(override); value != "" {
+		return value, nil
+	}
+	host := strings.TrimSpace(hostname)
+	if host == "" {
+		host = strings.TrimSpace(target)
+		if parsed, _, err := net.SplitHostPort(host); err == nil {
+			host = parsed
+		}
+	}
+	if host == "" || net.ParseIP(host) != nil {
+		return "", fmt.Errorf("SMB Kerberos requires --smb-hostname or --smb-spn for IP targets")
+	}
+	return "cifs/" + strings.ToLower(strings.TrimSuffix(host, ".")), nil
+}
+
 func scanReadLimit(cfg config.Config) int64 {
 	limit := cfg.Scan.MaxFileSize
 	if cfg.Archives.Enabled {
@@ -623,6 +773,21 @@ func scanShareAllowed(share string, cfg config.ScanConfig) bool {
 		}
 	}
 	return true
+}
+
+func configuredShareFallback(cfg config.ScanConfig) []smb.ShareInfo {
+	shares := make([]smb.ShareInfo, 0, len(cfg.Share))
+	seen := make(map[string]struct{}, len(cfg.Share))
+	for _, share := range cfg.Share {
+		name := strings.TrimSpace(share)
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok || !scanShareAllowed(name, cfg) || (cfg.OnlyADShares && !smb.IsADShare(name)) {
+			continue
+		}
+		seen[key] = struct{}{}
+		shares = append(shares, smb.ShareInfo{Name: name})
+	}
+	return shares
 }
 
 func dfsHintsForHost(host string, targets []discovery.DFSTarget) map[string]discovery.DFSTarget {

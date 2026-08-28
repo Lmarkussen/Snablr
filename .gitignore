@@ -11,6 +11,11 @@
 /output/
 /results/
 /state/
+/scanned_targets.txt
+**/inventory.json
+*.ccache
+*.pcap
+/creds.txt
 /*.seed-manifest.json
 /seed-manifest.json
 /*.manifest.json

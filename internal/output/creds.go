@@ -1,6 +1,7 @@
 package output
 
 import (
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/url"
@@ -14,8 +15,15 @@ import (
 type CredsWriter struct {
 	closer   io.Closer
 	findings []scanner.Finding
+	ntds     map[string]ntdsCredentialEntry
 	mu       sync.Mutex
 	w        io.Writer
+}
+
+type ntdsCredentialEntry struct {
+	domain, account, source, sid, hash string
+	rid                                uint32
+	machine, disabled                  bool
 }
 
 type credentialEntry struct {
@@ -35,7 +43,23 @@ func NewCredsWriter(w io.Writer, closer io.Closer) *CredsWriter {
 	return &CredsWriter{
 		w:      w,
 		closer: closer,
+		ntds:   make(map[string]ntdsCredentialEntry),
 	}
+}
+
+// ExportNTDSCurrentHash is the explicit highly-sensitive NTDS export path.
+// The raw bytes are converted immediately and are never attached to a
+// Finding or any persisted scan metadata.
+func (c *CredsWriter) ExportNTDSCurrentHash(domain, account, source string, rid uint32, sid string, machine, disabled bool, hash []byte) error {
+	if len(hash) != 16 {
+		return fmt.Errorf("NTDS current hash must be 16 bytes")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry := ntdsCredentialEntry{domain: strings.TrimSpace(domain), account: strings.TrimSpace(account), source: strings.TrimSpace(source), sid: strings.TrimSpace(sid), rid: rid, machine: machine, disabled: disabled, hash: hex.EncodeToString(hash)}
+	key := strings.ToLower(entry.domain) + "\x00" + strings.ToLower(entry.account) + fmt.Sprintf("\x00%d\x00%s\x00%s\x00%s", entry.rid, entry.sid, entry.source, entry.hash)
+	c.ntds[key] = entry
+	return nil
 }
 
 func (c *CredsWriter) WriteFinding(f scanner.Finding) error {
@@ -50,7 +74,16 @@ func (c *CredsWriter) Close() error {
 	defer c.mu.Unlock()
 
 	entries := buildCredentialEntries(augmentFindingsForReporting(c.findings))
-	if len(entries) == 0 {
+	ntdsEntries := make([]ntdsCredentialEntry, 0, len(c.ntds))
+	for _, entry := range c.ntds {
+		ntdsEntries = append(ntdsEntries, entry)
+	}
+	sort.Slice(ntdsEntries, func(i, j int) bool {
+		left := strings.ToLower(ntdsEntries[i].domain + "\x00" + ntdsEntries[i].account + fmt.Sprintf("\x00%d\x00%s\x00%s", ntdsEntries[i].rid, ntdsEntries[i].source, ntdsEntries[i].hash))
+		right := strings.ToLower(ntdsEntries[j].domain + "\x00" + ntdsEntries[j].account + fmt.Sprintf("\x00%d\x00%s\x00%s", ntdsEntries[j].rid, ntdsEntries[j].source, ntdsEntries[j].hash))
+		return left < right
+	})
+	if len(entries) == 0 && len(ntdsEntries) == 0 {
 		if _, err := io.WriteString(c.w, "# No high-confidence credentials were exported.\n"); err != nil {
 			if c.closer != nil {
 				_ = c.closer.Close()
@@ -113,6 +146,30 @@ func (c *CredsWriter) Close() error {
 			builder.WriteString(field.Label + ": " + field.Value + "\n")
 		}
 		builder.WriteString("\n")
+	}
+	if len(ntdsEntries) > 0 {
+		if builder.Len() > 0 {
+			builder.WriteString("\n")
+		}
+		builder.WriteString("==== NTDS Current NT Hashes ====\n")
+		for _, entry := range ntdsEntries {
+			builder.WriteString("Source: " + entry.source + "\n")
+			if entry.domain != "" {
+				builder.WriteString("Domain: " + entry.domain + "\n")
+			}
+			builder.WriteString("Account: " + entry.account + "\n")
+			builder.WriteString(fmt.Sprintf("RID: %d\n", entry.rid))
+			if entry.sid != "" {
+				builder.WriteString("SID: " + entry.sid + "\n")
+			}
+			kind := "user"
+			if entry.machine {
+				kind = "machine"
+			}
+			builder.WriteString("Account type: " + kind + "\n")
+			builder.WriteString(fmt.Sprintf("Disabled: %t\n", entry.disabled))
+			builder.WriteString("Current NT hash: " + entry.hash + "\n\n")
+		}
 	}
 
 	if _, err := io.WriteString(c.w, strings.TrimRight(builder.String(), "\n")+"\n"); err != nil {

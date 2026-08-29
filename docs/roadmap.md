@@ -16,7 +16,9 @@ PolEKList AES LSA-key derivation, structured LSA-secret metadata, and cached
 domain-material discovery. Raw secret bytes are not returned in findings or
 reports. Legacy pre-Vista LSA protection remains deferred.
 
-## NTDS.DIT + SYSTEM
+## NTDS.DIT + SYSTEM (implemented)
 
-Add validated offline analysis of domain credential material from NTDS.DIT paired
-with SYSTEM. This is not currently implemented.
+Modern read-only NTDS.DIT + SYSTEM analysis now recovers current domain NT hash
+metadata from origin-safe loose and WIM pairs. Password history,
+supplementalCredentials/Kerberos keys, and legacy database formats remain
+deferred.

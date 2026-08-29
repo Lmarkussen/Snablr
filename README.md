@@ -95,9 +95,9 @@ The result is grouped by target and shows UNC share roots plus a readable-share 
 
 ## WIM and Offline Windows Artifacts
 
-When enabled and `wimlib-imagex` is installed, Snablr can inspect bounded WIM images and extract selected Windows artifacts for local analysis. Current offline parsing validates and correlates `SAM` with `SYSTEM`, and modern Vista-and-later `SECURITY` with `SYSTEM`, including safe account, LSA-secret, and cached-domain counts in validated bundle findings; raw hashes, secrets, and key material are not printed.
+When enabled and `wimlib-imagex` is installed, Snablr can inspect bounded WIM images and extract selected Windows artifacts for local analysis. Current offline parsing validates and correlates `SAM` with `SYSTEM`, modern Vista-and-later `SECURITY` with `SYSTEM`, and current NT credential attributes from `NTDS.DIT` with `SYSTEM`, including safe account, LSA-secret, cached-domain, and domain-account counts in validated bundle findings; raw hashes, secrets, and key material are not printed.
 
-WIM artifact detection/extraction also recognizes selected `SECURITY` and `NTDS.DIT` paths. SECURITY parsing supports the modern `PolEKList` AES scheme and reports structured metadata only; legacy pre-Vista LSA protection and NTDS domain-credential extraction remain unsupported. WIM inspection is bounded by configured image, member, byte, and size limits. If `wimlib-imagex` is unavailable or a limit is reached, the file is not treated as successfully inspected and can be retried later.
+WIM artifact detection/extraction also recognizes selected `SECURITY` and `NTDS.DIT` paths. SECURITY parsing supports the modern `PolEKList` AES scheme and NTDS parsing supports current domain NT hashes from a paired database and SYSTEM boot key. Cached-domain verifier material is not an NTLM hash. Legacy pre-Vista LSA protection, NTDS password history, and supplemental/Kerberos credential extraction remain unsupported. WIM inspection is bounded by configured image, member, byte, and size limits. If `wimlib-imagex` is unavailable or a limit is reached, the file is not treated as successfully inspected and can be retried later.
 
 ## Incremental and Multi-Credential Pivot Scanning
 

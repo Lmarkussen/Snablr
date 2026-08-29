@@ -102,6 +102,13 @@ type FindingSink interface {
 	Close() error
 }
 
+// SensitiveCredentialExporter is implemented only by the explicit
+// highly-sensitive credential output. Raw hashes are never part of Finding
+// or persisted scan results.
+type SensitiveCredentialExporter interface {
+	ExportNTDSCurrentHash(domain, account, source string, rid uint32, sid string, machine, disabled bool, hash []byte) error
+}
+
 type SuppressedFinding struct {
 	Host     string `json:"host,omitempty"`
 	Share    string `json:"share,omitempty"`

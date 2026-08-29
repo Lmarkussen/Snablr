@@ -74,6 +74,13 @@ func (s *suppressionWriter) WriteFinding(f scanner.Finding) error {
 	return s.inner.WriteFinding(f)
 }
 
+func (s *suppressionWriter) ExportNTDSCurrentHash(domain, account, source string, rid uint32, sid string, machine, disabled bool, hash []byte) error {
+	if exporter, ok := s.inner.(scanner.SensitiveCredentialExporter); ok {
+		return exporter.ExportNTDSCurrentHash(domain, account, source, rid, sid, machine, disabled, hash)
+	}
+	return nil
+}
+
 func (s *suppressionWriter) Close() error {
 	SetSuppressionSummary(s.inner, buildSuppressionSummary(s.suppressed, s.sampleLimit))
 	return s.inner.Close()

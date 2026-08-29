@@ -1,5 +1,5 @@
 // Package artifactbundle correlates reusable binary Windows artifacts and
-// orchestrates standalone SAM + SYSTEM and SECURITY + SYSTEM parsing. It is independent of WIM,
+// orchestrates standalone SAM + SYSTEM, SECURITY + SYSTEM, and NTDS.DIT + SYSTEM parsing. It is independent of WIM,
 // SMB, scanner, and reporting implementations.
 package artifactbundle
 
@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"snablr/internal/artifact"
+	"snablr/internal/ntdsparse"
 	"snablr/internal/registryhive"
 	"snablr/internal/samparse"
 	"snablr/internal/securityparse"
@@ -74,6 +75,7 @@ type BundleOrigin struct {
 	SAMPath       string
 	SYSTEMPath    string
 	SECURITYPath  string
+	NTDSPath      string
 }
 
 // SAMBundleResult contains structured parsing output without formatting hash
@@ -109,6 +111,25 @@ type SecurityBundleResult struct {
 	Failure             error
 }
 
+// NTDSBundleResult contains safe metadata from an NTDS.DIT + SYSTEM pair.
+// Recovered hashes are retained only inside ntdsparse account values.
+type NTDSBundleResult struct {
+	BundleID                  string
+	Origin                    BundleOrigin
+	Status                    ParseStatus
+	DatabaseVersion           uint32
+	RowsConsidered            int
+	AccountsDiscovered        int
+	UserAccounts              int
+	MachineAccounts           int
+	DisabledAccounts          int
+	AccountsWithCurrentNTHash int
+	Accounts                  []ntdsparse.Account
+	PEKRevision               uint32
+	Domain                    string
+	Failure                   error
+}
+
 // AddResult reports whether an artifact is waiting, duplicated, or completed a
 // parse. Parse failures are represented in Result rather than as an ambiguous
 // Add error.
@@ -117,6 +138,7 @@ type AddResult struct {
 	Key            BundleKey
 	Result         *SAMBundleResult
 	SecurityResult *SecurityBundleResult
+	NTDSResult     *NTDSBundleResult
 }
 
 // Options bounds retained bundles and concurrent parsing.
@@ -131,7 +153,7 @@ func (o Options) withDefaults() Options {
 		o.MaxPendingBundles = 1024
 	}
 	if o.MaxArtifactsPerBundle <= 0 {
-		o.MaxArtifactsPerBundle = 3
+		o.MaxArtifactsPerBundle = 4
 	}
 	if o.MaxConcurrentParsers <= 0 {
 		o.MaxConcurrentParsers = 1
@@ -176,14 +198,14 @@ func KeyFor(origin artifact.Origin) BundleKey {
 	container := cleanPath(origin.ContainerPath)
 	if strings.EqualFold(origin.ContainerType, "wim") {
 		key.Scope = container
-		key.Context = fmt.Sprintf("wim-image-%d:%s", origin.ImageIndex, path.Dir(member))
+		key.Context = fmt.Sprintf("wim-image-%d:%s", origin.ImageIndex, artifactScope(member))
 		return key
 	}
 	logical := member
 	if logical == "" {
 		logical = container
 	}
-	key.Scope = path.Dir(logical)
+	key.Scope = artifactScope(logical)
 	if key.Scope == "." {
 		key.Scope = ""
 	}
@@ -191,7 +213,22 @@ func KeyFor(origin artifact.Origin) BundleKey {
 	return key
 }
 
-// Add accepts SAM, SECURITY, or SYSTEM. Once accepted, ownership transfers to the
+// artifactScope uses the Windows directory as the common origin for the
+// recognized offline artifacts. NTDS.DIT is normally under Windows/NTDS while
+// SYSTEM, SAM, and SECURITY are under Windows/System32/config; they still
+// belong to one installation. Other paths retain the narrower parent scope.
+func artifactScope(logical string) string {
+	scope := path.Dir(logical)
+	parts := strings.Split(strings.TrimPrefix(logical, "/"), "/")
+	for i, part := range parts {
+		if strings.EqualFold(part, "windows") && i < len(parts)-1 {
+			return path.Join(append(parts[:i+1], "")...)
+		}
+	}
+	return scope
+}
+
+// Add accepts SAM, SECURITY, NTDS.DIT, or SYSTEM. Once accepted, ownership transfers to the
 // coordinator. A complete pair is parsed synchronously under a bounded parser
 // semaphore, then both artifacts are closed before the result is returned.
 func (c *Coordinator) Add(ctx context.Context, binary artifact.Binary) (AddResult, error) {
@@ -202,7 +239,7 @@ func (c *Coordinator) Add(ctx context.Context, binary artifact.Binary) (AddResul
 		return AddResult{State: ArtifactRejected}, ErrInvalidArtifact
 	}
 	kind := binary.Kind()
-	if kind != artifact.KindSAM && kind != artifact.KindSYSTEM && kind != artifact.KindSECURITY {
+	if kind != artifact.KindSAM && kind != artifact.KindSYSTEM && kind != artifact.KindSECURITY && kind != artifact.KindNTDS {
 		return AddResult{State: ArtifactRejected}, ErrUnsupportedKind
 	}
 	key := KeyFor(binary.Origin())
@@ -259,13 +296,24 @@ func (c *Coordinator) Add(ctx context.Context, binary artifact.Binary) (AddResul
 		return AddResult{State: ArtifactRejected, Key: key}, ErrArtifactLimit
 	}
 	p.byKind[kind] = binary
-	if p.byKind[artifact.KindSYSTEM] == nil || (p.byKind[artifact.KindSAM] == nil && p.byKind[artifact.KindSECURITY] == nil) {
+	if p.byKind[artifact.KindSYSTEM] == nil || (p.byKind[artifact.KindSAM] == nil && p.byKind[artifact.KindSECURITY] == nil && p.byKind[artifact.KindNTDS] == nil) {
 		c.mu.Unlock()
 		return AddResult{State: ArtifactWaiting, Key: key}, nil
 	}
 	delete(c.pending, key)
 	c.processing[key] = true
 	c.mu.Unlock()
+	if _, hasNTDS := p.byKind[artifact.KindNTDS]; hasNTDS && p.byKind[artifact.KindSAM] == nil && p.byKind[artifact.KindSECURITY] == nil {
+		result := c.parseNTDS(ctx, p, true)
+		c.mu.Lock()
+		delete(c.processing, key)
+		c.mu.Unlock()
+		return AddResult{State: stateFor(result.Status), Key: key, NTDSResult: result}, nil
+	}
+	var ntdsResult *NTDSBundleResult
+	if p.byKind[artifact.KindNTDS] != nil && (p.byKind[artifact.KindSAM] != nil || p.byKind[artifact.KindSECURITY] != nil) {
+		ntdsResult = c.parseNTDS(ctx, p, false)
+	}
 
 	if _, hasSAM := p.byKind[artifact.KindSAM]; hasSAM {
 		if _, hasSECURITY := p.byKind[artifact.KindSECURITY]; hasSECURITY && p.byKind[artifact.KindSYSTEM] != nil {
@@ -273,7 +321,7 @@ func (c *Coordinator) Add(ctx context.Context, binary artifact.Binary) (AddResul
 			c.mu.Lock()
 			delete(c.processing, key)
 			c.mu.Unlock()
-			return AddResult{State: stateFor(resultSECURITY.Status), Key: key, Result: resultSAM, SecurityResult: resultSECURITY}, nil
+			return AddResult{State: stateFor(resultSECURITY.Status), Key: key, Result: resultSAM, SecurityResult: resultSECURITY, NTDSResult: ntdsResult}, nil
 		}
 	}
 	if _, ok := p.byKind[artifact.KindSECURITY]; ok {
@@ -281,13 +329,13 @@ func (c *Coordinator) Add(ctx context.Context, binary artifact.Binary) (AddResul
 		c.mu.Lock()
 		delete(c.processing, key)
 		c.mu.Unlock()
-		return AddResult{State: stateFor(result.Status), Key: key, SecurityResult: result}, nil
+		return AddResult{State: stateFor(result.Status), Key: key, SecurityResult: result, NTDSResult: ntdsResult}, nil
 	}
 	result := c.parse(ctx, p)
 	c.mu.Lock()
 	delete(c.processing, key)
 	c.mu.Unlock()
-	return AddResult{State: stateFor(result.Status), Key: key, Result: result}, nil
+	return AddResult{State: stateFor(result.Status), Key: key, Result: result, NTDSResult: ntdsResult}, nil
 }
 
 func stateFor(status ParseStatus) AddState {
@@ -655,6 +703,82 @@ func (c *Coordinator) parseSecurityWithBootKey(ctx context.Context, p *pendingBu
 	return result
 }
 
+func (c *Coordinator) parseNTDS(ctx context.Context, p *pendingBundle, release bool) *NTDSBundleResult {
+	closeOwned := func() {
+		if release {
+			closeArtifacts(p)
+		}
+	}
+	result := &NTDSBundleResult{BundleID: bundleID(p.key), Origin: originFor(p.key, p.byKind[artifact.KindNTDS], p.byKind[artifact.KindSYSTEM])}
+	if err := ctx.Err(); err != nil {
+		result.Status, result.Failure = BundleFailed, err
+		closeOwned()
+		return result
+	}
+	select {
+	case c.parsers <- struct{}{}:
+		defer func() { <-c.parsers }()
+	case <-ctx.Done():
+		result.Status, result.Failure = BundleFailed, ctx.Err()
+		closeOwned()
+		return result
+	}
+	system := p.byKind[artifact.KindSYSTEM]
+	ntds := p.byKind[artifact.KindNTDS]
+	systemReader, systemCloser, err := system.OpenAt()
+	if err != nil {
+		result.Status, result.Failure = BundleFailed, err
+		closeOwned()
+		return result
+	}
+	systemHive, err := registryhive.Open(systemReader, system.Size(), registryhive.Options{})
+	if err != nil {
+		_ = systemCloser.Close()
+		result.Status, result.Failure = BundleMalformed, err
+		closeOwned()
+		return result
+	}
+	keyResult, err := systemkey.Derive(systemHive)
+	_ = systemCloser.Close()
+	if err != nil {
+		result.Status, result.Failure = BundleMalformed, err
+		closeOwned()
+		return result
+	}
+	reader, closer, err := ntds.OpenAt()
+	if err != nil {
+		result.Status, result.Failure = BundleFailed, err
+		closeOwned()
+		return result
+	}
+	parsed, err := ntdsparse.Parse(ntdsparse.Input{Reader: reader, Size: ntds.Size(), BootKey: keyResult.BootKey, Context: ctx})
+	_ = closer.Close()
+	clearBootKey(&keyResult.BootKey)
+	closeOwned()
+	result.DatabaseVersion = parsed.DatabaseVersion
+	result.RowsConsidered = parsed.RowsConsidered
+	result.AccountsDiscovered = parsed.AccountsDiscovered
+	result.UserAccounts = parsed.UserAccounts
+	result.MachineAccounts = parsed.MachineAccounts
+	result.DisabledAccounts = parsed.DisabledAccounts
+	result.AccountsWithCurrentNTHash = parsed.AccountsWithCurrentNT
+	result.Accounts = parsed.Accounts
+	result.PEKRevision = parsed.PEKRevision
+	for _, account := range parsed.Accounts {
+		if account.Domain != "" {
+			result.Domain = account.Domain
+			break
+		}
+	}
+	if err != nil {
+		result.Status = BundleMalformed
+		result.Failure = err
+		return result
+	}
+	result.Status = BundleParsed
+	return result
+}
+
 // Flush closes all currently incomplete bundles and returns their normalized
 // identities. It is deterministic and useful at share/scan scope boundaries.
 func (c *Coordinator) Flush() []BundleKey {
@@ -727,7 +851,7 @@ func originFor(key BundleKey, first, second artifact.Binary) BundleOrigin {
 	if base == nil {
 		base = first
 	}
-	var sam, system, security artifact.Binary
+	var sam, system, security, ntds artifact.Binary
 	for _, binary := range []artifact.Binary{first, second} {
 		if binary == nil {
 			continue
@@ -739,16 +863,21 @@ func originFor(key BundleKey, first, second artifact.Binary) BundleOrigin {
 			system = binary
 		case artifact.KindSECURITY:
 			security = binary
+		case artifact.KindNTDS:
+			ntds = binary
 		}
 	}
 	if base == nil {
 		base = sam
 	}
+	if base == nil {
+		base = ntds
+	}
 	origin := base.Origin()
 	return BundleOrigin{
 		Host: key.Host, Share: key.Share, Scope: key.Scope, Context: key.Context,
 		SourceType: clean(origin.ContainerType), ContainerPath: origin.ContainerPath,
-		ImageIndex: origin.ImageIndex, SAMPath: logicalPath(sam), SYSTEMPath: logicalPath(system), SECURITYPath: logicalPath(security),
+		ImageIndex: origin.ImageIndex, SAMPath: logicalPath(sam), SYSTEMPath: logicalPath(system), SECURITYPath: logicalPath(security), NTDSPath: logicalPath(ntds),
 	}
 }
 

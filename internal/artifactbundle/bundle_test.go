@@ -83,6 +83,20 @@ func TestKeyForLooseAndRegBackScopes(t *testing.T) {
 	}
 }
 
+func TestKeyForNTDSAndSystemShareWindowsOrigin(t *testing.T) {
+	ntds := looseOrigin(`/backup/Windows/NTDS/ntds.dit`)
+	system := looseOrigin(`/backup/Windows/System32/config/SYSTEM`)
+	if KeyFor(ntds) != KeyFor(system) {
+		t.Fatalf("NTDS and SYSTEM from one Windows origin did not pair: %#v %#v", KeyFor(ntds), KeyFor(system))
+	}
+	if KeyFor(looseOrigin(`/backup-A/Windows/NTDS/ntds.dit`)) == KeyFor(system) {
+		t.Fatal("NTDS from another backup origin was paired")
+	}
+	if KeyFor(wimOrigin(`Windows/NTDS/ntds.dit`, 1, "backup.wim")) != KeyFor(wimOrigin(`Windows/System32/config/SYSTEM`, 1, "backup.wim")) {
+		t.Fatal("WIM NTDS and SYSTEM from one image did not pair")
+	}
+}
+
 func TestCoordinatorParsesOutOfOrderWIMPairAndCleansArtifacts(t *testing.T) {
 	sam, system := fixturePair(t, wimOrigin(`Windows/System32/config/SAM`, 1, "backup.wim"), wimOrigin(`Windows/System32/config/SYSTEM`, 1, "backup.wim"))
 	c := New(Options{})

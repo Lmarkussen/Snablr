@@ -266,6 +266,9 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	if exporter, ok := sink.(scanner.SensitiveCredentialExporter); ok {
 		engine.SetCredentialExporter(exporter)
 	}
+	if recorder, ok := sink.(scanner.CredentialCandidateSink); ok {
+		engine.SetCredentialCandidateSink(recorder)
+	}
 	output.SetCancelFunc(sink, scanCancel)
 	output.SetScanProfile(sink, strings.TrimSpace(cfg.Scan.Profile))
 	defer func() {

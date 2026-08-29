@@ -147,9 +147,9 @@ func (m *MarkdownWriter) Close() error {
 			return err
 		}
 		for _, finding := range augmented {
-			snippet := firstNonEmpty(finding.Context, finding.Snippet)
+			snippet := redactPrivateKeyMaterial(firstNonEmpty(finding.Context, finding.Snippet))
 			if snippet == "" {
-				snippet = firstNonEmpty(finding.MatchedText, finding.Match, finding.MatchedTextRedacted)
+				snippet = redactPrivateKeyMaterial(firstNonEmpty(finding.MatchedText, finding.Match, finding.MatchedTextRedacted))
 			}
 			ruleLabel := finding.RuleName
 			if strings.TrimSpace(ruleLabel) == "" {

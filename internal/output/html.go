@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/diff"
 	"snablr/internal/metrics"
 	"snablr/internal/planner"
@@ -23,6 +24,7 @@ var reportTemplates embed.FS
 type HTMLWriter struct {
 	closer          io.Closer
 	findings        []scanner.Finding
+	candidates      []credentialanalysis.Candidate
 	baseline        []scanner.Finding
 	mu              sync.Mutex
 	metrics         metrics.Snapshot
@@ -128,6 +130,13 @@ func (h *HTMLWriter) WriteFinding(f scanner.Finding) error {
 
 	h.summary.RecordFinding(f)
 	h.findings = append(h.findings, f)
+	return nil
+}
+
+func (h *HTMLWriter) RecordCredentialCandidate(candidate credentialanalysis.Candidate) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.candidates = append(h.candidates, candidate)
 	return nil
 }
 
@@ -241,6 +250,7 @@ func (h *HTMLWriter) Close() error {
 		SupportingFindingCount      int
 		FilterOptions               reportFilterOptions
 		Validation                  *validationSummary
+		CredentialAnalysis          credentialanalysis.Report
 	}{
 		Version:                     version.Short(),
 		Profile:                     h.profile,
@@ -261,6 +271,7 @@ func (h *HTMLWriter) Close() error {
 		SupportingFindingCount:      len(supportingFindings),
 		FilterOptions:               filterOptions,
 		Validation:                  validation,
+		CredentialAnalysis:          analyzeCandidates(h.findings, h.candidates),
 	}
 	data.TopAccessPaths = topAccessPaths(data.AccessPaths, 8)
 
@@ -422,36 +433,36 @@ func signalMatchLabel(signal string) string {
 
 func displayMatch(f scanner.Finding) string {
 	if strings.TrimSpace(f.MatchedTextRedacted) != "" {
-		return boundReportText(strings.TrimSpace(f.MatchedTextRedacted), 240)
+		return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.MatchedTextRedacted)), 240)
 	}
 	if strings.TrimSpace(f.MatchedText) != "" {
-		return boundReportText(strings.TrimSpace(f.MatchedText), 240)
+		return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.MatchedText)), 240)
 	}
-	return boundReportText(strings.TrimSpace(f.Match), 160)
+	return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.Match)), 160)
 }
 
 func displayRawMatch(f scanner.Finding) string {
 	if strings.TrimSpace(f.MatchedText) != "" {
-		return boundReportText(strings.TrimSpace(f.MatchedText), 240)
+		return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.MatchedText)), 240)
 	}
-	return boundReportText(strings.TrimSpace(f.Match), 160)
+	return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.Match)), 160)
 }
 
 func displayContext(f scanner.Finding) string {
 	if strings.TrimSpace(f.ContextRedacted) != "" {
-		return boundReportText(strings.TrimSpace(f.ContextRedacted), 320)
+		return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.ContextRedacted)), 320)
 	}
 	if strings.TrimSpace(f.Context) != "" {
-		return boundReportText(strings.TrimSpace(f.Context), 320)
+		return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.Context)), 320)
 	}
-	return boundReportText(strings.TrimSpace(f.Snippet), 240)
+	return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.Snippet)), 240)
 }
 
 func displayRawContext(f scanner.Finding) string {
 	if strings.TrimSpace(f.Context) != "" {
-		return boundReportText(strings.TrimSpace(f.Context), 320)
+		return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.Context)), 320)
 	}
-	return boundReportText(strings.TrimSpace(f.Snippet), 240)
+	return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.Snippet)), 240)
 }
 
 func findingSearchText(f scanner.Finding, changedFields []string, diffStatus string) string {
@@ -479,9 +490,9 @@ func findingSearchText(f scanner.Finding, changedFields []string, diffStatus str
 		f.MatchReason,
 		f.RuleExplanation,
 		f.RuleRemediation,
-		boundReportText(f.Snippet, 180),
-		boundReportText(f.ContextRedacted, 180),
-		boundReportText(firstNonEmpty(f.MatchedTextRedacted, f.MatchedText), 180),
+		boundReportText(redactPrivateKeyMaterial(f.Snippet), 180),
+		boundReportText(redactPrivateKeyMaterial(f.ContextRedacted), 180),
+		boundReportText(redactPrivateKeyMaterial(firstNonEmpty(f.MatchedTextRedacted, f.MatchedText)), 180),
 		f.PotentialAccount,
 		diffStatus,
 		joinListOrEmpty(changedFields),

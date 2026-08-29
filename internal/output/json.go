@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/diff"
 	"snablr/internal/metrics"
 	"snablr/internal/scanner"
@@ -14,6 +15,7 @@ import (
 type JSONWriter struct {
 	closer              io.Closer
 	findings            []scanner.Finding
+	candidates          []credentialanalysis.Candidate
 	baseline            []scanner.Finding
 	baselinePerformance *diff.PerformanceSummary
 	mu                  sync.Mutex
@@ -45,6 +47,13 @@ func (j *JSONWriter) WriteFinding(f scanner.Finding) error {
 
 	j.summary.RecordFinding(f)
 	j.findings = append(j.findings, f)
+	return nil
+}
+
+func (j *JSONWriter) RecordCredentialCandidate(candidate credentialanalysis.Candidate) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.candidates = append(j.candidates, candidate)
 	return nil
 }
 
@@ -162,6 +171,7 @@ func (j *JSONWriter) Close() error {
 		Suppression:             j.suppression,
 		BackupArtifactInventory: j.backupArtifacts.Snapshot(),
 		Findings:                make([]jsonFinding, 0, len(augmented)),
+		CredentialAnalysis:      analyzeCandidates(j.findings, j.candidates),
 	}
 	performanceSummary := buildPerformanceSummary(report.Summary, augmented)
 	report.Performance = performanceSummaryToJSON(performanceSummary)
@@ -200,19 +210,20 @@ func (j *JSONWriter) Close() error {
 }
 
 type jsonReport struct {
-	Profile                 string                   `json:"profile,omitempty"`
-	Summary                 summarySnapshot          `json:"summary"`
-	Metrics                 metrics.Snapshot         `json:"metrics"`
-	CategorySummaries       []categorySummary        `json:"category_summaries,omitempty"`
-	AccessPaths             []accessPathSummary      `json:"access_paths,omitempty"`
-	Suppression             *suppressionSummary      `json:"suppression,omitempty"`
-	BackupArtifactInventory *backupArtifactInventory `json:"backup_artifact_inventory,omitempty"`
-	DiffSummary             *jsonDiffSummary         `json:"diff_summary,omitempty"`
-	Performance             *jsonPerformanceSummary  `json:"performance,omitempty"`
-	PerformanceComparison   *jsonPerformanceCompare  `json:"performance_comparison,omitempty"`
-	ValidationMode          *validationModeSummary   `json:"validation_mode,omitempty"`
-	Validation              *validationSummary       `json:"validation,omitempty"`
-	Findings                []jsonFinding            `json:"findings"`
+	Profile                 string                    `json:"profile,omitempty"`
+	Summary                 summarySnapshot           `json:"summary"`
+	Metrics                 metrics.Snapshot          `json:"metrics"`
+	CategorySummaries       []categorySummary         `json:"category_summaries,omitempty"`
+	AccessPaths             []accessPathSummary       `json:"access_paths,omitempty"`
+	Suppression             *suppressionSummary       `json:"suppression,omitempty"`
+	BackupArtifactInventory *backupArtifactInventory  `json:"backup_artifact_inventory,omitempty"`
+	DiffSummary             *jsonDiffSummary          `json:"diff_summary,omitempty"`
+	Performance             *jsonPerformanceSummary   `json:"performance,omitempty"`
+	PerformanceComparison   *jsonPerformanceCompare   `json:"performance_comparison,omitempty"`
+	ValidationMode          *validationModeSummary    `json:"validation_mode,omitempty"`
+	Validation              *validationSummary        `json:"validation,omitempty"`
+	Findings                []jsonFinding             `json:"findings"`
+	CredentialAnalysis      credentialanalysis.Report `json:"credential_analysis"`
 }
 
 type jsonPerformanceSummary struct {
@@ -329,15 +340,15 @@ func toJSONFinding(f scanner.Finding, delta diff.FindingDelta) jsonFinding {
 		SupportingSignals:   append([]scanner.SupportingSignal{}, f.SupportingSignals...),
 		Tags:                append([]string{}, f.Tags...),
 		SignalType:          f.SignalType,
-		Match:               f.Match,
-		MatchedText:         f.MatchedText,
-		MatchedTextRedacted: f.MatchedTextRedacted,
-		Snippet:             f.Snippet,
-		Context:             f.Context,
-		ContextRedacted:     f.ContextRedacted,
+		Match:               redactPrivateKeyMaterial(f.Match),
+		MatchedText:         redactPrivateKeyMaterial(f.MatchedText),
+		MatchedTextRedacted: redactPrivateKeyMaterial(f.MatchedTextRedacted),
+		Snippet:             redactPrivateKeyMaterial(f.Snippet),
+		Context:             redactPrivateKeyMaterial(f.Context),
+		ContextRedacted:     redactPrivateKeyMaterial(f.ContextRedacted),
 		PotentialAccount:    f.PotentialAccount,
 		LineNumber:          f.LineNumber,
-		MatchSnippet:        f.Snippet,
+		MatchSnippet:        redactPrivateKeyMaterial(f.Snippet),
 		MatchReason:         f.MatchReason,
 		RuleExplanation:     f.RuleExplanation,
 		RuleRemediation:     f.RuleRemediation,

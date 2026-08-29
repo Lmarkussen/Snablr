@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"snablr/internal/config"
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/diff"
 	"snablr/internal/metrics"
 	"snablr/internal/scanner"
@@ -257,6 +258,19 @@ func (m *MultiWriter) ExportNTDSCurrentHash(domain, account, source string, rid 
 	for _, sink := range m.sinks {
 		if exporter, ok := sink.(scanner.SensitiveCredentialExporter); ok {
 			if err := exporter.ExportNTDSCurrentHash(domain, account, source, rid, sid, machine, disabled, hash); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (m *MultiWriter) RecordCredentialCandidate(candidate credentialanalysis.Candidate) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sink := range m.sinks {
+		if recorder, ok := sink.(scanner.CredentialCandidateSink); ok {
+			if err := recorder.RecordCredentialCandidate(candidate); err != nil {
 				return err
 			}
 		}

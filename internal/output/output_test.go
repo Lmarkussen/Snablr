@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"snablr/internal/config"
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/diff"
 	"snablr/internal/scanner"
 	"snablr/internal/seed"
@@ -1386,6 +1387,8 @@ func TestCredsWriterExportsCuratedHighConfidenceCredentials(t *testing.T) {
 		"Password: Winter2025!",
 		`Path: \\fs01\Users\Users\Alice\.ssh\id_rsa`,
 		"Type: -----BEGIN OPENSSH PRIVATE KEY-----",
+		"==== POTENTIAL CREDENTIAL MATERIAL — REVIEW ====",
+		"Value: EXAMPLE_PASSWORD_001",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected creds export to contain %q, got:\n%s", want, output)
@@ -1393,7 +1396,6 @@ func TestCredsWriterExportsCuratedHighConfidenceCredentials(t *testing.T) {
 	}
 	for _, dontWant := range []string{
 		"Password Export Filename",
-		"EXAMPLE_PASSWORD_001",
 		"==== infrastructure ====",
 	} {
 		if strings.Contains(output, dontWant) {
@@ -1426,6 +1428,49 @@ func TestCredsWriterFormatsBundleContextWithoutInventingUser(t *testing.T) {
 	}
 	if strings.Contains(output, "User: bundle") {
 		t.Fatalf("did not expect invented user label for bundle context, got:\n%s", output)
+	}
+}
+
+func TestCredentialAnalysisIsConsistentAcrossSafeReporters(t *testing.T) {
+	candidates := []credentialanalysis.Candidate{
+		{Verification: credentialanalysis.Confirmed, CredentialType: "nt_hash", Identity: "Administrator", Domain: "LAB", Value: "0123456789abcdef0123456789abcdef", ValidationBasis: "cryptographic_ntds_recovery", Path: "Windows/NTDS/ntds.dit"},
+		{Verification: credentialanalysis.Review, CredentialType: "password", Value: "review-only-secret", ReviewReasons: []string{"identity association ambiguous"}, Path: "notes.txt"},
+	}
+	var jsonBuf bytes.Buffer
+	jsonWriter := NewJSONWriter(&jsonBuf, nil, true)
+	for _, candidate := range candidates {
+		if err := jsonWriter.RecordCredentialCandidate(candidate); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := jsonWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(jsonBuf.String(), "0123456789abcdef0123456789abcdef") || strings.Contains(jsonBuf.String(), "review-only-secret") {
+		t.Fatalf("safe JSON contains candidate value: %s", jsonBuf.String())
+	}
+	if !strings.Contains(jsonBuf.String(), `"verification": "confirmed"`) || !strings.Contains(jsonBuf.String(), `"verification": "review"`) {
+		t.Fatalf("JSON classification missing: %s", jsonBuf.String())
+	}
+
+	var htmlBuf bytes.Buffer
+	htmlWriter, err := NewHTMLWriter(&htmlBuf, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range candidates {
+		if err := htmlWriter.RecordCredentialCandidate(candidate); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := htmlWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(htmlBuf.String(), "Confirmed Credentials") || !strings.Contains(htmlBuf.String(), "Potential Credential Material") {
+		t.Fatalf("HTML classification sections missing")
+	}
+	if strings.Contains(htmlBuf.String(), "review-only-secret") || strings.Contains(htmlBuf.String(), "0123456789abcdef0123456789abcdef") {
+		t.Fatalf("safe HTML contains candidate value")
 	}
 }
 
@@ -1462,6 +1507,88 @@ func TestCredsWriterDeduplicatesCredentialEntriesAcrossPaths(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected deduplicated creds export to contain %q, got:\n%s", want, output)
 		}
+	}
+}
+
+func TestCredsWriterRendersEverySharedConfirmedCandidate(t *testing.T) {
+	var buf bytes.Buffer
+	writer := NewCredsWriter(&buf, nopCloser{})
+	candidates := []credentialanalysis.Candidate{
+		{Verification: credentialanalysis.Confirmed, CredentialType: "password", Identity: "svc_json", Value: "Json-Secret-001!", Path: "config.json", ValidationBasis: "structured JSON object"},
+		{Verification: credentialanalysis.Confirmed, CredentialType: "private_key", Value: "RSA PRIVATE KEY", Path: "id_rsa", ValidationBasis: "parsed_private_key"},
+	}
+	for _, candidate := range candidates {
+		if err := writer.RecordCredentialCandidate(candidate); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "Count: 2") {
+		t.Fatalf("expected shared confirmed count, got:\n%s", output)
+	}
+	for _, value := range []string{"Json-Secret-001!", "RSA PRIVATE KEY", "Validation: structured JSON object", "Validation: parsed_private_key"} {
+		if !strings.Contains(output, value) {
+			t.Fatalf("expected shared candidate %q in export, got:\n%s", value, output)
+		}
+	}
+}
+
+func TestCredsWriterExportsRawPrivateKeyAndAdditionalProvenance(t *testing.T) {
+	var buf bytes.Buffer
+	writer := NewCredsWriter(&buf, nopCloser{})
+	key := "-----BEGIN RSA PRIVATE KEY-----\nsynthetic-key-material\n-----END RSA PRIVATE KEY-----\n"
+	candidate := credentialanalysis.Candidate{
+		Verification: credentialanalysis.Confirmed, CredentialType: "private_key", Value: key,
+		Path: "config/id_rsa", Source: `\\fs01\\Users\\config\\id_rsa`,
+		ValidationBasis: "parsed_private_key",
+		Evidence:        []credentialanalysis.Evidence{{Path: "backup/id_rsa"}},
+	}
+	if err := writer.RecordCredentialCandidate(candidate); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output := buf.String()
+	for _, want := range []string{key, "Source: " + candidate.Source, "Also observed:", "- backup/id_rsa"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected %q in sensitive export, got:\n%s", want, output)
+		}
+	}
+}
+
+func TestSafeReportersRedactPrivateKeyBodies(t *testing.T) {
+	key := "-----BEGIN RSA PRIVATE KEY-----\nUNIQUE-PRIVATE-KEY-BODY\n-----END RSA PRIVATE KEY-----\n"
+	finding := scanner.Finding{FilePath: "id_rsa.pem", MatchedText: key, Context: key, Snippet: key, Match: key}
+
+	var jsonOut bytes.Buffer
+	jsonWriter := NewJSONWriter(&jsonOut, nil, false)
+	if err := jsonWriter.WriteFinding(finding); err != nil {
+		t.Fatal(err)
+	}
+	if err := jsonWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(jsonOut.String(), "UNIQUE-PRIVATE-KEY-BODY") {
+		t.Fatal("JSON safe report exposed private-key material")
+	}
+
+	var htmlOut bytes.Buffer
+	htmlWriter, err := NewHTMLWriter(&htmlOut, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := htmlWriter.WriteFinding(finding); err != nil {
+		t.Fatal(err)
+	}
+	if err := htmlWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(htmlOut.String(), "UNIQUE-PRIVATE-KEY-BODY") {
+		t.Fatal("HTML safe report exposed private-key material")
 	}
 }
 

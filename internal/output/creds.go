@@ -9,15 +9,17 @@ import (
 	"strings"
 	"sync"
 
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/scanner"
 )
 
 type CredsWriter struct {
-	closer   io.Closer
-	findings []scanner.Finding
-	ntds     map[string]ntdsCredentialEntry
-	mu       sync.Mutex
-	w        io.Writer
+	closer     io.Closer
+	findings   []scanner.Finding
+	ntds       map[string]ntdsCredentialEntry
+	candidates []credentialanalysis.Candidate
+	mu         sync.Mutex
+	w          io.Writer
 }
 
 type ntdsCredentialEntry struct {
@@ -59,6 +61,30 @@ func (c *CredsWriter) ExportNTDSCurrentHash(domain, account, source string, rid 
 	entry := ntdsCredentialEntry{domain: strings.TrimSpace(domain), account: strings.TrimSpace(account), source: strings.TrimSpace(source), sid: strings.TrimSpace(sid), rid: rid, machine: machine, disabled: disabled, hash: hex.EncodeToString(hash)}
 	key := strings.ToLower(entry.domain) + "\x00" + strings.ToLower(entry.account) + fmt.Sprintf("\x00%d\x00%s\x00%s\x00%s", entry.rid, entry.sid, entry.source, entry.hash)
 	c.ntds[key] = entry
+	c.candidates = append(c.candidates, credentialanalysis.Candidate{Verification: credentialanalysis.Confirmed, CredentialType: "nt_hash", Identity: entry.account, Domain: entry.domain, Value: entry.hash, RID: entry.rid, SID: entry.sid, AccountType: accountType(entry.machine), Disabled: entry.disabled, Source: entry.source, ValidationBasis: "cryptographic_ntds_recovery"})
+	return nil
+}
+
+func accountType(machine bool) string {
+	if machine {
+		return "machine"
+	}
+	return "user"
+}
+
+func (c *CredsWriter) RecordCredentialCandidate(candidate credentialanalysis.Candidate) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.candidates = append(c.candidates, candidate)
+	if candidate.Verification == credentialanalysis.Confirmed && strings.EqualFold(candidate.CredentialType, "nt_hash") {
+		hash, err := hex.DecodeString(strings.TrimSpace(candidate.Value))
+		if err != nil || len(hash) != 16 {
+			return fmt.Errorf("invalid NTDS candidate hash")
+		}
+		entry := ntdsCredentialEntry{domain: strings.TrimSpace(candidate.Domain), account: strings.TrimSpace(candidate.Identity), source: strings.TrimSpace(candidate.Source), sid: strings.TrimSpace(candidate.SID), rid: candidate.RID, machine: strings.EqualFold(candidate.AccountType, "machine"), disabled: candidate.Disabled, hash: strings.ToLower(hex.EncodeToString(hash))}
+		key := strings.ToLower(entry.domain) + "\x00" + strings.ToLower(entry.account) + fmt.Sprintf("\x00%d\x00%s\x00%s\x00%s", entry.rid, entry.sid, entry.source, entry.hash)
+		c.ntds[key] = entry
+	}
 	return nil
 }
 
@@ -74,6 +100,7 @@ func (c *CredsWriter) Close() error {
 	defer c.mu.Unlock()
 
 	entries := buildCredentialEntries(augmentFindingsForReporting(c.findings))
+	analysis := analyzeCandidates(c.findings, c.candidates)
 	ntdsEntries := make([]ntdsCredentialEntry, 0, len(c.ntds))
 	for _, entry := range c.ntds {
 		ntdsEntries = append(ntdsEntries, entry)
@@ -83,7 +110,7 @@ func (c *CredsWriter) Close() error {
 		right := strings.ToLower(ntdsEntries[j].domain + "\x00" + ntdsEntries[j].account + fmt.Sprintf("\x00%d\x00%s\x00%s", ntdsEntries[j].rid, ntdsEntries[j].source, ntdsEntries[j].hash))
 		return left < right
 	})
-	if len(entries) == 0 && len(ntdsEntries) == 0 {
+	if len(entries) == 0 && len(ntdsEntries) == 0 && len(analysis.Confirmed) == 0 && len(analysis.Review) == 0 {
 		if _, err := io.WriteString(c.w, "# No high-confidence credentials were exported.\n"); err != nil {
 			if c.closer != nil {
 				_ = c.closer.Close()
@@ -125,8 +152,52 @@ func (c *CredsWriter) Close() error {
 	})
 
 	var builder strings.Builder
+	if len(analysis.Confirmed) > 0 {
+		builder.WriteString("==== CONFIRMED CREDENTIALS ====\n")
+		builder.WriteString(fmt.Sprintf("Count: %d\n\n", len(analysis.Confirmed)))
+	}
+	// Legacy curated sections remain useful for established formats. Mark the
+	// shared records they render by source path, then render every other
+	// confirmed candidate generically. This keeps the sensitive export a
+	// complete projection of the shared analysis model rather than a partial
+	// view of only legacy credential families.
+	renderedConfirmed := make(map[string]struct{})
+	for _, candidate := range analysis.Candidates {
+		if candidate.Verification != credentialanalysis.Confirmed {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.Group == "SSH Private Keys" && strings.EqualFold(candidate.CredentialType, "private_key") {
+				if !hasRawPrivateCandidateAtPath(analysis.Candidates, entry.Paths) && candidatePathMatches(candidate, entry.Paths) {
+					renderedConfirmed[candidateExportKey(candidate)] = struct{}{}
+				}
+				continue
+			}
+			if candidatePathMatches(candidate, entry.Paths) {
+				renderedConfirmed[candidateExportKey(candidate)] = struct{}{}
+				break
+			}
+		}
+		if strings.EqualFold(candidate.CredentialType, "private_key") && !isRawPrivateCandidate(candidate) {
+			for _, entry := range entries {
+				if entry.Group == "SSH Private Keys" && candidatePathMatches(candidate, entry.Paths) {
+					renderedConfirmed[candidateExportKey(candidate)] = struct{}{}
+					break
+				}
+			}
+		}
+		for _, entry := range ntdsEntries {
+			if candidate.Path == entry.source || candidate.Source == entry.source {
+				renderedConfirmed[candidateExportKey(candidate)] = struct{}{}
+				break
+			}
+		}
+	}
 	currentGroup := ""
 	for _, entry := range entries {
+		if entry.Group == "SSH Private Keys" && hasRawPrivateCandidateAtPath(analysis.Candidates, entry.Paths) {
+			continue
+		}
 		if entry.Group != currentGroup {
 			if builder.Len() > 0 {
 				builder.WriteString("\n")
@@ -171,6 +242,56 @@ func (c *CredsWriter) Close() error {
 			builder.WriteString("Current NT hash: " + entry.hash + "\n\n")
 		}
 	}
+	for _, candidate := range analysis.Candidates {
+		if candidate.Verification != credentialanalysis.Confirmed {
+			continue
+		}
+		if strings.EqualFold(candidate.CredentialType, "private_key") && !isRawPrivateCandidate(candidate) && hasLegacyPrivateEntry(candidate, entries) {
+			continue
+		}
+		if _, ok := renderedConfirmed[candidateExportKey(candidate)]; ok {
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteString("\n")
+		}
+		builder.WriteString("==== Confirmed Credential Material ====\n")
+		builder.WriteString("Type: " + candidate.CredentialType + "\n")
+		if candidate.Encrypted {
+			builder.WriteString("Encrypted: yes\n")
+		}
+		if candidate.Domain != "" {
+			builder.WriteString("Domain: " + candidate.Domain + "\n")
+		}
+		if candidate.Identity != "" {
+			builder.WriteString("Identity: " + candidate.Identity + "\n")
+		}
+		builder.WriteString("Value: " + candidate.Value + "\n")
+		writeCandidateProvenance(&builder, candidate)
+		builder.WriteString("Validation: " + candidate.ValidationBasis + "\n\n")
+	}
+	if len(analysis.Review) > 0 {
+		if builder.Len() > 0 {
+			builder.WriteString("\n")
+		}
+		builder.WriteString("==== POTENTIAL CREDENTIAL MATERIAL — REVIEW ====\n")
+		builder.WriteString(fmt.Sprintf("Count: %d\n\n", len(analysis.Review)))
+		for _, candidate := range analysis.Candidates {
+			if candidate.Verification != credentialanalysis.Review {
+				continue
+			}
+			builder.WriteString("Type: " + candidate.CredentialType + "\n")
+			if candidate.Identity != "" {
+				builder.WriteString("Identity candidate: " + candidate.Identity + "\n")
+			}
+			if candidate.Encrypted {
+				builder.WriteString("Encrypted: yes\n")
+			}
+			builder.WriteString("Value: " + candidate.Value + "\n")
+			writeCandidateProvenance(&builder, candidate)
+			builder.WriteString("Review reason: " + strings.Join(candidate.ReviewReasons, "; ") + "\n\n")
+		}
+	}
 
 	if _, err := io.WriteString(c.w, strings.TrimRight(builder.String(), "\n")+"\n"); err != nil {
 		if c.closer != nil {
@@ -182,6 +303,102 @@ func (c *CredsWriter) Close() error {
 		return nil
 	}
 	return c.closer.Close()
+}
+
+func hasLegacyPrivateEntry(candidate credentialanalysis.Candidate, entries []credentialEntry) bool {
+	for _, entry := range entries {
+		if entry.Group == "SSH Private Keys" && candidatePathMatches(candidate, entry.Paths) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRawPrivateCandidateAtPath(candidates []credentialanalysis.Candidate, paths []string) bool {
+	for _, candidate := range candidates {
+		if candidate.Verification == credentialanalysis.Confirmed && isRawPrivateCandidate(candidate) && candidatePathMatches(candidate, paths) {
+			return true
+		}
+	}
+	return false
+}
+
+func isRawPrivateCandidate(candidate credentialanalysis.Candidate) bool {
+	return strings.EqualFold(candidate.CredentialType, "private_key") && strings.HasPrefix(strings.TrimSpace(candidate.Value), "-----BEGIN ")
+}
+
+func candidateExportKey(candidate credentialanalysis.Candidate) string {
+	return strings.ToLower(strings.TrimSpace(candidate.CredentialType)) + "\x00" +
+		strings.ToLower(strings.TrimSpace(candidate.Domain)) + "\x00" +
+		strings.ToLower(strings.TrimSpace(candidate.Identity)) + "\x00" + candidate.Value
+}
+
+func candidatePathMatches(candidate credentialanalysis.Candidate, paths []string) bool {
+	for _, path := range paths {
+		if path == candidate.Path || path == candidate.Source {
+			return true
+		}
+		for _, evidence := range candidate.Evidence {
+			if evidence.Path == path {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasConfirmedCandidateAtPath(candidates []credentialanalysis.Candidate, paths []string, credentialType string) bool {
+	for _, candidate := range candidates {
+		if candidate.Verification != credentialanalysis.Confirmed || !strings.EqualFold(candidate.CredentialType, credentialType) {
+			continue
+		}
+		if candidatePathMatches(candidate, paths) {
+			return true
+		}
+	}
+	return false
+}
+
+func writeCandidateProvenance(builder *strings.Builder, candidate credentialanalysis.Candidate) {
+	primary := strings.TrimSpace(candidate.Source)
+	if candidate.Path != "" && (primary == "" || primary == "cli") {
+		primary = candidate.Path
+	}
+	if primary != "" {
+		builder.WriteString("Source: " + primary + "\n")
+	}
+	seen := map[string]struct{}{candidate.Path: {}, candidate.Source: {}}
+	additional := make([]string, 0, len(candidate.Evidence))
+	for _, evidence := range candidate.Evidence {
+		path := strings.TrimSpace(evidence.Path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		additional = append(additional, path)
+	}
+	sort.Strings(additional)
+	if len(additional) == 0 {
+		return
+	}
+	const maxAdditional = 8
+	builder.WriteString("Also observed:\n")
+	for _, path := range additional[:minInt(len(additional), maxAdditional)] {
+		builder.WriteString("- " + path + "\n")
+	}
+	if len(additional) > maxAdditional {
+		builder.WriteString(fmt.Sprintf("Additional sources: %d more\n", len(additional)-maxAdditional))
+	}
+}
+
+func minInt(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func buildCredentialEntries(findings []scanner.Finding) []credentialEntry {

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"snablr/internal/config"
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/diff"
 	"snablr/internal/metrics"
 	"snablr/internal/scanner"
@@ -77,6 +78,13 @@ func (s *suppressionWriter) WriteFinding(f scanner.Finding) error {
 func (s *suppressionWriter) ExportNTDSCurrentHash(domain, account, source string, rid uint32, sid string, machine, disabled bool, hash []byte) error {
 	if exporter, ok := s.inner.(scanner.SensitiveCredentialExporter); ok {
 		return exporter.ExportNTDSCurrentHash(domain, account, source, rid, sid, machine, disabled, hash)
+	}
+	return nil
+}
+
+func (s *suppressionWriter) RecordCredentialCandidate(candidate credentialanalysis.Candidate) error {
+	if recorder, ok := s.inner.(scanner.CredentialCandidateSink); ok {
+		return recorder.RecordCredentialCandidate(candidate)
 	}
 	return nil
 }

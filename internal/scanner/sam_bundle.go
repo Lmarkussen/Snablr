@@ -1,12 +1,44 @@
 package scanner
 
 import (
+	"encoding/hex"
 	"fmt"
 	"strings"
 
 	"snablr/internal/artifactbundle"
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/rules"
+	"snablr/internal/samparse"
 )
+
+func (e *Engine) exportSAMBundle(result *artifactbundle.SAMBundleResult) {
+	if e == nil || e.candidateSink == nil || result == nil {
+		return
+	}
+	source := result.Origin.SAMPath
+	if strings.EqualFold(result.Origin.SourceType, "wim") && result.Origin.ContainerPath != "" {
+		source = result.Origin.ContainerPath + "!" + result.Origin.SAMPath
+	}
+	for _, account := range result.Accounts {
+		if account.NT.Status != samparse.HashRecovered {
+			continue
+		}
+		candidate := credentialanalysis.Candidate{
+			Verification: credentialanalysis.Confirmed, CredentialType: "nt_hash", Identity: account.Username,
+			Value: hex.EncodeToString(account.NT.Value[:]), RID: account.RID, AccountType: "user",
+			Source: source, ValidationBasis: "cryptographic_sam_recovery",
+		}
+		if strings.HasSuffix(account.Username, "$") {
+			candidate.AccountType = "machine"
+		}
+		if account.Enabled != nil && !*account.Enabled {
+			candidate.Disabled = true
+		}
+		if err := e.candidateSink.RecordCredentialCandidate(candidate); err != nil && e.log != nil {
+			e.log.Errorf("SAM credential candidate recording failed for account %s: %v", account.Username, err)
+		}
+	}
+}
 
 const samBundleFindingRuleID = "windows.sam.bundle_parsed"
 

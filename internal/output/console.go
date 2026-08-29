@@ -574,14 +574,14 @@ func consoleEvidenceLines(f scanner.Finding) []string {
 		if f.PotentialAccount != "" {
 			lines = append(lines, fmt.Sprintf("Potential account context: %s", f.PotentialAccount))
 		}
-		if value := firstNonEmpty(f.MatchedText, f.MatchedTextRedacted, f.Match); value != "" {
+		if value := redactPrivateKeyMaterial(firstNonEmpty(f.MatchedText, f.MatchedTextRedacted, f.Match)); value != "" {
 			label := "Matched text"
 			if signalType == "validated" {
 				label = "Validated detail"
 			}
 			lines = append(lines, fmt.Sprintf("%s: %s", label, value))
 		}
-		if value := firstNonEmpty(f.Context, f.ContextRedacted, f.Snippet); value != "" {
+		if value := redactPrivateKeyMaterial(firstNonEmpty(f.Context, f.ContextRedacted, f.Snippet)); value != "" {
 			lines = append(lines, "Context:")
 			for _, rawLine := range strings.Split(value, "\n") {
 				lines = append(lines, "  "+rawLine)
@@ -602,11 +602,11 @@ func consoleEvidenceLines(f scanner.Finding) []string {
 		}
 	}
 
-	if value := firstNonEmpty(f.MatchedText, f.MatchedTextRedacted, f.Match); value != "" {
+	if value := redactPrivateKeyMaterial(firstNonEmpty(f.MatchedText, f.MatchedTextRedacted, f.Match)); value != "" {
 		return []string{fmt.Sprintf("Matched value: %s", value)}
 	}
 	if f.Snippet != "" {
-		return []string{fmt.Sprintf("Snippet: %s", f.Snippet)}
+		return []string{fmt.Sprintf("Snippet: %s", redactPrivateKeyMaterial(f.Snippet))}
 	}
 	return nil
 }

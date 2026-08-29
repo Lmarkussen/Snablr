@@ -113,6 +113,12 @@ This layer does not know about LDAP discovery and does not own SMB connectivity.
 - `internal/artifactbundle` pairs `NTDS.DIT` with `SYSTEM` only within the same normalized loose or WIM origin before NTDS analysis.
 - `internal/smbkerberos` implements the pure-Go SMB Kerberos mechanism used by the patched SMB dependency.
 
+### Post-scan credential analysis
+
+`internal/credentialanalysis` is the shared in-memory classification model used by the JSON, HTML, and explicit credential exporters. Deep parsers and structured finding producers submit credential candidates with provenance. The analyzer normalizes, correlates only within producer-defined structure, deduplicates while retaining evidence, and classifies material as `confirmed` or `review`. Finding priority (`primary`/`supporting`) remains a separate axis. Filename and path-only findings are not exported as credentials, while uncertain extracted material is retained for review rather than silently discarded.
+
+Confirmed status is based on offline structural or cryptographic evidence, such as SAM/SYSTEM or NTDS/SYSTEM recovery, and never on authentication. The post-scan layer has no transport or authentication dependency and never attempts SMB, LDAP, WinRM, RDP, SQL, SSH, HTTP, Kerberos, or NTLM validation with recovered values. Raw values remain ephemeral in normal reporters; `--creds-out` is an explicitly highly-sensitive export.
+
 ### `internal/output`
 
 Findings rendering and export.

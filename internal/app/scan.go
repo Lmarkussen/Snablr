@@ -47,6 +47,9 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	if err := validateScanConfig(cfg); err != nil {
 		return err
 	}
+	if opts.ListShares {
+		return runListShares(ctx, cfg, logger)
+	}
 	interactiveTerminal := ui.ShouldShowProgress(cfg.Output.Format)
 	useInteractiveTUI := !cfg.Output.NoTUI && interactiveTerminal
 	if err := runScanPreflightFunc(ctx, cfg, useInteractiveTUI, logger); err != nil {
@@ -372,22 +375,9 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 	client.SetMaxReadSize(scanReadLimit(cfg))
 	defer client.Close()
 
-	var auth smb.Auth
-	smbAuthMode := strings.ToLower(strings.TrimSpace(cfg.Scan.SMBAuth))
-	if smbAuthMode == string(smb.AuthModeNTHash) {
-		var err error
-		auth, err = smb.NewNTHashAuth(cfg.Scan.Username, cfg.Scan.Domain, cfg.Scan.NTHash)
-		if err != nil {
-			return err
-		}
-	} else if smbAuthMode == string(smb.AuthModeKerberos) {
-		spn, err := resolveSMBSPN(host, cfg.Scan.SMBHostname, cfg.Scan.SMBSPN)
-		if err != nil {
-			return err
-		}
-		auth = smb.NewKerberosAuth(cfg.Scan.Username, cfg.Scan.Domain, cfg.Scan.KerberosCCache, spn)
-	} else {
-		auth = smb.NewPasswordAuth(cfg.Scan.Username, cfg.Scan.Domain, cfg.Scan.Password)
+	auth, err := smbAuthForHost(host, cfg.Scan)
+	if err != nil {
+		return err
 	}
 	if err := client.ConnectWithAuth(host, auth); err != nil {
 		return fmt.Errorf("%s: connect failed: %w", host, err)
@@ -663,6 +653,22 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		return errors.Join(walkErrs...)
 	}
 	return nil
+}
+
+func smbAuthForHost(host string, cfg config.ScanConfig) (smb.Auth, error) {
+	smbAuthMode := strings.ToLower(strings.TrimSpace(cfg.SMBAuth))
+	switch smb.AuthMode(smbAuthMode) {
+	case smb.AuthModeNTHash:
+		return smb.NewNTHashAuth(cfg.Username, cfg.Domain, cfg.NTHash)
+	case smb.AuthModeKerberos:
+		spn, err := resolveSMBSPN(host, cfg.SMBHostname, cfg.SMBSPN)
+		if err != nil {
+			return smb.Auth{}, err
+		}
+		return smb.NewKerberosAuth(cfg.Username, cfg.Domain, cfg.KerberosCCache, spn), nil
+	default:
+		return smb.NewPasswordAuth(cfg.Username, cfg.Domain, cfg.Password), nil
+	}
 }
 
 type scanSemantics struct {

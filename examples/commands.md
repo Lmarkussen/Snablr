@@ -49,6 +49,31 @@ KRB5CCNAME=/path/to/ccache ./bin/snablr scan \
   --smb-hostname FILE01.example.com
 ```
 
+## List Shares Accessible to the Authenticated User
+
+`--list-shares` authenticates with the selected SMB mode, validates each
+candidate with a tree connect and root directory listing, prints only readable
+filesystem shares, and exits without a file scan or persistent scan state.
+
+```bash
+./bin/snablr scan --targets FILE01.example.com --no-ldap \
+  --smb-auth password --username 'DOMAIN\\user' --password '<password>' \
+  --list-shares
+
+./bin/snablr scan --targets FILE01.example.com --no-ldap \
+  --smb-auth ntlm-hash --username 'DOMAIN\\user' \
+  --nt-hash '<32-hex-nt-hash>' --list-shares
+
+KRB5CCNAME=/path/to/ccache ./bin/snablr scan \
+  --targets FILE01.example.com --no-ldap --smb-auth kerberos \
+  --smb-hostname FILE01.example.com --list-shares
+```
+
+Results reflect shares accessible to the authenticated identity. Output is
+grouped by target, shows UNC share roots and a readable-share count, and
+omits `IPC$` and `PRINT$` as non-filesystem shares. Routine discovery chatter
+is suppressed unless debug logging is enabled.
+
 ## Incremental Credential Pivot
 
 ```bash

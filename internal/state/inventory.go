@@ -152,6 +152,9 @@ func OpenInventory(filePath string) (*Inventory, error) {
 		}
 		return nil, fmt.Errorf("read incremental inventory %s: %w", filePath, err)
 	}
+	if err := os.Chmod(filePath, 0o600); err != nil {
+		return nil, fmt.Errorf("restrict incremental inventory %s: %w", filePath, err)
+	}
 
 	var stored inventoryFile
 	if err := json.Unmarshal(data, &stored); err != nil {

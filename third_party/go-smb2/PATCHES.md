@@ -8,5 +8,8 @@ It contains the reviewed generic authentication-mechanism/session-setup change
 and asynchronous SMB response handling change required by Snablr. The upstream
 BSD 3-Clause license and copyright notice are preserved in `LICENSE`.
 
-The changes were implemented independently from SMB protocol semantics; no
-implementation code was copied into Snablr from another project.
+The changes were implemented independently from SMB protocol semantics. This
+directory physically vendors upstream implementation source; no go-smb2
+implementation code was copied or adapted into Snablr-owned application
+packages. The local modifications to this vendored copy are described above
+and in the relevant source comments/tests.

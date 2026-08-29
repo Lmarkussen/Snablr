@@ -31,7 +31,7 @@ func writeScannedTargets(path string, result discovery.PipelineResult, planned [
 	}
 
 	records := buildScannedTargetRecords(result, planned)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && filepath.Dir(path) != "." {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil && filepath.Dir(path) != "." {
 		return fmt.Errorf("create scanned-targets directory: %w", err)
 	}
 
@@ -55,8 +55,11 @@ func writeScannedTargets(path string, result discovery.PipelineResult, planned [
 		)
 	}
 
-	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		return fmt.Errorf("write scanned targets audit %s: %w", path, err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("restrict scanned targets audit %s: %w", path, err)
 	}
 	return nil
 }

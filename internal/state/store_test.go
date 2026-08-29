@@ -3,6 +3,7 @@ package state
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,6 +38,59 @@ func TestStoreSaveAndLoadRoundTrip(t *testing.T) {
 	}
 	if !resumed.IsFileComplete("fs01", "finance", "reports/payroll.csv", 4096, modifiedAt) {
 		t.Fatalf("expected file completion to round-trip")
+	}
+}
+
+func TestCheckpointSaveUsesRestrictivePermissionsAndStoresOnlyProgressMetadata(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nested", "checkpoint.json")
+	store, err := Open(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.MarkHostComplete("fileserver.example.test")
+	store.MarkShareComplete("fileserver.example.test", "Finance")
+	store.MarkFileComplete("fileserver.example.test", "Finance", "Reports/budget.xlsx", 123, time.Unix(10, 0))
+	if err := store.Save(); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct {
+		path string
+		want os.FileMode
+	}{{filepath.Dir(path), 0o700}, {path, 0o600}} {
+		info, err := os.Stat(item.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != item.want {
+			t.Fatalf("%s permissions = %o, want %o", item.path, got, item.want)
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"password", "nt_hash", "kerberos", "snippet", "finding", "content"} {
+		if strings.Contains(strings.ToLower(string(data)), forbidden) {
+			t.Fatalf("checkpoint unexpectedly contains %q: %s", forbidden, data)
+		}
+	}
+}
+
+func TestOpenCheckpointTightensExistingFilePermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "checkpoint.json")
+	if err := os.WriteFile(path, []byte(`{"version":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path, true); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("checkpoint permissions = %o, want 600", got)
 	}
 }
 

@@ -49,7 +49,7 @@ type scanClient interface {
 
 func bundleKind(remote smb.RemoteFile) (artifact.Kind, bool) {
 	kind, ok := artifact.KindForPath(remote.Path)
-	return kind, ok && (kind == artifact.KindSAM || kind == artifact.KindSYSTEM || kind == artifact.KindSECURITY)
+	return kind, ok && (kind == artifact.KindSAM || kind == artifact.KindSYSTEM || kind == artifact.KindSECURITY || kind == artifact.KindNTDS)
 }
 
 var (
@@ -198,6 +198,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		SAMMaxBytes:       cfg.WIM.MaxSAMBytes,
 		SYSTEMMaxBytes:    cfg.WIM.MaxSYSTEMBytes,
 		SECURITYMaxBytes:  cfg.WIM.MaxSECURITYBytes,
+		NTDSMaxBytes:      cfg.WIM.MaxNTDSBytes,
 	}, manager, sink, logger)
 
 	resolvedTargets, err := resolveTargetsFunc(scanCtx, cfg.Scan, logger, recorder)
@@ -262,6 +263,9 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		return fmt.Errorf("create output writer: %w", err)
 	}
 	sink = output.WrapWithSuppression(sink, cfg.Suppression)
+	if exporter, ok := sink.(scanner.SensitiveCredentialExporter); ok {
+		engine.SetCredentialExporter(exporter)
+	}
 	output.SetCancelFunc(sink, scanCancel)
 	output.SetScanProfile(sink, strings.TrimSpace(cfg.Scan.Profile))
 	defer func() {

@@ -16,3 +16,13 @@ The repository also contains `github.com/mattn/go-sqlite3` under
 `third_party/go-sqlite3/`; its upstream license and notices are retained in
 that directory. Snablr-owned application packages do not copy or adapt
 implementation code from these dependencies.
+
+## www.velocidex.com/golang/go-ese
+
+- Source: https://github.com/Velocidex/go-ese
+- Version: v0.2.0
+- License: Apache License 2.0
+- Use: external read-only ESE/JET catalog and table reader for NTDS.DIT
+- Snablr implements NTDS account selection and credential decryption
+  independently in `internal/ntdsparse`; no external implementation code is
+  copied or adapted into that package.

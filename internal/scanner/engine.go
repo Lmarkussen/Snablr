@@ -41,37 +41,46 @@ type Options struct {
 	SAMMaxBytes       int64
 	SYSTEMMaxBytes    int64
 	SECURITYMaxBytes  int64
+	NTDSMaxBytes      int64
 }
 
 type Engine struct {
-	opts              Options
-	manager           *rules.Manager
-	sink              FindingSink
-	log               *logx.Logger
-	recorder          metrics.Recorder
-	filenameScanner   FilenameScanner
-	extensionScanner  ExtensionScanner
-	contentScanner    ContentScanner
-	filenameRules     []rules.Rule
-	extensionRules    []rules.Rule
-	contentRules      []rules.Rule
-	contentExtHints   map[string]struct{}
-	archiveExtHints   map[string]struct{}
-	hasGenericText    bool
-	backupInspector   backupinspect.Inspector
-	awsInspector      awsinspect.Inspector
-	browserInspector  browsercredinspect.Inspector
-	dbInspector       dbinspect.Inspector
-	keyInspector      keyinspect.Inspector
-	sqliteInspector   sqliteinspect.Inspector
-	wimInspector      wiminspect.Options
-	winCredInspector  wincredinspect.Inspector
-	validationMode    bool
-	validationSink    ValidationObserver
-	bundleCoordinator *artifactbundle.Coordinator
-	samMaxBytes       int64
-	systemMaxBytes    int64
-	securityMaxBytes  int64
+	opts               Options
+	manager            *rules.Manager
+	sink               FindingSink
+	log                *logx.Logger
+	recorder           metrics.Recorder
+	filenameScanner    FilenameScanner
+	extensionScanner   ExtensionScanner
+	contentScanner     ContentScanner
+	filenameRules      []rules.Rule
+	extensionRules     []rules.Rule
+	contentRules       []rules.Rule
+	contentExtHints    map[string]struct{}
+	archiveExtHints    map[string]struct{}
+	hasGenericText     bool
+	backupInspector    backupinspect.Inspector
+	awsInspector       awsinspect.Inspector
+	browserInspector   browsercredinspect.Inspector
+	dbInspector        dbinspect.Inspector
+	keyInspector       keyinspect.Inspector
+	sqliteInspector    sqliteinspect.Inspector
+	wimInspector       wiminspect.Options
+	winCredInspector   wincredinspect.Inspector
+	validationMode     bool
+	validationSink     ValidationObserver
+	credentialExporter SensitiveCredentialExporter
+	bundleCoordinator  *artifactbundle.Coordinator
+	samMaxBytes        int64
+	systemMaxBytes     int64
+	securityMaxBytes   int64
+	ntdsMaxBytes       int64
+}
+
+func (e *Engine) SetCredentialExporter(exporter SensitiveCredentialExporter) {
+	if e != nil {
+		e.credentialExporter = exporter
+	}
 }
 
 func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx.Logger) *Engine {
@@ -118,6 +127,7 @@ func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx
 		samMaxBytes:       opts.SAMMaxBytes,
 		systemMaxBytes:    opts.SYSTEMMaxBytes,
 		securityMaxBytes:  opts.SECURITYMaxBytes,
+		ntdsMaxBytes:      opts.NTDSMaxBytes,
 	}
 }
 
@@ -173,7 +183,7 @@ func (e *Engine) EvaluateContext(ctx context.Context, meta FileMetadata, content
 		}
 	}
 	if e.bundleCoordinator != nil {
-		if kind, ok := artifact.KindForPath(meta.FilePath); ok && (kind == artifact.KindSAM || kind == artifact.KindSYSTEM || kind == artifact.KindSECURITY) {
+		if kind, ok := artifact.KindForPath(meta.FilePath); ok && isBundleArtifactKind(kind) {
 			return e.evaluateLooseBinary(ctx, meta, content, kind)
 		}
 	}
@@ -226,7 +236,7 @@ func (e *Engine) NeedsContent(meta FileMetadata) bool {
 		return false
 	}
 	if e.bundleCoordinator != nil {
-		if kind, ok := artifact.KindForPath(meta.FilePath); ok && (kind == artifact.KindSAM || kind == artifact.KindSYSTEM || kind == artifact.KindSECURITY) {
+		if kind, ok := artifact.KindForPath(meta.FilePath); ok && isBundleArtifactKind(kind) {
 			return true
 		}
 	}
@@ -294,9 +304,11 @@ func (e *Engine) evaluateLooseBinary(ctx context.Context, meta FileMetadata, con
 		limit = e.systemMaxBytes
 	} else if kind == artifact.KindSECURITY {
 		limit = e.securityMaxBytes
+	} else if kind == artifact.KindNTDS {
+		limit = e.ntdsMaxBytes
 	}
 	if limit <= 0 {
-		limit = 64 * 1024 * 1024
+		limit = 512 * 1024 * 1024
 	}
 	binary, err := artifact.NewTempFile(os.TempDir(), kind, artifact.Origin{
 		Host: meta.Host, Share: meta.Share, ContainerPath: meta.FilePath, ContainerType: "loose",
@@ -323,7 +335,17 @@ func (e *Engine) evaluateLooseBinary(ctx context.Context, meta FileMetadata, con
 		evaluation.Findings = append(evaluation.Findings, finding)
 		e.recordValidationFindings([]Finding{finding})
 	}
+	if addResult.NTDSResult != nil && addResult.NTDSResult.Status == artifactbundle.BundleParsed && addResult.NTDSResult.AccountsWithCurrentNTHash > 0 {
+		finding := findingFromNTDSBundle(meta, addResult.NTDSResult)
+		evaluation.Findings = append(evaluation.Findings, finding)
+		e.recordValidationFindings([]Finding{finding})
+		e.exportNTDSBundle(addResult.NTDSResult)
+	}
 	return evaluation
+}
+
+func isBundleArtifactKind(kind artifact.Kind) bool {
+	return kind == artifact.KindSAM || kind == artifact.KindSYSTEM || kind == artifact.KindSECURITY || kind == artifact.KindNTDS
 }
 
 func bundleAccepted(state artifactbundle.AddState) bool {
@@ -425,7 +447,7 @@ func (e *Engine) evaluateWIM(ctx context.Context, meta FileMetadata, content []b
 	evaluation.BinaryArtifacts = make([]artifact.Binary, 0, len(result.BinaryMembers))
 	findings := make([]Finding, 0)
 	for _, binary := range result.BinaryMembers {
-		if binary.Artifact.Kind() == artifact.KindSAM || binary.Artifact.Kind() == artifact.KindSYSTEM || binary.Artifact.Kind() == artifact.KindSECURITY {
+		if isBundleArtifactKind(binary.Artifact.Kind()) {
 			addResult, addErr := e.submitBinaryArtifact(ctx, binary.Artifact)
 			if addErr == nil && bundleAccepted(addResult.State) {
 				if addResult.Result != nil && addResult.Result.Status == artifactbundle.BundleParsed {
@@ -437,6 +459,12 @@ func (e *Engine) evaluateWIM(ctx context.Context, meta FileMetadata, content []b
 					finding := findingFromSecurityBundle(meta, addResult.SecurityResult)
 					findings = append(findings, finding)
 					e.recordValidationFindings([]Finding{finding})
+				}
+				if addResult.NTDSResult != nil && addResult.NTDSResult.Status == artifactbundle.BundleParsed && addResult.NTDSResult.AccountsWithCurrentNTHash > 0 {
+					finding := findingFromNTDSBundle(meta, addResult.NTDSResult)
+					findings = append(findings, finding)
+					e.recordValidationFindings([]Finding{finding})
+					e.exportNTDSBundle(addResult.NTDSResult)
 				}
 				continue
 			}

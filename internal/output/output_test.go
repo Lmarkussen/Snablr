@@ -3,7 +3,9 @@ package output
 import (
 	"bytes"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1460,6 +1462,47 @@ func TestCredsWriterDeduplicatesCredentialEntriesAcrossPaths(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected deduplicated creds export to contain %q, got:\n%s", want, output)
 		}
+	}
+}
+
+func TestCredsWriterExportsNTDSHashesOnlyInSensitiveOutput(t *testing.T) {
+	var buf bytes.Buffer
+	writer := NewCredsWriter(&buf, nopCloser{})
+	hashA := bytes.Repeat([]byte{0x01}, 16)
+	hashB := bytes.Repeat([]byte{0xab}, 16)
+	if err := writer.ExportNTDSCurrentHash("SCCM.LAB", "z-user", `\\fs01\WIM!Windows/NTDS/ntds.dit`, 1104, "S-1-5-21-1-2-3-1104", false, true, hashB); err != nil {
+		t.Fatalf("ExportNTDSCurrentHash returned error: %v", err)
+	}
+	if err := writer.ExportNTDSCurrentHash("SCCM.LAB", "CLIENT$", `\\fs01\WIM!Windows/NTDS/ntds.dit`, 1107, "S-1-5-21-1-2-3-1107", true, false, hashA); err != nil {
+		t.Fatalf("ExportNTDSCurrentHash returned error: %v", err)
+	}
+	// Rehydration/repeated callbacks must not duplicate the sensitive record.
+	if err := writer.ExportNTDSCurrentHash("SCCM.LAB", "CLIENT$", `\\fs01\WIM!Windows/NTDS/ntds.dit`, 1107, "S-1-5-21-1-2-3-1107", true, false, hashA); err != nil {
+		t.Fatalf("duplicate ExportNTDSCurrentHash returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	output := buf.String()
+	if strings.Count(output, "==== NTDS Current NT Hashes ====") != 1 || strings.Count(output, "Account: CLIENT$") != 1 {
+		t.Fatalf("expected one deterministic NTDS export section/record, got:\n%s", output)
+	}
+	if strings.Index(output, "Account: CLIENT$") > strings.Index(output, "Account: z-user") {
+		t.Fatalf("expected deterministic account ordering, got:\n%s", output)
+	}
+	for _, want := range []string{"Domain: SCCM.LAB", "RID: 1104", "Account type: machine", "Disabled: true", "Current NT hash: " + hex.EncodeToString(hashA)} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected NTDS export to contain %q, got:\n%s", want, output)
+		}
+	}
+
+	var safe scanner.Finding
+	if err := json.Unmarshal([]byte(`{"rule_id":"windows.ntds.bundle_parsed","matched_text":"current NT hashes recovered: 1"}`), &safe); err != nil {
+		t.Fatalf("safe finding fixture: %v", err)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", safe), hex.EncodeToString(hashA)) {
+		t.Fatal("safe finding unexpectedly contains NT hash")
 	}
 }
 

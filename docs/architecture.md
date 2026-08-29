@@ -109,6 +109,8 @@ This layer does not know about LDAP discovery and does not own SMB connectivity.
 - `internal/systemkey` derives the SYSTEM boot key needed for offline SAM decoding.
 - `internal/samparse` parses validated offline SAM account data without exposing raw hashes in normal output.
 - `internal/securityparse` derives the modern LSA protection key and parses bounded SECURITY secret/cache metadata without returning raw secret bytes.
+- `internal/ntdsparse` uses a read-only ESE catalog/table reader, reuses the SYSTEM boot key, decrypts the supported NTDS PEK/current NT hash attributes, and returns account metadata without serializing hash bytes.
+- `internal/artifactbundle` pairs `NTDS.DIT` with `SYSTEM` only within the same normalized loose or WIM origin before NTDS analysis.
 - `internal/smbkerberos` implements the pure-Go SMB Kerberos mechanism used by the patched SMB dependency.
 
 ### `internal/output`

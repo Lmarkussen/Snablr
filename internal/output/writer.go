@@ -251,6 +251,19 @@ func (m *MultiWriter) WriteFinding(f scanner.Finding) error {
 	return nil
 }
 
+func (m *MultiWriter) ExportNTDSCurrentHash(domain, account, source string, rid uint32, sid string, machine, disabled bool, hash []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sink := range m.sinks {
+		if exporter, ok := sink.(scanner.SensitiveCredentialExporter); ok {
+			if err := exporter.ExportNTDSCurrentHash(domain, account, source, rid, sid, machine, disabled, hash); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (m *MultiWriter) RecordHost(host string) {
 	m.broadcast(func(observer scanner.ScanObserver) { observer.RecordHost(host) })
 }

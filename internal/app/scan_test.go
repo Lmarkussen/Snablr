@@ -125,6 +125,8 @@ func TestCollectBundleDependenciesCoversChangedCompanionsAndNoopRuns(t *testing.
 		{name: "system changed reloads security", changed: artifact.KindSYSTEM, candidate: artifact.KindSECURITY, wantReload: true},
 		{name: "sam changed reloads system", changed: artifact.KindSAM, candidate: artifact.KindSYSTEM, wantReload: true},
 		{name: "system changed reloads sam", changed: artifact.KindSYSTEM, candidate: artifact.KindSAM, wantReload: true},
+		{name: "ntds changed reloads system", changed: artifact.KindNTDS, candidate: artifact.KindSYSTEM, wantReload: true},
+		{name: "system changed reloads ntds", changed: artifact.KindSYSTEM, candidate: artifact.KindNTDS, wantReload: true},
 		{name: "all unchanged does not reload", changed: "", candidate: artifact.KindSYSTEM, wantReload: false},
 	}
 	for _, test := range tests {

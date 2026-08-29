@@ -306,14 +306,15 @@ func (c *ConsoleWriter) Close() error {
 	if _, err := fmt.Fprintf(c.w, "Profile: %s\n", valueOrDash(c.profile)); err != nil {
 		return err
 	}
-	if c.metrics.Counters.TargetsLoaded > 0 || c.metrics.Counters.TargetsReachable > 0 || c.metrics.Counters.SharesEnumerated > 0 {
-		if _, err := fmt.Fprintf(c.w, "Metrics: targets_loaded=%d targets_reachable=%d shares_enumerated=%d files_visited=%d files_skipped=%d files_read=%d matches_found=%d incremental_discovered=%d incremental_inspected=%d incremental_skipped_unchanged=%d incremental_rescanned_changed=%d incremental_retried=%d incremental_new_accessible_known=%d\n",
+	if c.metrics.Counters.TargetsLoaded > 0 || c.metrics.Counters.TargetsReachable > 0 || c.metrics.Counters.SharesEnumerated > 0 || c.metrics.Counters.DependencyReloads > 0 {
+		if _, err := fmt.Fprintf(c.w, "Metrics: targets_loaded=%d targets_reachable=%d shares_enumerated=%d files_visited=%d files_skipped=%d files_read=%d dependency_reloads=%d matches_found=%d incremental_discovered=%d incremental_inspected=%d incremental_skipped_unchanged=%d incremental_rescanned_changed=%d incremental_retried=%d incremental_new_accessible_known=%d\n",
 			c.metrics.Counters.TargetsLoaded,
 			c.metrics.Counters.TargetsReachable,
 			c.metrics.Counters.SharesEnumerated,
 			c.metrics.Counters.FilesVisited,
 			c.metrics.Counters.FilesSkipped,
 			c.metrics.Counters.FilesRead,
+			c.metrics.Counters.DependencyReloads,
 			c.metrics.Counters.MatchesFound,
 			c.metrics.Counters.IncrementalDiscovered,
 			c.metrics.Counters.IncrementalInspected,

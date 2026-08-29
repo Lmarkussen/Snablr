@@ -95,9 +95,9 @@ The result is grouped by target and shows UNC share roots plus a readable-share 
 
 ## WIM and Offline Windows Artifacts
 
-When enabled and `wimlib-imagex` is installed, Snablr can inspect bounded WIM images and extract selected Windows artifacts for local analysis. Current offline parsing validates and correlates `SAM` with `SYSTEM`, including safe account and recovered-hash counts in the `windows.sam.bundle_parsed` finding; raw hashes and key material are not printed.
+When enabled and `wimlib-imagex` is installed, Snablr can inspect bounded WIM images and extract selected Windows artifacts for local analysis. Current offline parsing validates and correlates `SAM` with `SYSTEM`, and modern Vista-and-later `SECURITY` with `SYSTEM`, including safe account, LSA-secret, and cached-domain counts in validated bundle findings; raw hashes, secrets, and key material are not printed.
 
-WIM artifact detection/extraction also recognizes selected `SECURITY` and `NTDS.DIT` paths, but Snablr does not currently decrypt SECURITY secrets or perform NTDS domain-credential extraction. WIM inspection is bounded by configured image, member, byte, and size limits. If `wimlib-imagex` is unavailable or a limit is reached, the file is not treated as successfully inspected and can be retried later.
+WIM artifact detection/extraction also recognizes selected `SECURITY` and `NTDS.DIT` paths. SECURITY parsing supports the modern `PolEKList` AES scheme and reports structured metadata only; legacy pre-Vista LSA protection and NTDS domain-credential extraction remain unsupported. WIM inspection is bounded by configured image, member, byte, and size limits. If `wimlib-imagex` is unavailable or a limit is reached, the file is not treated as successfully inspected and can be retried later.
 
 ## Incremental and Multi-Credential Pivot Scanning
 

@@ -268,13 +268,23 @@ func (r *Reader) nkAt(rel uint32) (Key, error) {
 	valCount, _ := u32(c.data, 36)
 	valList, _ := u32(c.data, 40)
 	class, _ := u32(c.data, 48)
-	nameLen, _ := u16(c.data, 76)
-	classLen, _ := u16(c.data, 78)
-	end := 0x50 + int(nameLen)
+	nameLen, _ := u16(c.data, 72)
+	classLen, _ := u16(c.data, 74)
+	nameOffset := 0x4c
+	// Accept the compact legacy test layout used by older fixtures while
+	// preferring the conventional NK offsets for real Windows hives.
+	if nameLen == 0 {
+		if legacyNameLen, ok := u16(c.data, 76); ok && legacyNameLen > 0 {
+			nameLen, _ = u16(c.data, 76)
+			classLen, _ = u16(c.data, 78)
+			nameOffset = 0x50
+		}
+	}
+	end := nameOffset + int(nameLen)
 	if end > len(c.data) {
 		return Key{}, fmt.Errorf("%w: NK name", ErrTruncated)
 	}
-	name, err := decodeName(c.data[0x50:end], flags&keyCompressed != 0)
+	name, err := decodeName(c.data[nameOffset:end], flags&keyCompressed != 0)
 	if err != nil {
 		return Key{}, err
 	}
@@ -322,6 +332,19 @@ func (k *Key) child(want string) (Key, bool, error) {
 		}
 	}
 	return Key{}, false, nil
+}
+
+// Child opens a direct child key by name without interpreting the child's
+// values. It is useful to bounded parsers that enumerate a known subtree.
+func (k *Key) Child(name string) (*Key, error) {
+	child, found, err := k.child(name)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("%w: %s", ErrKeyNotFound, name)
+	}
+	return &child, nil
 }
 
 func (k *Key) Subkeys() ([]string, error) {

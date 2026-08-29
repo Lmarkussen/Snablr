@@ -8,10 +8,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"snablr/internal/archiveinspect"
+	"snablr/internal/artifact"
 	"snablr/internal/artifactbundle"
 	"snablr/internal/config"
 	"snablr/internal/diff"
@@ -31,10 +33,30 @@ import (
 
 const sharePlanningBatchSize = 2048
 
+type bundleCandidate struct {
+	remote   smb.RemoteFile
+	filePlan planner.PlannedTarget
+}
+
+type scanClient interface {
+	SetMaxReadSize(int64)
+	Close() error
+	ConnectWithAuth(string, smb.Auth) error
+	ListShares() ([]smb.ShareInfo, error)
+	WalkShareWithOptions(string, smb.WalkOptions, func(smb.RemoteFile) error) error
+	ReadFile(string, string) ([]byte, error)
+}
+
+func bundleKind(remote smb.RemoteFile) (artifact.Kind, bool) {
+	kind, ok := artifact.KindForPath(remote.Path)
+	return kind, ok && (kind == artifact.KindSAM || kind == artifact.KindSYSTEM || kind == artifact.KindSECURITY)
+}
+
 var (
 	runScanPreflightFunc = runScanPreflight
 	newOutputWriterFunc  = output.NewWriter
 	resolveTargetsFunc   = discovery.Resolve
+	newScanClientFunc    = func() scanClient { return smb.NewClient() }
 )
 
 func RunScan(ctx context.Context, opts ScanOptions) (err error) {
@@ -175,6 +197,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		BundleCoordinator: bundles,
 		SAMMaxBytes:       cfg.WIM.MaxSAMBytes,
 		SYSTEMMaxBytes:    cfg.WIM.MaxSYSTEMBytes,
+		SECURITYMaxBytes:  cfg.WIM.MaxSECURITYBytes,
 	}, manager, sink, logger)
 
 	resolvedTargets, err := resolveTargetsFunc(scanCtx, cfg.Scan, logger, recorder)
@@ -371,7 +394,7 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		observer.RecordHost(host)
 	}
 
-	client := smb.NewClient()
+	client := newScanClientFunc()
 	client.SetMaxReadSize(scanReadLimit(cfg))
 	defer client.Close()
 
@@ -491,6 +514,9 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 
 		fileInputs := make([]planner.FileInput, 0, sharePlanningBatchSize)
 		fileIndex := make(map[string]smb.RemoteFile, sharePlanningBatchSize)
+		skippedBundleCandidates := make(map[artifactbundle.BundleKey]map[artifact.Kind]bundleCandidate)
+		rehydratedBundleCandidates := make(map[artifactbundle.BundleKey]map[artifact.Kind]bool)
+		changedBundles := make(map[artifactbundle.BundleKey]map[artifact.Kind]bool)
 		flushBatch := func() error {
 			if len(fileInputs) == 0 {
 				return nil
@@ -498,12 +524,68 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 
 			plannedFiles := planner.PlanFiles(fileInputs, planFilters)
 			queuedThisBatch := 0
+			enqueue := func(remote smb.RemoteFile, filePlan planner.PlannedTarget, inventoryKey string, dependency bool) error {
+				shareInfo := shareInfoByName[strings.ToLower(strings.TrimSpace(remote.Share))]
+				meta := scanner.FileMetadata{
+					Host: remote.Host, Share: remote.Share, ShareDescription: shareInfo.Description, ShareType: shareInfo.Type,
+					SharePriority: sharePlan.Priority, SharePriorityReason: sharePlan.Reason, FilePath: remote.Path,
+					Source: sharePlan.Source, Priority: filePlan.Priority, PriorityReason: filePlan.Reason, Name: remote.Name,
+					Extension: remote.Extension, Size: remote.Size, ModifiedAt: remote.ModifiedAt, IsDir: remote.IsDir,
+					FromSYSVOL: strings.EqualFold(remote.Share, "SYSVOL"), FromNETLOGON: strings.EqualFold(remote.Share, "NETLOGON"),
+					BundleDependency: dependency,
+				}
+				if hasDFSHint {
+					meta.Source = "dfs"
+					meta.DFSNamespacePath = dfsHint.NamespacePath
+					meta.DFSLinkPath = dfsHint.LinkPath
+				}
+				remotePath := remote.Path
+				job := scanner.Job{Metadata: meta, LoadContent: func(ctx context.Context, _ scanner.FileMetadata) ([]byte, error) {
+					select {
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					default:
+					}
+					return client.ReadFile(shareName, strings.ReplaceAll(remotePath, "/", `\`))
+				}, OnComplete: func(meta scanner.FileMetadata, evaluation scanner.Evaluation, err error) {
+					if dependency {
+						return
+					}
+					if checkpoints != nil {
+						checkpoints.RecordFileResult(meta.Host, meta.Share, meta.FilePath, meta.Size, meta.ModifiedAt, err == nil)
+					}
+					if inventory == nil {
+						return
+					}
+					if err != nil {
+						inventory.MarkFailed(inventoryKey)
+						return
+					}
+					if evaluation.Skipped && evaluation.NeedContent {
+						inventory.MarkPartial(inventoryKey)
+						return
+					}
+					inventory.MarkCompleted(inventoryKey)
+				}}
+				if inventory != nil && !dependency {
+					inventory.MarkScanning(inventoryKey)
+				}
+				select {
+				case <-poolCtx.Done():
+					return poolCtx.Err()
+				case jobs <- job:
+					queuedThisBatch++
+				}
+				return nil
+			}
 			for _, filePlan := range plannedFiles {
 				remote, ok := fileIndex[strings.ToLower(filePlan.Path)]
 				if !ok {
 					continue
 				}
 				var inventoryKey string
+				kind, isBundleArtifact := bundleKind(remote)
+				bundleKey := artifactbundle.KeyFor(artifact.Origin{Host: remote.Host, Share: remote.Share, ContainerPath: remote.Path, ContainerType: "loose"})
 				if inventory != nil {
 					decision, err := inventory.Prepare(state.FileObservation{
 						Server: remote.Host, Share: remote.Share, Path: remote.Path,
@@ -513,6 +595,14 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 						logger.Warnf("incremental inventory ignored for %s/%s/%s: %v", remote.Host, remote.Share, remote.Path, err)
 					} else if decision.Skip {
 						logger.Debugf("incremental: skipping unchanged file %s/%s/%s", remote.Host, remote.Share, remote.Path)
+						if isBundleArtifact {
+							candidates := skippedBundleCandidates[bundleKey]
+							if candidates == nil {
+								candidates = make(map[artifact.Kind]bundleCandidate)
+								skippedBundleCandidates[bundleKey] = candidates
+							}
+							candidates[kind] = bundleCandidate{remote: remote, filePlan: filePlan}
+						}
 						continue
 					} else {
 						inventoryKey = decision.Key
@@ -522,73 +612,21 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 					continue
 				}
 
-				shareInfo := shareInfoByName[strings.ToLower(strings.TrimSpace(remote.Share))]
-				meta := scanner.FileMetadata{
-					Host:                remote.Host,
-					Share:               remote.Share,
-					ShareDescription:    shareInfo.Description,
-					ShareType:           shareInfo.Type,
-					SharePriority:       sharePlan.Priority,
-					SharePriorityReason: sharePlan.Reason,
-					FilePath:            remote.Path,
-					Source:              sharePlan.Source,
-					Priority:            filePlan.Priority,
-					PriorityReason:      filePlan.Reason,
-					Name:                remote.Name,
-					Extension:           remote.Extension,
-					Size:                remote.Size,
-					ModifiedAt:          remote.ModifiedAt,
-					IsDir:               remote.IsDir,
-					FromSYSVOL:          strings.EqualFold(remote.Share, "SYSVOL"),
-					FromNETLOGON:        strings.EqualFold(remote.Share, "NETLOGON"),
+				if isBundleArtifact {
+					if changedBundles[bundleKey] == nil {
+						changedBundles[bundleKey] = make(map[artifact.Kind]bool)
+					}
+					changedBundles[bundleKey][kind] = true
 				}
-				if hasDFSHint {
-					meta.Source = "dfs"
-					meta.DFSNamespacePath = dfsHint.NamespacePath
-					meta.DFSLinkPath = dfsHint.LinkPath
-				}
-
-				remotePath := remote.Path
-				job := scanner.Job{
-					Metadata: meta,
-					LoadContent: func(ctx context.Context, _ scanner.FileMetadata) ([]byte, error) {
-						select {
-						case <-ctx.Done():
-							return nil, ctx.Err()
-						default:
-						}
-						return client.ReadFile(shareName, strings.ReplaceAll(remotePath, "/", `\`))
-					},
-					OnComplete: func(meta scanner.FileMetadata, evaluation scanner.Evaluation, err error) {
-						if checkpoints != nil {
-							checkpoints.RecordFileResult(meta.Host, meta.Share, meta.FilePath, meta.Size, meta.ModifiedAt, err == nil)
-						}
-						if inventory == nil {
-							return
-						}
-						if err != nil {
-							inventory.MarkFailed(inventoryKey)
-							return
-						}
-						if evaluation.Skipped && evaluation.NeedContent {
-							inventory.MarkPartial(inventoryKey)
-							return
-						}
-						inventory.MarkCompleted(inventoryKey)
-					},
-				}
-				if inventory != nil {
-					inventory.MarkScanning(inventoryKey)
-				}
-
-				select {
-				case <-poolCtx.Done():
-					return poolCtx.Err()
-				case jobs <- job:
-					queuedThisBatch++
+				if err := enqueue(remote, filePlan, inventoryKey, false); err != nil {
+					return err
 				}
 			}
-
+			for _, dependency := range collectBundleDependencies(changedBundles, skippedBundleCandidates, rehydratedBundleCandidates) {
+				if err := enqueue(dependency.remote, dependency.filePlan, "", true); err != nil {
+					return err
+				}
+			}
 			if checkpoints != nil {
 				checkpoints.AddPendingFiles(host, shareName, queuedThisBatch)
 			}
@@ -653,6 +691,48 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		return errors.Join(walkErrs...)
 	}
 	return nil
+}
+
+// collectBundleDependencies returns unchanged companion artifacts required to
+// recompute bundles affected by this run. Bundle keys retain the origin
+// boundary, so a same-named artifact from another directory/container cannot
+// be selected as a dependency.
+func collectBundleDependencies(
+	changed map[artifactbundle.BundleKey]map[artifact.Kind]bool,
+	candidates map[artifactbundle.BundleKey]map[artifact.Kind]bundleCandidate,
+	rehydrated map[artifactbundle.BundleKey]map[artifact.Kind]bool,
+) []bundleCandidate {
+	keys := make([]artifactbundle.BundleKey, 0, len(changed))
+	for key := range changed {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return bundleKeyString(keys[i]) < bundleKeyString(keys[j])
+	})
+	result := make([]bundleCandidate, 0)
+	for _, key := range keys {
+		changedKinds := changed[key]
+		kinds := make([]artifact.Kind, 0, len(candidates[key]))
+		for kind := range candidates[key] {
+			kinds = append(kinds, kind)
+		}
+		sort.Slice(kinds, func(i, j int) bool { return kinds[i] < kinds[j] })
+		for _, kind := range kinds {
+			if changedKinds[kind] || rehydrated[key][kind] {
+				continue
+			}
+			if rehydrated[key] == nil {
+				rehydrated[key] = make(map[artifact.Kind]bool)
+			}
+			rehydrated[key][kind] = true
+			result = append(result, candidates[key][kind])
+		}
+	}
+	return result
+}
+
+func bundleKeyString(key artifactbundle.BundleKey) string {
+	return strings.Join([]string{key.Host, key.Share, key.Scope, key.Context}, "\x00")
 }
 
 func smbAuthForHost(host string, cfg config.ScanConfig) (smb.Auth, error) {

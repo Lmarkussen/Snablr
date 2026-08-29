@@ -20,6 +20,7 @@ import (
 	"golang.org/x/text/transform"
 	"snablr/internal/archiveinspect"
 	"snablr/internal/dbinspect"
+	"snablr/internal/metrics"
 	"snablr/internal/rules"
 	"snablr/internal/sqliteinspect"
 	"snablr/pkg/logx"
@@ -1598,6 +1599,30 @@ func TestWorkerPoolLoadsArchiveContentOnce(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&loads); got != 1 {
 		t.Fatalf("expected outer archive to be loaded once, got %d", got)
+	}
+}
+
+func TestWorkerPoolSeparatesDependencyReloadMetrics(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+	recorder := metrics.NewCollector()
+	engine := NewEngine(Options{}, manager, newCaptureFindingSink(), logx.New("error"))
+	job := Job{
+		Metadata: FileMetadata{FilePath: "Windows/System32/config/SYSTEM", Name: "SYSTEM", BundleDependency: true},
+		LoadContent: func(context.Context, FileMetadata) ([]byte, error) {
+			return []byte("synthetic dependency"), nil
+		},
+	}
+	if err := NewWorkerPool(engine, newCaptureFindingSink(), logx.New("error"), recorder, 1).Scan(context.Background(), jobsWithSingle(job)); err != nil {
+		t.Fatalf("Scan returned error: %v", err)
+	}
+	counters := recorder.Snapshot().Counters
+	if counters.DependencyReloads != 1 || counters.FilesVisited != 0 || counters.FilesRead != 0 {
+		t.Fatalf("dependency counters = %#v, want reload=1 and ordinary counts zero", counters)
 	}
 }
 

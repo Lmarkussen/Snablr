@@ -52,6 +52,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	if err := runScanPreflightFunc(ctx, cfg, useInteractiveTUI, logger); err != nil {
 		return err
 	}
+	logPersistenceNotice(cfg, logger)
 	cfg.Scan.WorkerCount = scanner.ResolveWorkerCount(cfg.Scan.WorkerCount)
 	logger.Infof("using %d file scan worker(s)", cfg.Scan.WorkerCount)
 

@@ -259,6 +259,14 @@ Incremental behavior:
 - a corrupt or unsupported inventory is ignored for that run so scanning fails open rather than silently suppressing content
 - incremental runs do not replay findings from earlier runs; unchanged files are simply absent from the new run's findings
 
+### Assessment data and cleanup
+
+`state_dir` is an explicit persistence location, not a hidden cache. When incremental scanning is enabled, Snablr uses `<state_dir>/inventory.json` and prints its absolute path at startup. The inventory contains server/share/path metadata, file metadata, scan state, semantics, timestamps, and access observations. Credential-context IDs are opaque local correlation identifiers, not anonymization; they are derived from auth mode, username, and domain and do not contain passwords, NT hashes, Kerberos tickets, ccaches, session keys, or recovered secret values. Treat this metadata as sensitive assessment information and remove it when the pivot/rescan workflow is complete, for example `rm -rf -- /absolute/path/to/state`.
+
+Checkpoint/resume is separate. `checkpoint_file` is the exact operator-selected JSON path and is shown at startup when enabled. It stores completed host/share/file identifiers, file size/modification metadata, and checkpoint timestamps so an interrupted scan can resume. It does not store findings, evidence snippets, file contents, or credential material. Remove it with `rm -f -- /absolute/path/to/checkpoint.json` after resume is no longer needed.
+
+The default `scanned_targets_out` is `scanned_targets.txt` in the current directory. It is an assessment-sensitive target inventory and is written with restrictive file permissions. JSON/HTML reports, optional CSV/Markdown exports, and any `creds_out` file are written only to their configured paths; reports may contain findings and evidence, while `creds_out` is highly sensitive and may contain usable credential material. Snablr does not automatically delete these outputs. Temporary WIM/archive/SQLite workspaces and extracted artifacts are cleaned automatically; operator-provided Kerberos ccaches are external inputs and are not cleaned by Snablr.
+
 ### WIM requirements
 
 WIM inspection requires the external `wimlib-imagex` executable. Snablr invokes it with bounded image/member/byte limits and reads the selected output locally. If it is unavailable, the WIM inspection is recorded as incomplete/retryable rather than treated as a successful content inspection. The current offline parser validates SAM+SYSTEM bundles; SECURITY and NTDS.DIT paths can be detected/extracted where configured but are not currently decrypted or parsed into domain credentials.

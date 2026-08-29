@@ -120,6 +120,30 @@ snablr scan --targets FILE01.example.com --no-ldap \
 
 `--force-rescan` ignores reusable completed-object state for that run while updating the inventory. Failed, partial, interrupted, changed, and semantically incompatible objects are retried automatically. Without `--state-dir` or `--incremental`, normal scan behavior is unchanged.
 
+## Assessment Data, State and Cleanup
+
+Snablr does not create a hidden machine-global cache. Persistent paths are operator-controlled, and Snablr prints the resolved absolute paths at scan startup. The default scan writes `scanned_targets.txt` in the current directory; JSON/HTML output is written only when selected, and optional CSV, Markdown, and credential exports use the paths supplied in configuration or flags. Reports and exports can contain sensitive findings or evidence. Snablr creates these files with mode `0600` and creates output directories it owns with mode `0700`, subject to the operating system and existing parent-directory permissions.
+
+Incremental state is opt-in with `--state-dir DIR` (and `--incremental` when explicitly requested). It retains `DIR/inventory.json`, including normalized server/share/path metadata, size and modification timestamps, scan status and semantics, and access observations. Access observations use an opaque local correlation identifier derived from authentication mode, username, and domain. This is not cryptographic anonymization and may be dictionary-testable. No passwords, NT hashes, Kerberos tickets/ccaches/session keys, or recovered secret values are intentionally stored in the inventory. Treat the entire state directory as sensitive engagement data because paths, share names, access observations, and timestamps may be confidential. Delete it when the pivot/rescan workflow no longer needs it:
+
+```bash
+rm -rf -- /absolute/path/to/snablr-state
+```
+
+Checkpoint/resume is separate: `--checkpoint-file PATH` stores exact-resume progress in the path you choose, and `--resume` reads that existing file. Its JSON contains completed host/share/file identifiers and file size/modification metadata, plus timestamps; it does not contain findings, evidence snippets, file contents, passwords, hashes, Kerberos material, or recovered credentials. Delete the checkpoint after the interrupted scan has been resumed or abandoned:
+
+```bash
+rm -f -- /absolute/path/to/checkpoint.json
+```
+
+Generated reports and scanned-target inventories are retained until the operator deletes them. They may expose hostnames, share names, paths, findings, snippets, access decisions, and timestamps. A `--creds-out` export is highly sensitive: it can contain usable credential material and must be protected and deleted as soon as it is no longer required:
+
+```bash
+rm -f -- /absolute/path/to/report.html /absolute/path/to/scanned_targets.txt /absolute/path/to/creds.txt
+```
+
+WIM, archive, SQLite, and other bounded artifact inspection is local and temporary during a scan. Temporary extracted images, hives, binary artifacts, archive members, database copies, and intermediate workspaces are cleaned automatically on successful completion, parse failure, and cancellation. No temporary extracted content is intentionally retained by Snablr; credential caches supplied by the operator, such as `KRB5CCNAME`, are external inputs and are not created or deleted by Snablr.
+
 ### Checkpoint/Resume Versus Incremental State
 
 Checkpoint/resume (`--checkpoint-file` and `--resume`) is for continuing an interrupted or exact scan workflow. Incremental state (`--state-dir` and `--incremental`) is a credential-independent content-inspection cache that still rediscovers access on every run. The two mechanisms can be used together, but they solve different problems.
@@ -703,3 +727,7 @@ The release snapshot and GitHub release workflow build:
 ## License
 
 This repository is licensed under the terms of the [GNU GPLv3](LICENSE).
+
+Third-party implementation notices, including the vendored BSD 3-Clause
+`go-smb2` source and Snablr's local maintenance patches, are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -52,6 +52,9 @@ func Open(path string, resume bool) (*Store, error) {
 		}
 		return nil, fmt.Errorf("read checkpoint file %s: %w", path, err)
 	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return nil, fmt.Errorf("restrict checkpoint file %s: %w", path, err)
+	}
 
 	var checkpoint Checkpoint
 	if err := json.Unmarshal(data, &checkpoint); err != nil {
@@ -109,7 +112,7 @@ func (s *Store) Save() error {
 		FileStates:      sortedFileStates(s.files),
 	}
 
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return fmt.Errorf("create checkpoint directory: %w", err)
 	}
 

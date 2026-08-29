@@ -61,6 +61,11 @@ func TestWriteScannedTargetsWritesReadableAuditFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.ReadFile returned error: %v", err)
 	}
+	if info, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	} else if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("scanned target audit permissions = %o, want 600", got)
+	}
 	text := string(data)
 	for _, want := range []string{
 		"# Snablr scanned target audit",

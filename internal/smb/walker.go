@@ -127,6 +127,7 @@ func isPermissionError(err error) bool {
 
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "access is denied") ||
+		strings.Contains(msg, "access denied") ||
 		strings.Contains(msg, "permission denied") ||
 		strings.Contains(msg, "logon failure")
 }

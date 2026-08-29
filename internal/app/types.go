@@ -38,6 +38,7 @@ type ScanOptions struct {
 	StateDir                   string
 	Incremental                bool
 	ForceRescan                bool
+	ListShares                 bool
 	SkipReachabilityCheck      bool
 	ReachabilityTimeoutSeconds int
 	OutputFormat               string

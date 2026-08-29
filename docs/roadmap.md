@@ -1,13 +1,13 @@
 # Roadmap
 
-These items are intentionally not implemented in the current release line.
+These items track future work; authenticated share listing is implemented.
 
-## Authenticated Share Listing
+## Authenticated Share Listing (implemented)
 
-Add a future `--list-shares` mode that authenticates using the selected password,
-NTLM-hash, or Kerberos identity, tests actual share accessibility/readability, and
-prints only shares available to that authenticated user before exiting. It should
-not start a normal file scan.
+`--list-shares` authenticates using the selected password, NTLM-hash, or
+Kerberos identity, tests each candidate with tree connect plus root directory
+listing, and prints only readable filesystem shares for that identity before
+exiting. It does not start a normal file scan or persist scan state.
 
 ## SECURITY + SYSTEM Secrets
 

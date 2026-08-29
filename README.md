@@ -83,6 +83,16 @@ KRB5CCNAME=/path/to/ccache snablr scan --targets FILE01.example.com --no-ldap \
 
 Kerberos support is tested with SMB 3.1.1 signing and a FILE ccache. Server naming, DNS, realm configuration, and clock synchronization must still be correct for the target environment.
 
+Use `--list-shares` to authenticate normally, validate each enumerated share with a tree connect and root directory listing, print only readable filesystem shares for the authenticated identity, and exit without scanning files or creating scan state:
+
+```bash
+snablr scan --targets FILE01.example.com --no-ldap \
+  --smb-auth password --username 'DOMAIN\\user' --password '<password>' \
+  --list-shares
+```
+
+The result is grouped by target and shows UNC share roots plus a readable-share count. `IPC$` and `PRINT$` are omitted because they are not filesystem scan targets. Administrative and hidden shares are not filtered by name when the identity can actually read them. Routine discovery chatter is suppressed for this short action unless debug logging is enabled. The flag is a CLI action rather than a configuration setting.
+
 ## WIM and Offline Windows Artifacts
 
 When enabled and `wimlib-imagex` is installed, Snablr can inspect bounded WIM images and extract selected Windows artifacts for local analysis. Current offline parsing validates and correlates `SAM` with `SYSTEM`, including safe account and recovered-hash counts in the `windows.sam.bundle_parsed` finding; raw hashes and key material are not printed.

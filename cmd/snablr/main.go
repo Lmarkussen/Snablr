@@ -15,7 +15,9 @@ import (
 )
 
 func main() {
-	ui.PrintBanner(os.Stdout)
+	if !isListSharesInvocation(os.Args[1:]) {
+		ui.PrintBanner(os.Stdout)
+	}
 
 	if len(os.Args) < 2 {
 		printUsage()
@@ -51,13 +53,37 @@ func main() {
 	}
 
 	if err != nil {
-		_, _ = os.Stderr.WriteString(err.Error() + "\n")
+		message := err.Error()
+		if isListSharesInvocation(os.Args[1:]) && terminalColorEnabled(os.Stderr) {
+			message = "\033[31m" + message + "\033[0m"
+		}
+		_, _ = os.Stderr.WriteString(message + "\n")
 		var exitErr *app.ExitError
 		if errors.As(err, &exitErr) && exitErr.Code != 0 {
 			os.Exit(exitErr.Code)
 		}
 		os.Exit(1)
 	}
+}
+
+func isListSharesInvocation(args []string) bool {
+	if len(args) == 0 || args[0] != "scan" {
+		return false
+	}
+	for _, arg := range args[1:] {
+		if arg == "--list-shares" || arg == "--list-shares=true" {
+			return true
+		}
+	}
+	return false
+}
+
+func terminalColorEnabled(file *os.File) bool {
+	if file == nil {
+		return false
+	}
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0 && strings.TrimSpace(os.Getenv("TERM")) != "dumb"
 }
 
 func runScan(args []string) error {
@@ -114,6 +140,7 @@ func runScan(args []string) error {
 	stateDir := fs.String("state-dir", "", "Directory for incremental metadata (target/share/path metadata; treat as sensitive engagement data)")
 	incremental := fs.Bool("incremental", false, "Reuse unchanged completed file inspections from --state-dir; persists inventory metadata")
 	forceRescan := fs.Bool("force-rescan", false, "Ignore reusable completed objects in incremental state")
+	listShares := fs.Bool("list-shares", false, "List readable shares accessible to the authenticated user and exit")
 	skipReachability := fs.Bool("skip-reachability-check", false, "Skip TCP 445 reachability testing before scanning")
 	reachabilityTimeout := fs.Int("reachability-timeout", 0, "Reachability timeout in seconds")
 	outputFormat := fs.String("output-format", "", "Output format: console, json, html, all, or a comma-separated combination like html,json")
@@ -200,6 +227,7 @@ func runScan(args []string) error {
 		StateDir:                   *stateDir,
 		Incremental:                *incremental,
 		ForceRescan:                *forceRescan,
+		ListShares:                 *listShares,
 		SkipReachabilityCheck:      *skipReachability,
 		ReachabilityTimeoutSeconds: *reachabilityTimeout,
 		OutputFormat:               *outputFormat,
@@ -570,6 +598,7 @@ func printScanUsage(fs *flag.FlagSet) {
 	fmt.Println("Description:")
 	fmt.Println("  Runs target discovery, reachability testing, planning, SMB enumeration, rule-based scanning,")
 	fmt.Println("  and report generation.")
+	fmt.Println("  --list-shares authenticates normally, lists only readable shares for that identity, and exits without scanning files.")
 	fmt.Println("  Required credentials for LDAP/DFS discovery are validated before the live TUI starts.")
 	fmt.Println("  Discovery-based scans show target discovery and reachability progress before the TUI opens.")
 	fmt.Println()
@@ -582,6 +611,9 @@ func printScanUsage(fs *flag.FlagSet) {
 	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>'")
 	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth ntlm-hash --username USER --nt-hash '<32-hex-nt-hash>'")
 	fmt.Println("  KRB5CCNAME=/path/to/ccache snablr scan --targets FILE01.TEST.LOCAL --no-ldap --smb-auth kerberos --smb-hostname FILE01.TEST.LOCAL")
+	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --no-ldap --smb-auth password --username USER --password '<password>' --list-shares")
+	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --no-ldap --smb-auth ntlm-hash --username USER --nt-hash '<32-hex-nt-hash>' --list-shares")
+	fmt.Println("  KRB5CCNAME=/path/to/ccache snablr scan --targets FILE01.TEST.LOCAL --no-ldap --smb-auth kerberos --smb-hostname FILE01.TEST.LOCAL --list-shares")
 	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>' --state-dir ./state --incremental")
 	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth ntlm-hash --username USER --nt-hash '<32-hex-nt-hash>' --state-dir ./state --incremental")
 	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>' --state-dir ./state --force-rescan")

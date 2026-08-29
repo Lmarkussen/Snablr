@@ -104,10 +104,11 @@ This layer does not know about LDAP discovery and does not own SMB connectivity.
 ### Offline artifact pipeline
 
 - `internal/artifact` owns bounded file-backed artifact identities and metadata.
-- `internal/artifactbundle` correlates related artifacts such as SAM and SYSTEM.
+- `internal/artifactbundle` correlates related artifacts such as SAM + SYSTEM and SECURITY + SYSTEM while enforcing origin boundaries.
 - `internal/registryhive` provides reusable REGF hive parsing.
 - `internal/systemkey` derives the SYSTEM boot key needed for offline SAM decoding.
 - `internal/samparse` parses validated offline SAM account data without exposing raw hashes in normal output.
+- `internal/securityparse` derives the modern LSA protection key and parses bounded SECURITY secret/cache metadata without returning raw secret bytes.
 - `internal/smbkerberos` implements the pure-Go SMB Kerberos mechanism used by the patched SMB dependency.
 
 ### `internal/output`

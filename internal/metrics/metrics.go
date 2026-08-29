@@ -27,6 +27,7 @@ type Counters struct {
 	IncrementalRescannedChanged int64 `json:"incremental_rescanned_changed,omitempty"`
 	IncrementalRetried          int64 `json:"incremental_retried,omitempty"`
 	IncrementalNewAccessible    int64 `json:"incremental_new_accessible_known,omitempty"`
+	DependencyReloads           int64 `json:"dependency_reloads,omitempty"`
 }
 
 type Snapshot struct {
@@ -43,6 +44,7 @@ type Recorder interface {
 	IncFilesVisited()
 	IncFilesSkipped()
 	IncFilesRead()
+	IncDependencyReload()
 	AddMatchesFound(int)
 	StartPhase(string) *Timer
 	Snapshot() Snapshot
@@ -85,6 +87,10 @@ func (c *Collector) IncFilesSkipped() {
 
 func (c *Collector) IncFilesRead() {
 	c.addCounter(func(counters *Counters) { counters.FilesRead++ })
+}
+
+func (c *Collector) IncDependencyReload() {
+	c.addCounter(func(counters *Counters) { counters.DependencyReloads++ })
 }
 
 func (c *Collector) AddMatchesFound(n int) {

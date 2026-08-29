@@ -40,6 +40,7 @@ func Build(spec Spec) []byte {
 	copy(b.b[base:base+4], "hbin")
 	binary.LittleEndian.PutUint32(b.b[base+8:], bins)
 	root := b.nk("ROOT")
+	binary.LittleEndian.PutUint16(b.payload(root)[2:], 0x2c)
 	children := []uint32{}
 	if spec.IncludeSelect || spec.Current != nil || spec.CurrentRaw != nil || spec.CurrentType != 0 {
 		selectKey := b.nk("Select")
@@ -115,8 +116,8 @@ func (b *builder) nk(name string) uint32 {
 	p := make([]byte, 0x50+len(name))
 	copy(p, []byte("nk"))
 	binary.LittleEndian.PutUint16(p[2:], 0x20)
-	binary.LittleEndian.PutUint16(p[0x4c:], uint16(len(name)))
-	copy(p[0x50:], name)
+	binary.LittleEndian.PutUint16(p[0x48:], uint16(len(name)))
+	copy(p[0x4c:], name)
 	return b.cell(p)
 }
 func (b *builder) nkClass(name, class string) uint32 {
@@ -130,15 +131,21 @@ func (b *builder) nkClass(name, class string) uint32 {
 	c := b.cell(data)
 	p := b.payload(rel)
 	binary.LittleEndian.PutUint32(p[0x30:], c)
-	binary.LittleEndian.PutUint16(p[0x4e:], uint16(len(data)))
+	binary.LittleEndian.PutUint16(p[0x4a:], uint16(len(data)))
 	return rel
 }
 func (b *builder) list(children ...uint32) uint32 {
-	p := make([]byte, 4+len(children)*4)
-	copy(p, []byte("li"))
+	p := make([]byte, 4+len(children)*8)
+	copy(p, []byte("lf"))
 	binary.LittleEndian.PutUint16(p[2:], uint16(len(children)))
 	for i, child := range children {
-		binary.LittleEndian.PutUint32(p[4+i*4:], child)
+		binary.LittleEndian.PutUint32(p[4+i*8:], child)
+		childPayload := b.payload(child)
+		nameLength := int(binary.LittleEndian.Uint16(childPayload[0x48:]))
+		if nameLength > 4 {
+			nameLength = 4
+		}
+		copy(p[4+i*8+4:4+i*8+4+nameLength], childPayload[0x4c:0x4c+nameLength])
 	}
 	return b.cell(p)
 }
@@ -166,10 +173,19 @@ func (b *builder) vk(name string, typ uint32, raw []byte) uint32 {
 	p := make([]byte, 0x14+len(name))
 	copy(p, []byte("vk"))
 	binary.LittleEndian.PutUint16(p[2:], uint16(len(name)))
-	binary.LittleEndian.PutUint32(p[4:], uint32(len(raw)))
-	binary.LittleEndian.PutUint32(p[8:], b.cell(raw))
+	if len(raw) <= 4 {
+		binary.LittleEndian.PutUint32(p[4:], 0x80000000|uint32(len(raw)))
+		var inline [4]byte
+		copy(inline[:], raw)
+		copy(p[8:], inline[:])
+	} else {
+		binary.LittleEndian.PutUint32(p[4:], uint32(len(raw)))
+		binary.LittleEndian.PutUint32(p[8:], b.cell(raw))
+	}
 	binary.LittleEndian.PutUint32(p[12:], typ)
-	binary.LittleEndian.PutUint16(p[16:], 1)
+	if name != "" {
+		binary.LittleEndian.PutUint16(p[16:], 1)
+	}
 	copy(p[0x14:], name)
 	return b.cell(p)
 }

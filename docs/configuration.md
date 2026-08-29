@@ -269,7 +269,7 @@ The default `scanned_targets_out` is `scanned_targets.txt` in the current direct
 
 ### WIM requirements
 
-WIM inspection requires the external `wimlib-imagex` executable. Snablr invokes it with bounded image/member/byte limits and reads the selected output locally. If it is unavailable, the WIM inspection is recorded as incomplete/retryable rather than treated as a successful content inspection. The current offline parser validates SAM+SYSTEM bundles; SECURITY and NTDS.DIT paths can be detected/extracted where configured but are not currently decrypted or parsed into domain credentials.
+WIM inspection requires the external `wimlib-imagex` executable. Snablr invokes it with bounded image/member/byte limits and reads the selected output locally. If it is unavailable, the WIM inspection is recorded as incomplete/retryable rather than treated as a successful content inspection. The current offline parser validates SAM+SYSTEM bundles and modern SECURITY+SYSTEM bundles. SECURITY parsing uses the Vista-and-later PolEKList AES scheme and reports safe LSA-secret/cache metadata without emitting raw values. Legacy pre-Vista LSA protection and NTDS.DIT domain-credential extraction are not supported.
 
 See [Roadmap](roadmap.md) for intentionally unimplemented artifact and discovery work.
 

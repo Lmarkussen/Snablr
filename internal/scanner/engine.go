@@ -40,6 +40,7 @@ type Options struct {
 	BundleCoordinator *artifactbundle.Coordinator
 	SAMMaxBytes       int64
 	SYSTEMMaxBytes    int64
+	SECURITYMaxBytes  int64
 }
 
 type Engine struct {
@@ -70,6 +71,7 @@ type Engine struct {
 	bundleCoordinator *artifactbundle.Coordinator
 	samMaxBytes       int64
 	systemMaxBytes    int64
+	securityMaxBytes  int64
 }
 
 func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx.Logger) *Engine {
@@ -115,6 +117,7 @@ func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx
 		bundleCoordinator: opts.BundleCoordinator,
 		samMaxBytes:       opts.SAMMaxBytes,
 		systemMaxBytes:    opts.SYSTEMMaxBytes,
+		securityMaxBytes:  opts.SECURITYMaxBytes,
 	}
 }
 
@@ -170,7 +173,7 @@ func (e *Engine) EvaluateContext(ctx context.Context, meta FileMetadata, content
 		}
 	}
 	if e.bundleCoordinator != nil {
-		if kind, ok := artifact.KindForPath(meta.FilePath); ok && (kind == artifact.KindSAM || kind == artifact.KindSYSTEM) {
+		if kind, ok := artifact.KindForPath(meta.FilePath); ok && (kind == artifact.KindSAM || kind == artifact.KindSYSTEM || kind == artifact.KindSECURITY) {
 			return e.evaluateLooseBinary(ctx, meta, content, kind)
 		}
 	}
@@ -223,7 +226,7 @@ func (e *Engine) NeedsContent(meta FileMetadata) bool {
 		return false
 	}
 	if e.bundleCoordinator != nil {
-		if kind, ok := artifact.KindForPath(meta.FilePath); ok && (kind == artifact.KindSAM || kind == artifact.KindSYSTEM) {
+		if kind, ok := artifact.KindForPath(meta.FilePath); ok && (kind == artifact.KindSAM || kind == artifact.KindSYSTEM || kind == artifact.KindSECURITY) {
 			return true
 		}
 	}
@@ -279,13 +282,18 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 }
 
 func (e *Engine) evaluateLooseBinary(ctx context.Context, meta FileMetadata, content []byte, kind artifact.Kind) Evaluation {
-	evaluation := e.evaluateStandard(meta, nil, false)
+	evaluation := Evaluation{}
+	if !meta.BundleDependency {
+		evaluation = e.evaluateStandard(meta, nil, false)
+	}
 	if len(content) == 0 {
 		return evaluation
 	}
 	limit := e.samMaxBytes
 	if kind == artifact.KindSYSTEM {
 		limit = e.systemMaxBytes
+	} else if kind == artifact.KindSECURITY {
+		limit = e.securityMaxBytes
 	}
 	if limit <= 0 {
 		limit = 64 * 1024 * 1024
@@ -307,6 +315,11 @@ func (e *Engine) evaluateLooseBinary(ctx context.Context, meta FileMetadata, con
 	}
 	if addResult.Result != nil && addResult.Result.Status == artifactbundle.BundleParsed {
 		finding := findingFromSAMBundle(meta, addResult.Result)
+		evaluation.Findings = append(evaluation.Findings, finding)
+		e.recordValidationFindings([]Finding{finding})
+	}
+	if addResult.SecurityResult != nil && addResult.SecurityResult.Status == artifactbundle.BundleParsed && (addResult.SecurityResult.SecretsDecoded > 0 || addResult.SecurityResult.CachedDomainDecoded > 0) {
+		finding := findingFromSecurityBundle(meta, addResult.SecurityResult)
 		evaluation.Findings = append(evaluation.Findings, finding)
 		e.recordValidationFindings([]Finding{finding})
 	}
@@ -412,11 +425,16 @@ func (e *Engine) evaluateWIM(ctx context.Context, meta FileMetadata, content []b
 	evaluation.BinaryArtifacts = make([]artifact.Binary, 0, len(result.BinaryMembers))
 	findings := make([]Finding, 0)
 	for _, binary := range result.BinaryMembers {
-		if binary.Artifact.Kind() == artifact.KindSAM || binary.Artifact.Kind() == artifact.KindSYSTEM {
+		if binary.Artifact.Kind() == artifact.KindSAM || binary.Artifact.Kind() == artifact.KindSYSTEM || binary.Artifact.Kind() == artifact.KindSECURITY {
 			addResult, addErr := e.submitBinaryArtifact(ctx, binary.Artifact)
 			if addErr == nil && bundleAccepted(addResult.State) {
 				if addResult.Result != nil && addResult.Result.Status == artifactbundle.BundleParsed {
 					finding := findingFromSAMBundle(meta, addResult.Result)
+					findings = append(findings, finding)
+					e.recordValidationFindings([]Finding{finding})
+				}
+				if addResult.SecurityResult != nil && addResult.SecurityResult.Status == artifactbundle.BundleParsed && (addResult.SecurityResult.SecretsDecoded > 0 || addResult.SecurityResult.CachedDomainDecoded > 0) {
+					finding := findingFromSecurityBundle(meta, addResult.SecurityResult)
 					findings = append(findings, finding)
 					e.recordValidationFindings([]Finding{finding})
 				}

@@ -9,11 +9,12 @@ Kerberos identity, tests each candidate with tree connect plus root directory
 listing, and prints only readable filesystem shares for that identity before
 exiting. It does not start a normal file scan or persist scan state.
 
-## SECURITY + SYSTEM Secrets
+## SECURITY + SYSTEM Secrets (implemented)
 
-Add bounded analysis of LSA secrets and cached material from SECURITY/SYSTEM
-artifact pairs, with the same secret-handling and validation requirements as the
-current SAM+SYSTEM path.
+Modern Vista-and-later `SECURITY` + `SYSTEM` pairs are analyzed with bounded
+PolEKList AES LSA-key derivation, structured LSA-secret metadata, and cached
+domain-material discovery. Raw secret bytes are not returned in findings or
+reports. Legacy pre-Vista LSA protection remains deferred.
 
 ## NTDS.DIT + SYSTEM
 

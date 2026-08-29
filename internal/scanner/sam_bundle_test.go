@@ -89,6 +89,36 @@ func TestEngineDoesNotClaimRecoveryForMarkerSAMSystem(t *testing.T) {
 	}
 }
 
+func TestEngineIntegratesLooseSecuritySystemBundleWithoutSecretOutput(t *testing.T) {
+	current := uint32(1)
+	systemBytes := testfixture.Build(testfixture.Spec{Current: &current, IncludeSelect: true, IncludeCurrent: true, IncludeControl: true, IncludeLSA: true, Fragments: map[string]string{"JD": "00112233", "Skew1": "22334455", "GBG": "66778899", "Data": "aabbccdd"}})
+	systemHive, err := registryhive.Open(bytes.NewReader(systemBytes), int64(len(systemBytes)), registryhive.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	boot, err := systemkey.Derive(systemHive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	securityBytes := testfixture.BuildSecurity(testfixture.SecuritySpec{BootKey: boot.BootKey, LSAKey: [32]byte{5, 6, 7, 8}, Secrets: map[string][]byte{"$MACHINE.ACC": []byte("SYNTHETIC_LSA_SECRET")}})
+	coordinator := artifactbundle.New(artifactbundle.Options{})
+	defer coordinator.Close()
+	engine := NewEngine(Options{BundleCoordinator: coordinator}, &rules.Manager{}, nil, logx.New("error"))
+	if evaluation := engine.EvaluateContext(context.Background(), FileMetadata{Host: "host", Share: "share", FilePath: "/backup/SECURITY", Name: "SECURITY"}, securityBytes); len(evaluation.BinaryArtifacts) != 0 {
+		t.Fatalf("accepted SECURITY artifact remained worker-owned")
+	}
+	evaluation := engine.EvaluateContext(context.Background(), FileMetadata{Host: "host", Share: "share", FilePath: "/backup/SYSTEM", Name: "SYSTEM"}, systemBytes)
+	for _, finding := range evaluation.Findings {
+		if finding.RuleID == securityBundleFindingRuleID {
+			if !strings.Contains(finding.MatchedText, "LSA secrets decoded: 1") || strings.Contains(finding.MatchedText, "SYNTHETIC_LSA_SECRET") {
+				t.Fatalf("unexpected SECURITY finding: %#v", finding)
+			}
+			return
+		}
+	}
+	t.Fatalf("validated SECURITY finding missing: %#v", evaluation.Findings)
+}
+
 func TestEngineIntegratesValidSyntheticWIM(t *testing.T) {
 	if _, err := exec.LookPath("wimlib-imagex"); err != nil {
 		t.Skip("wimlib-imagex not available")
@@ -109,6 +139,7 @@ func TestEngineIntegratesValidSyntheticWIM(t *testing.T) {
 	}
 	samBytes := testfixture.BuildSAM(testfixture.SAMSpec{BootKey: boot.BootKey, KeyRevision: 2, IncludeDomain: true,
 		Accounts: []testfixture.SAMAccount{{RID: 500, Username: "wim_test_admin", NTHash: [16]byte{1, 2, 3}, HashRevision: 2}}})
+	securityBytes := testfixture.BuildSecurity(testfixture.SecuritySpec{BootKey: boot.BootKey, LSAKey: [32]byte{5, 6, 7, 8}, Secrets: map[string][]byte{"$MACHINE.ACC": []byte("SYNTHETIC_WIM_LSA")}})
 	tree := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tree, "Windows", "System32", "config"), 0o755); err != nil {
 		t.Fatal(err)
@@ -117,6 +148,9 @@ func TestEngineIntegratesValidSyntheticWIM(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(tree, "Windows", "System32", "config", "SYSTEM"), systemBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tree, "Windows", "System32", "config", "SECURITY"), securityBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	wimPath := filepath.Join(t.TempDir(), "valid-sam-system.wim")
@@ -135,13 +169,22 @@ func TestEngineIntegratesValidSyntheticWIM(t *testing.T) {
 	if len(evaluation.BinaryArtifacts) != 0 {
 		t.Fatalf("accepted WIM artifacts remained worker-owned")
 	}
+	samFound, securityFound := false, false
 	for _, finding := range evaluation.Findings {
 		if finding.RuleID == samBundleFindingRuleID {
 			if finding.SignalType != "validated" || !finding.Actionable || !strings.Contains(finding.MatchedText, "accounts recovered: 1") {
 				t.Fatalf("unexpected WIM bundle finding: %#v", finding)
 			}
-			return
+			samFound = true
+		}
+		if finding.RuleID == securityBundleFindingRuleID {
+			if !strings.Contains(finding.MatchedText, "LSA secrets decoded: 1") {
+				t.Fatalf("unexpected WIM SECURITY finding: %#v", finding)
+			}
+			securityFound = true
 		}
 	}
-	t.Fatalf("valid WIM bundle finding missing: %#v", evaluation.Findings)
+	if !samFound || !securityFound {
+		t.Fatalf("valid WIM bundle findings missing: %#v", evaluation.Findings)
+	}
 }

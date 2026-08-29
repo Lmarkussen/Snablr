@@ -162,7 +162,13 @@ func (p *WorkerPool) processJob(ctx context.Context, job Job) (result Result) {
 	var content []byte
 	var err error
 
-	p.recordFile(meta)
+	if meta.BundleDependency {
+		if p.recorder != nil {
+			p.recorder.IncDependencyReload()
+		}
+	} else {
+		p.recordFile(meta)
+	}
 
 	if p.processor.NeedsContent(meta) {
 		if job.LoadContent == nil {
@@ -176,7 +182,7 @@ func (p *WorkerPool) processJob(ctx context.Context, job Job) (result Result) {
 					p.logError("read failed for %s: %v", meta.FilePath, err)
 					p.recordReadError(meta, err)
 				}
-			} else if p.recorder != nil {
+			} else if p.recorder != nil && !meta.BundleDependency {
 				p.recorder.IncFilesRead()
 			}
 		}

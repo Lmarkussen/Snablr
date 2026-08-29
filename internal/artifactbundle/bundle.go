@@ -1,5 +1,5 @@
 // Package artifactbundle correlates reusable binary Windows artifacts and
-// orchestrates standalone SAM + SYSTEM parsing. It is independent of WIM,
+// orchestrates standalone SAM + SYSTEM and SECURITY + SYSTEM parsing. It is independent of WIM,
 // SMB, scanner, and reporting implementations.
 package artifactbundle
 
@@ -15,6 +15,7 @@ import (
 	"snablr/internal/artifact"
 	"snablr/internal/registryhive"
 	"snablr/internal/samparse"
+	"snablr/internal/securityparse"
 	"snablr/internal/systemkey"
 )
 
@@ -72,6 +73,7 @@ type BundleOrigin struct {
 	ImageIndex    int
 	SAMPath       string
 	SYSTEMPath    string
+	SECURITYPath  string
 }
 
 // SAMBundleResult contains structured parsing output without formatting hash
@@ -88,13 +90,33 @@ type SAMBundleResult struct {
 	Failure            error
 }
 
+// SecurityBundleResult contains safe metadata from a SECURITY + SYSTEM pair.
+// It deliberately contains no decrypted secret or key bytes.
+type SecurityBundleResult struct {
+	BundleID            string
+	Origin              BundleOrigin
+	Status              ParseStatus
+	ControlSet          uint32
+	Revision            string
+	LSAKeyDerived       bool
+	SecretsFound        int
+	SecretsDecoded      int
+	CachedDomainFound   int
+	CachedDomainDecoded int
+	Secrets             []securityparse.SecretRecord
+	CachedDomain        []securityparse.CacheRecord
+	Warnings            []string
+	Failure             error
+}
+
 // AddResult reports whether an artifact is waiting, duplicated, or completed a
 // parse. Parse failures are represented in Result rather than as an ambiguous
 // Add error.
 type AddResult struct {
-	State  AddState
-	Key    BundleKey
-	Result *SAMBundleResult
+	State          AddState
+	Key            BundleKey
+	Result         *SAMBundleResult
+	SecurityResult *SecurityBundleResult
 }
 
 // Options bounds retained bundles and concurrent parsing.
@@ -109,7 +131,7 @@ func (o Options) withDefaults() Options {
 		o.MaxPendingBundles = 1024
 	}
 	if o.MaxArtifactsPerBundle <= 0 {
-		o.MaxArtifactsPerBundle = 2
+		o.MaxArtifactsPerBundle = 3
 	}
 	if o.MaxConcurrentParsers <= 0 {
 		o.MaxConcurrentParsers = 1
@@ -130,6 +152,7 @@ type Coordinator struct {
 	opts       Options
 	pending    map[BundleKey]*pendingBundle
 	processing map[BundleKey]bool
+	bootKeys   map[BundleKey][16]byte
 	closed     bool
 	parsers    chan struct{}
 }
@@ -141,6 +164,7 @@ func New(opts Options) *Coordinator {
 		opts:       opts,
 		pending:    make(map[BundleKey]*pendingBundle),
 		processing: make(map[BundleKey]bool),
+		bootKeys:   make(map[BundleKey][16]byte),
 		parsers:    make(chan struct{}, opts.MaxConcurrentParsers),
 	}
 }
@@ -167,7 +191,7 @@ func KeyFor(origin artifact.Origin) BundleKey {
 	return key
 }
 
-// Add accepts SAM or SYSTEM. Once accepted, ownership transfers to the
+// Add accepts SAM, SECURITY, or SYSTEM. Once accepted, ownership transfers to the
 // coordinator. A complete pair is parsed synchronously under a bounded parser
 // semaphore, then both artifacts are closed before the result is returned.
 func (c *Coordinator) Add(ctx context.Context, binary artifact.Binary) (AddResult, error) {
@@ -178,7 +202,7 @@ func (c *Coordinator) Add(ctx context.Context, binary artifact.Binary) (AddResul
 		return AddResult{State: ArtifactRejected}, ErrInvalidArtifact
 	}
 	kind := binary.Kind()
-	if kind != artifact.KindSAM && kind != artifact.KindSYSTEM {
+	if kind != artifact.KindSAM && kind != artifact.KindSYSTEM && kind != artifact.KindSECURITY {
 		return AddResult{State: ArtifactRejected}, ErrUnsupportedKind
 	}
 	key := KeyFor(binary.Origin())
@@ -187,6 +211,35 @@ func (c *Coordinator) Add(ctx context.Context, binary artifact.Binary) (AddResul
 	if c.closed {
 		c.mu.Unlock()
 		return AddResult{State: ArtifactCoordinatorClosed, Key: key}, ErrClosed
+	}
+	if kind == artifact.KindSECURITY && c.pending[key] == nil {
+		if bootKey, ok := c.bootKeys[key]; ok {
+			delete(c.bootKeys, key)
+			c.processing[key] = true
+			c.mu.Unlock()
+			pending := &pendingBundle{key: key, byKind: map[artifact.Kind]artifact.Binary{artifact.KindSECURITY: binary}}
+			result := c.parseSecurityWithBootKey(ctx, pending, bootKey, &SecurityBundleResult{
+				BundleID: bundleID(key),
+				Origin:   originFor(key, binary, nil),
+			})
+			c.mu.Lock()
+			delete(c.processing, key)
+			c.mu.Unlock()
+			return AddResult{State: stateFor(result.Status), Key: key, SecurityResult: result}, nil
+		}
+	}
+	if kind == artifact.KindSAM && c.pending[key] == nil {
+		if bootKey, ok := c.bootKeys[key]; ok {
+			delete(c.bootKeys, key)
+			c.processing[key] = true
+			c.mu.Unlock()
+			pending := &pendingBundle{key: key, byKind: map[artifact.Kind]artifact.Binary{artifact.KindSAM: binary}}
+			result := c.parseSAMWithBootKey(ctx, pending, bootKey)
+			c.mu.Lock()
+			delete(c.processing, key)
+			c.mu.Unlock()
+			return AddResult{State: stateFor(result.Status), Key: key, Result: result}, nil
+		}
 	}
 	p := c.pending[key]
 	if p == nil {
@@ -206,7 +259,7 @@ func (c *Coordinator) Add(ctx context.Context, binary artifact.Binary) (AddResul
 		return AddResult{State: ArtifactRejected, Key: key}, ErrArtifactLimit
 	}
 	p.byKind[kind] = binary
-	if len(p.byKind) < 2 {
+	if p.byKind[artifact.KindSYSTEM] == nil || (p.byKind[artifact.KindSAM] == nil && p.byKind[artifact.KindSECURITY] == nil) {
 		c.mu.Unlock()
 		return AddResult{State: ArtifactWaiting, Key: key}, nil
 	}
@@ -214,6 +267,22 @@ func (c *Coordinator) Add(ctx context.Context, binary artifact.Binary) (AddResul
 	c.processing[key] = true
 	c.mu.Unlock()
 
+	if _, hasSAM := p.byKind[artifact.KindSAM]; hasSAM {
+		if _, hasSECURITY := p.byKind[artifact.KindSECURITY]; hasSECURITY && p.byKind[artifact.KindSYSTEM] != nil {
+			resultSAM, resultSECURITY := c.parseBoth(ctx, p)
+			c.mu.Lock()
+			delete(c.processing, key)
+			c.mu.Unlock()
+			return AddResult{State: stateFor(resultSECURITY.Status), Key: key, Result: resultSAM, SecurityResult: resultSECURITY}, nil
+		}
+	}
+	if _, ok := p.byKind[artifact.KindSECURITY]; ok {
+		result := c.parseSecurity(ctx, p)
+		c.mu.Lock()
+		delete(c.processing, key)
+		c.mu.Unlock()
+		return AddResult{State: stateFor(result.Status), Key: key, SecurityResult: result}, nil
+	}
 	result := c.parse(ctx, p)
 	c.mu.Lock()
 	delete(c.processing, key)
@@ -281,6 +350,9 @@ func (c *Coordinator) parse(ctx context.Context, p *pendingBundle) *SAMBundleRes
 		return result
 	}
 	defer clearBootKey(&keyResult.BootKey)
+	c.mu.Lock()
+	c.bootKeys[p.key] = keyResult.BootKey
+	c.mu.Unlock()
 	result.ControlSet = keyResult.ControlSet
 	samReader, samCloser, err := sam.OpenAt()
 	if err != nil {
@@ -324,10 +396,273 @@ func (c *Coordinator) parse(ctx context.Context, p *pendingBundle) *SAMBundleRes
 	return result
 }
 
+func (c *Coordinator) parseBoth(ctx context.Context, p *pendingBundle) (*SAMBundleResult, *SecurityBundleResult) {
+	samResult := &SAMBundleResult{BundleID: bundleID(p.key), Origin: originFor(p.key, p.byKind[artifact.KindSAM], p.byKind[artifact.KindSYSTEM])}
+	securityResult := &SecurityBundleResult{BundleID: bundleID(p.key), Origin: originFor(p.key, p.byKind[artifact.KindSECURITY], p.byKind[artifact.KindSYSTEM])}
+	if err := ctx.Err(); err != nil {
+		samResult.Status, samResult.Failure = BundleFailed, err
+		securityResult.Status, securityResult.Failure = BundleFailed, err
+		closeArtifacts(p)
+		return samResult, securityResult
+	}
+	system := p.byKind[artifact.KindSYSTEM]
+	systemReader, systemCloser, err := system.OpenAt()
+	if err != nil {
+		samResult.Status, samResult.Failure = BundleFailed, err
+		securityResult.Status, securityResult.Failure = BundleFailed, err
+		closeArtifacts(p)
+		return samResult, securityResult
+	}
+	systemHive, err := registryhive.Open(systemReader, system.Size(), registryhive.Options{})
+	if err != nil {
+		_ = systemCloser.Close()
+		samResult.Status, samResult.Failure = BundleMalformed, err
+		securityResult.Status, securityResult.Failure = BundleMalformed, err
+		closeArtifacts(p)
+		return samResult, securityResult
+	}
+	keyResult, err := systemkey.Derive(systemHive)
+	_ = systemCloser.Close()
+	if err != nil {
+		samResult.Status, samResult.Failure = BundleMalformed, err
+		securityResult.Status, securityResult.Failure = BundleMalformed, err
+		closeArtifacts(p)
+		return samResult, securityResult
+	}
+	samResult.ControlSet = keyResult.ControlSet
+	securityResult.ControlSet = keyResult.ControlSet
+	samReader, samCloser, samErr := p.byKind[artifact.KindSAM].OpenAt()
+	if samErr == nil {
+		samHive, hiveErr := registryhive.Open(samReader, p.byKind[artifact.KindSAM].Size(), registryhive.Options{})
+		if hiveErr == nil {
+			parsed, parseErr := samparse.Parse(samparse.Inputs{SAM: samHive, BootKey: keyResult.BootKey})
+			samResult.Accounts, samResult.AccountErrors = parsed.Accounts, parsed.Errors
+			samResult.AccountCount = len(parsed.Accounts)
+			for _, account := range parsed.Accounts {
+				if account.NT.Status == samparse.HashRecovered {
+					samResult.RecoveredHashCount++
+				}
+				if account.LM.Status == samparse.HashRecovered {
+					samResult.RecoveredHashCount++
+				}
+			}
+			if parseErr == nil {
+				samResult.Status = BundleParsed
+			} else {
+				samResult.Status, samResult.Failure = BundleMalformed, parseErr
+			}
+		} else {
+			samResult.Status, samResult.Failure = BundleMalformed, hiveErr
+		}
+		_ = samCloser.Close()
+	} else {
+		samResult.Status, samResult.Failure = BundleFailed, samErr
+	}
+	parsedSecurity := c.parseSecurityWithBootKey(ctx, &pendingBundle{key: p.key, byKind: map[artifact.Kind]artifact.Binary{artifact.KindSECURITY: p.byKind[artifact.KindSECURITY]}}, keyResult.BootKey, securityResult)
+	_ = parsedSecurity
+	// The SECURITY helper closed only its supplied artifact; close the complete
+	// original bundle here to release any remaining ownership.
+	closeArtifacts(p)
+	clearBootKey(&keyResult.BootKey)
+	return samResult, securityResult
+}
+
+func (c *Coordinator) parseSecurity(ctx context.Context, p *pendingBundle) *SecurityBundleResult {
+	result := &SecurityBundleResult{
+		BundleID: bundleID(p.key),
+		Origin:   originFor(p.key, p.byKind[artifact.KindSECURITY], p.byKind[artifact.KindSYSTEM]),
+	}
+	if err := ctx.Err(); err != nil {
+		result.Status = BundleFailed
+		result.Failure = err
+		closeArtifacts(p)
+		return result
+	}
+	select {
+	case c.parsers <- struct{}{}:
+		defer func() { <-c.parsers }()
+	case <-ctx.Done():
+		result.Status = BundleFailed
+		result.Failure = ctx.Err()
+		closeArtifacts(p)
+		return result
+	}
+	system := p.byKind[artifact.KindSYSTEM]
+	security := p.byKind[artifact.KindSECURITY]
+	if system == nil {
+		c.mu.Lock()
+		bootKey, ok := c.bootKeys[p.key]
+		delete(c.bootKeys, p.key)
+		c.mu.Unlock()
+		if !ok {
+			result.Status = BundleFailed
+			result.Failure = errors.New("SYSTEM boot key is unavailable for SECURITY pair")
+			closeArtifacts(p)
+			return result
+		}
+		return c.parseSecurityWithBootKey(ctx, p, bootKey, result)
+	}
+	systemReader, systemCloser, err := system.OpenAt()
+	if err != nil {
+		result.Status = BundleFailed
+		result.Failure = err
+		closeArtifacts(p)
+		return result
+	}
+	systemHive, err := registryhive.Open(systemReader, system.Size(), registryhive.Options{})
+	if err != nil {
+		_ = systemCloser.Close()
+		result.Status = BundleMalformed
+		result.Failure = err
+		closeArtifacts(p)
+		return result
+	}
+	keyResult, err := systemkey.Derive(systemHive)
+	_ = systemCloser.Close()
+	if err != nil {
+		result.Status = BundleMalformed
+		result.Failure = err
+		closeArtifacts(p)
+		return result
+	}
+	defer clearBootKey(&keyResult.BootKey)
+	c.mu.Lock()
+	c.bootKeys[p.key] = keyResult.BootKey
+	c.mu.Unlock()
+	result.ControlSet = keyResult.ControlSet
+	securityReader, securityCloser, err := security.OpenAt()
+	if err != nil {
+		result.Status = BundleFailed
+		result.Failure = err
+		closeArtifacts(p)
+		return result
+	}
+	securityHive, err := registryhive.Open(securityReader, security.Size(), registryhive.Options{})
+	if err != nil {
+		_ = securityCloser.Close()
+		closeArtifacts(p)
+		result.Status = BundleMalformed
+		result.Failure = err
+		return result
+	}
+	parsed, err := securityparse.Parse(securityHive, keyResult.BootKey)
+	_ = securityCloser.Close()
+	closeArtifacts(p)
+	result.Revision = parsed.Revision
+	result.LSAKeyDerived = parsed.LSAKeyDerived
+	result.SecretsFound = parsed.SecretsFound
+	result.SecretsDecoded = parsed.SecretsDecoded
+	result.CachedDomainFound = parsed.CachedDomainFound
+	result.CachedDomainDecoded = parsed.CachedDomainDecoded
+	result.Secrets = parsed.Secrets
+	result.CachedDomain = parsed.CachedDomain
+	result.Warnings = parsed.Warnings
+	if err != nil {
+		result.Status = BundleMalformed
+		if errors.Is(err, securityparse.ErrUnsupportedRevision) {
+			result.Status = BundleUnsupported
+		}
+		result.Failure = err
+		return result
+	}
+	result.Status = BundleParsed
+	return result
+}
+
+func (c *Coordinator) parseSAMWithBootKey(ctx context.Context, p *pendingBundle, bootKey [16]byte) *SAMBundleResult {
+	result := &SAMBundleResult{BundleID: bundleID(p.key), Origin: originFor(p.key, p.byKind[artifact.KindSAM], nil)}
+	if err := ctx.Err(); err != nil {
+		result.Status, result.Failure = BundleFailed, err
+		closeArtifacts(p)
+		return result
+	}
+	sam := p.byKind[artifact.KindSAM]
+	reader, closer, err := sam.OpenAt()
+	if err != nil {
+		result.Status, result.Failure = BundleFailed, err
+		closeArtifacts(p)
+		return result
+	}
+	hive, err := registryhive.Open(reader, sam.Size(), registryhive.Options{})
+	if err != nil {
+		_ = closer.Close()
+		result.Status, result.Failure = BundleMalformed, err
+		closeArtifacts(p)
+		return result
+	}
+	parsed, err := samparse.Parse(samparse.Inputs{SAM: hive, BootKey: bootKey})
+	_ = closer.Close()
+	closeArtifacts(p)
+	result.Accounts, result.AccountErrors = parsed.Accounts, parsed.Errors
+	result.AccountCount = len(parsed.Accounts)
+	for _, account := range parsed.Accounts {
+		if account.NT.Status == samparse.HashRecovered {
+			result.RecoveredHashCount++
+		}
+		if account.LM.Status == samparse.HashRecovered {
+			result.RecoveredHashCount++
+		}
+	}
+	if err != nil {
+		result.Status, result.Failure = BundleMalformed, err
+		if errors.Is(err, samparse.ErrUnsupportedRevision) || errors.Is(err, samparse.ErrUnsupportedHash) {
+			result.Status = BundleUnsupported
+		}
+		return result
+	}
+	result.Status = BundleParsed
+	return result
+}
+
+func (c *Coordinator) parseSecurityWithBootKey(ctx context.Context, p *pendingBundle, bootKey [16]byte, result *SecurityBundleResult) *SecurityBundleResult {
+	security := p.byKind[artifact.KindSECURITY]
+	securityReader, securityCloser, err := security.OpenAt()
+	if err != nil {
+		result.Status = BundleFailed
+		result.Failure = err
+		closeArtifacts(p)
+		return result
+	}
+	securityHive, err := registryhive.Open(securityReader, security.Size(), registryhive.Options{})
+	if err != nil {
+		_ = securityCloser.Close()
+		closeArtifacts(p)
+		result.Status = BundleMalformed
+		result.Failure = err
+		return result
+	}
+	parsed, err := securityparse.Parse(securityHive, bootKey)
+	_ = securityCloser.Close()
+	closeArtifacts(p)
+	result.Revision = parsed.Revision
+	result.LSAKeyDerived = parsed.LSAKeyDerived
+	result.SecretsFound = parsed.SecretsFound
+	result.SecretsDecoded = parsed.SecretsDecoded
+	result.CachedDomainFound = parsed.CachedDomainFound
+	result.CachedDomainDecoded = parsed.CachedDomainDecoded
+	result.Secrets = parsed.Secrets
+	result.CachedDomain = parsed.CachedDomain
+	result.Warnings = parsed.Warnings
+	if err != nil {
+		result.Status = BundleMalformed
+		if errors.Is(err, securityparse.ErrUnsupportedRevision) {
+			result.Status = BundleUnsupported
+		}
+		result.Failure = err
+		return result
+	}
+	result.Status = BundleParsed
+	return result
+}
+
 // Flush closes all currently incomplete bundles and returns their normalized
 // identities. It is deterministic and useful at share/scan scope boundaries.
 func (c *Coordinator) Flush() []BundleKey {
 	c.mu.Lock()
+	for key, bootKey := range c.bootKeys {
+		clearBootKey(&bootKey)
+		delete(c.bootKeys, key)
+	}
 	pending := make([]*pendingBundle, 0, len(c.pending))
 	for key, p := range c.pending {
 		pending = append(pending, p)
@@ -352,6 +687,10 @@ func (c *Coordinator) Close() error {
 		return nil
 	}
 	c.closed = true
+	for key, bootKey := range c.bootKeys {
+		clearBootKey(&bootKey)
+		delete(c.bootKeys, key)
+	}
 	pending := make([]*pendingBundle, 0, len(c.pending))
 	for key, p := range c.pending {
 		pending = append(pending, p)
@@ -383,8 +722,25 @@ func clearBootKey(key *[16]byte) {
 	}
 }
 
-func originFor(key BundleKey, sam, system artifact.Binary) BundleOrigin {
-	base := system
+func originFor(key BundleKey, first, second artifact.Binary) BundleOrigin {
+	base := second
+	if base == nil {
+		base = first
+	}
+	var sam, system, security artifact.Binary
+	for _, binary := range []artifact.Binary{first, second} {
+		if binary == nil {
+			continue
+		}
+		switch binary.Kind() {
+		case artifact.KindSAM:
+			sam = binary
+		case artifact.KindSYSTEM:
+			system = binary
+		case artifact.KindSECURITY:
+			security = binary
+		}
+	}
 	if base == nil {
 		base = sam
 	}
@@ -392,7 +748,7 @@ func originFor(key BundleKey, sam, system artifact.Binary) BundleOrigin {
 	return BundleOrigin{
 		Host: key.Host, Share: key.Share, Scope: key.Scope, Context: key.Context,
 		SourceType: clean(origin.ContainerType), ContainerPath: origin.ContainerPath,
-		ImageIndex: origin.ImageIndex, SAMPath: logicalPath(sam), SYSTEMPath: logicalPath(system),
+		ImageIndex: origin.ImageIndex, SAMPath: logicalPath(sam), SYSTEMPath: logicalPath(system), SECURITYPath: logicalPath(security),
 	}
 }
 

@@ -148,6 +148,7 @@ type FileMetadata struct {
 	SharePriorityReason string
 	FromSYSVOL          bool
 	FromNETLOGON        bool
+	BundleDependency    bool
 }
 
 type Evaluation struct {

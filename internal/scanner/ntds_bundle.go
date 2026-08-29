@@ -1,10 +1,12 @@
 package scanner
 
 import (
+	"encoding/hex"
 	"fmt"
 	"strings"
 
 	"snablr/internal/artifactbundle"
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/rules"
 )
 
@@ -40,7 +42,7 @@ func findingFromNTDSBundle(meta FileMetadata, result *artifactbundle.NTDSBundleR
 }
 
 func (e *Engine) exportNTDSBundle(result *artifactbundle.NTDSBundleResult) {
-	if e == nil || e.credentialExporter == nil || result == nil {
+	if e == nil || (e.credentialExporter == nil && e.candidateSink == nil) || result == nil {
 		return
 	}
 	source := result.Origin.NTDSPath
@@ -56,8 +58,25 @@ func (e *Engine) exportNTDSBundle(result *artifactbundle.NTDSBundleResult) {
 		if domain == "" {
 			domain = result.Domain
 		}
-		if err := e.credentialExporter.ExportNTDSCurrentHash(domain, account.SamAccountName, source, account.RID, account.SID, account.Machine, account.Disabled, hash); err != nil && e.log != nil {
-			e.log.Errorf("NTDS credential export failed for account %s: %v", account.SamAccountName, err)
+		candidate := credentialanalysis.Candidate{
+			Verification: credentialanalysis.Confirmed, CredentialType: "nt_hash", Identity: account.SamAccountName,
+			Domain: domain, Value: hex.EncodeToString(hash), RID: account.RID, SID: account.SID, AccountType: "user",
+			Source: source, ValidationBasis: "cryptographic_ntds_recovery",
+		}
+		if account.Machine {
+			candidate.AccountType = "machine"
+		}
+		if account.Disabled {
+			candidate.Disabled = true
+		}
+		if e.candidateSink != nil {
+			if err := e.candidateSink.RecordCredentialCandidate(candidate); err != nil && e.log != nil {
+				e.log.Errorf("NTDS credential candidate recording failed for account %s: %v", account.SamAccountName, err)
+			}
+		} else if e.credentialExporter != nil {
+			if err := e.credentialExporter.ExportNTDSCurrentHash(domain, account.SamAccountName, source, account.RID, account.SID, account.Machine, account.Disabled, hash); err != nil && e.log != nil {
+				e.log.Errorf("NTDS credential export failed for account %s: %v", account.SamAccountName, err)
+			}
 		}
 	}
 }

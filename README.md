@@ -99,6 +99,8 @@ When enabled and `wimlib-imagex` is installed, Snablr can inspect bounded WIM im
 
 WIM artifact detection/extraction also recognizes selected `SECURITY` and `NTDS.DIT` paths. SECURITY parsing supports the modern `PolEKList` AES scheme and NTDS parsing supports current domain NT hashes from a paired database and SYSTEM boot key. Cached-domain verifier material is not an NTLM hash. Legacy pre-Vista LSA protection, NTDS password history, and supplemental/Kerberos credential extraction remain unsupported. WIM inspection is bounded by configured image, member, byte, and size limits. If `wimlib-imagex` is unavailable or a limit is reached, the file is not treated as successfully inspected and can be retried later.
 
+After scanning, Snablr analyzes extracted credential-like material as either `Confirmed Credentials` or `Potential Credential Material — Review`. Confirmed means that offline structure or cryptographic provenance validated the material; Review means it was retained for operator inspection but could not be conclusively validated. Broad discovery findings remain available, and filename/path matches alone are not credential records. Snablr never automatically tests recovered credentials against any system. The explicit `--creds-out` export is highly sensitive and is the only supported output intended to contain recovered credential values.
+
 ## Incremental and Multi-Credential Pivot Scanning
 
 Use `--state-dir <directory>` with `--incremental` to retain a versioned `inventory.json` across scans. A typical pivot is:

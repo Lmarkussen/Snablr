@@ -17,6 +17,7 @@ import (
 	"snablr/internal/awsinspect"
 	"snablr/internal/backupinspect"
 	"snablr/internal/browsercredinspect"
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/dbinspect"
 	"snablr/internal/keyinspect"
 	"snablr/internal/metrics"
@@ -70,6 +71,7 @@ type Engine struct {
 	validationMode     bool
 	validationSink     ValidationObserver
 	credentialExporter SensitiveCredentialExporter
+	candidateSink      CredentialCandidateSink
 	bundleCoordinator  *artifactbundle.Coordinator
 	samMaxBytes        int64
 	systemMaxBytes     int64
@@ -80,6 +82,12 @@ type Engine struct {
 func (e *Engine) SetCredentialExporter(exporter SensitiveCredentialExporter) {
 	if e != nil {
 		e.credentialExporter = exporter
+	}
+}
+
+func (e *Engine) SetCredentialCandidateSink(sink CredentialCandidateSink) {
+	if e != nil {
+		e.candidateSink = sink
 	}
 }
 
@@ -145,9 +153,11 @@ func (e *Engine) EvaluateContext(ctx context.Context, meta FileMetadata, content
 	}
 
 	if e.shouldSkipByPath(meta) {
+		e.harvestCredentialCandidates(meta, content)
 		return Evaluation{
-			Skipped:    true,
-			SkipReason: "matched skip rule",
+			Skipped:     true,
+			SkipReason:  "matched skip rule",
+			NeedContent: credentialanalysis.NeedsContent(meta.FilePath, meta.Name, meta.Size),
 		}
 	}
 
@@ -220,8 +230,11 @@ func validationObserverForSink(sink FindingSink) ValidationObserver {
 
 func (e *Engine) NeedsContent(meta FileMetadata) bool {
 	meta = meta.Normalized()
-	if meta.IsDir || e.shouldSkipByPath(meta) {
+	if meta.IsDir {
 		return false
+	}
+	if e.shouldSkipByPath(meta) {
+		return credentialanalysis.NeedsContent(meta.FilePath, meta.Name, meta.Size)
 	}
 	if shouldInspect, _, isArchive := e.archiveDecision(meta); isArchive {
 		return shouldInspect
@@ -241,6 +254,7 @@ func (e *Engine) NeedsContent(meta FileMetadata) bool {
 		}
 	}
 	return e.shouldReadContent(meta, e.contentRules) ||
+		credentialanalysis.NeedsContent(meta.FilePath, meta.Name, meta.Size) ||
 		e.awsInspector.NeedsContent(awsCandidate(meta)) ||
 		e.dbInspector.NeedsContent(dbCandidate(meta)) ||
 		e.keyInspector.NeedsContent(keyCandidate(meta)) ||
@@ -261,6 +275,7 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 
 	evaluation.NeedContent = forceContent ||
 		e.shouldReadContent(meta, e.contentRules) ||
+		credentialanalysis.NeedsContent(meta.FilePath, meta.Name, meta.Size) ||
 		e.awsInspector.NeedsContent(awsCandidate(meta)) ||
 		e.dbInspector.NeedsContent(dbCandidate(meta)) ||
 		e.keyInspector.NeedsContent(keyCandidate(meta)) ||
@@ -278,6 +293,7 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 	if e.opts.MaxReadBytes > 0 && int64(len(content)) > e.opts.MaxReadBytes {
 		content = content[:e.opts.MaxReadBytes]
 	}
+	e.harvestCredentialCandidates(meta, content)
 
 	evaluation.Findings = append(evaluation.Findings, e.contentScanner.Scan(e.contentRules, meta, content)...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromAWSMatches(meta, e.awsInspector.InspectContent(awsCandidate(meta), content))...)
@@ -289,6 +305,21 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 	evaluation.Findings = adjustBrowserArtifactVisibility(evaluation.Findings)
 	e.recordValidationFindings(evaluation.Findings)
 	return evaluation
+}
+
+func (e *Engine) harvestCredentialCandidates(meta FileMetadata, content []byte) {
+	if e == nil || e.candidateSink == nil || len(content) == 0 {
+		return
+	}
+	candidates := credentialanalysis.Harvest(credentialanalysis.HarvestInput{
+		Content: content, Source: meta.Source, Host: meta.Host, Share: meta.Share,
+		Path: meta.FilePath, Container: meta.ArchivePath,
+	})
+	for _, candidate := range candidates {
+		if err := e.candidateSink.RecordCredentialCandidate(candidate); err != nil && e.log != nil {
+			e.log.Errorf("credential candidate recording failed for %s: %v", meta.FilePath, err)
+		}
+	}
 }
 
 func (e *Engine) evaluateLooseBinary(ctx context.Context, meta FileMetadata, content []byte, kind artifact.Kind) Evaluation {
@@ -329,6 +360,7 @@ func (e *Engine) evaluateLooseBinary(ctx context.Context, meta FileMetadata, con
 		finding := findingFromSAMBundle(meta, addResult.Result)
 		evaluation.Findings = append(evaluation.Findings, finding)
 		e.recordValidationFindings([]Finding{finding})
+		e.exportSAMBundle(addResult.Result)
 	}
 	if addResult.SecurityResult != nil && addResult.SecurityResult.Status == artifactbundle.BundleParsed && (addResult.SecurityResult.SecretsDecoded > 0 || addResult.SecurityResult.CachedDomainDecoded > 0) {
 		finding := findingFromSecurityBundle(meta, addResult.SecurityResult)
@@ -454,6 +486,7 @@ func (e *Engine) evaluateWIM(ctx context.Context, meta FileMetadata, content []b
 					finding := findingFromSAMBundle(meta, addResult.Result)
 					findings = append(findings, finding)
 					e.recordValidationFindings([]Finding{finding})
+					e.exportSAMBundle(addResult.Result)
 				}
 				if addResult.SecurityResult != nil && addResult.SecurityResult.Status == artifactbundle.BundleParsed && (addResult.SecurityResult.SecretsDecoded > 0 || addResult.SecurityResult.CachedDomainDecoded > 0) {
 					finding := findingFromSecurityBundle(meta, addResult.SecurityResult)

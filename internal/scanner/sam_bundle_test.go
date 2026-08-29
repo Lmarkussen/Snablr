@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"snablr/internal/artifactbundle"
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/registryhive"
 	"snablr/internal/registryhive/testfixture"
 	"snablr/internal/rules"
@@ -17,6 +18,15 @@ import (
 	"snablr/internal/wiminspect"
 	"snablr/pkg/logx"
 )
+
+type recordingCandidateSink struct {
+	candidates []credentialanalysis.Candidate
+}
+
+func (s *recordingCandidateSink) RecordCredentialCandidate(candidate credentialanalysis.Candidate) error {
+	s.candidates = append(s.candidates, candidate)
+	return nil
+}
 
 func TestEngineIntegratesLooseSAMSystemBundleWithoutHashOutput(t *testing.T) {
 	current := uint32(1)
@@ -45,6 +55,8 @@ func TestEngineIntegratesLooseSAMSystemBundleWithoutHashOutput(t *testing.T) {
 	coordinator := artifactbundle.New(artifactbundle.Options{})
 	defer coordinator.Close()
 	engine := NewEngine(Options{BundleCoordinator: coordinator, SAMMaxBytes: 32 << 20, SYSTEMMaxBytes: 64 << 20}, &rules.Manager{}, nil, logx.New("error"))
+	recorder := &recordingCandidateSink{}
+	engine.SetCredentialCandidateSink(recorder)
 	base := FileMetadata{Host: "host", Share: "share", Source: "smb"}
 	samEval := engine.EvaluateContext(context.Background(), FileMetadata{Host: base.Host, Share: base.Share, Source: base.Source, FilePath: "/backup/SAM", Name: "SAM"}, samBytes)
 	if len(samEval.BinaryArtifacts) != 0 {
@@ -62,6 +74,9 @@ func TestEngineIntegratesLooseSAMSystemBundleWithoutHashOutput(t *testing.T) {
 	}
 	if parsed == nil || !parsed.Actionable || parsed.SignalType != "validated" {
 		t.Fatalf("validated SAM finding missing: %#v", systemEval.Findings)
+	}
+	if len(recorder.candidates) != 1 || recorder.candidates[0].Verification != credentialanalysis.Confirmed || recorder.candidates[0].ValidationBasis != "cryptographic_sam_recovery" {
+		t.Fatalf("SAM credential candidate missing or unvalidated: %#v", recorder.candidates)
 	}
 	joined := strings.Join([]string{parsed.MatchedText, parsed.Snippet, parsed.Context, parsed.ContextRedacted, parsed.MatchedTextRedacted}, "\n")
 	if strings.Contains(strings.ToLower(joined), knownHash) {

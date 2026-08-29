@@ -927,6 +927,7 @@
           <a href="#severity-summary">Severity Summary</a>
           <a href="#category-summary">Category Summary</a>
           <a href="#host-summary">Host Summary</a>
+          <a href="#credential-analysis">Credential &amp; Secret Material</a>
           {{- if and .BackupArtifactInventory (gt .BackupArtifactInventory.Total 0) }}<a href="#backup-artifact-inventory">Backup Artifact Inventory</a>{{- end }}
           {{- if .Validation }}<a href="#validation-summary">Validation</a>{{- end }}
           <a href="#findings">Findings</a>
@@ -1048,6 +1049,56 @@
         <span class="card-value">{{ formatDuration .Summary.StartedAt .Summary.EndedAt }}</span>
         <div class="card-meta">Start {{ formatScanTime .Summary.StartedAt }} · End {{ formatScanTime .Summary.EndedAt }}</div>
       </article>
+    </section>
+
+    <section id="credential-analysis">
+      <div class="section-head">
+        <h2>Credential &amp; Secret Material</h2>
+        <span class="section-note">Post-scan classification is separate from finding priority. Review material is retained for operator inspection; values are intentionally omitted from this safe report.</span>
+      </div>
+      <div class="summary-grid">
+        <article class="card">
+          <span class="card-label">Confirmed Credentials</span>
+          <span class="card-value">{{ len .CredentialAnalysis.Confirmed }}</span>
+          <div class="card-meta">Validated by offline structure or cryptographic recovery.</div>
+        </article>
+        <article class="card">
+          <span class="card-label">Potential Credential Material — Review</span>
+          <span class="card-value">{{ len .CredentialAnalysis.Review }}</span>
+          <div class="card-meta">Retained because semantic validation was inconclusive.</div>
+        </article>
+        <article class="card">
+          <span class="card-label">Duplicate Candidates Merged</span>
+          <span class="card-value">{{ .CredentialAnalysis.DuplicatesMerged }}</span>
+          <div class="card-meta">Repeated evidence is consolidated without dropping provenance.</div>
+        </article>
+      </div>
+      {{- if .CredentialAnalysis.Confirmed }}
+      <div class="table-card">
+        <h3>Confirmed Credentials</h3>
+        <table>
+          <thead><tr><th>Identity</th><th>Type</th><th>Validation</th><th>Source</th></tr></thead>
+          <tbody>
+          {{- range .CredentialAnalysis.Confirmed }}
+            <tr><td>{{ valueOrDash .Identity }}</td><td>{{ .CredentialType }}</td><td>{{ valueOrDash .ValidationBasis }}</td><td>{{ valueOrDash .Path }}</td></tr>
+          {{- end }}
+          </tbody>
+        </table>
+      </div>
+      {{- end }}
+      {{- if .CredentialAnalysis.Review }}
+      <div class="table-card">
+        <h3>Potential Credential Material — Review</h3>
+        <table>
+          <thead><tr><th>Identity candidate</th><th>Type</th><th>Review reason</th><th>Source</th></tr></thead>
+          <tbody>
+          {{- range .CredentialAnalysis.Review }}
+            <tr><td>{{ valueOrDash .Identity }}</td><td>{{ .CredentialType }}</td><td>{{ joinList .ReviewReasons "; " }}</td><td>{{ valueOrDash .Path }}</td></tr>
+          {{- end }}
+          </tbody>
+        </table>
+      </div>
+      {{- end }}
     </section>
 
     {{- if .Suppression }}

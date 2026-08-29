@@ -22,3 +22,14 @@ Modern read-only NTDS.DIT + SYSTEM analysis now recovers current domain NT hash
 metadata from origin-safe loose and WIM pairs. Password history,
 supplementalCredentials/Kerberos keys, and legacy database formats remain
 deferred.
+
+## Post-scan Credential Analysis (in progress)
+
+The shared post-scan model classifies extracted credential material as
+confirmed or review without narrowing discovery recall. Confirmed records carry
+offline structural or cryptographic validation provenance; uncertain material
+remains available under `Potential Credential Material — Review`. Raw values are
+reserved for the explicit highly-sensitive `--creds-out` export, and Snablr
+never tests recovered credentials against live systems. Password history,
+supplementalCredentials/Kerberos keys, and legacy pre-Vista SECURITY remain
+deferred.

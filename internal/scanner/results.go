@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"snablr/internal/artifact"
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/rules"
 )
 
@@ -107,6 +108,10 @@ type FindingSink interface {
 // or persisted scan results.
 type SensitiveCredentialExporter interface {
 	ExportNTDSCurrentHash(domain, account, source string, rid uint32, sid string, machine, disabled bool, hash []byte) error
+}
+
+type CredentialCandidateSink interface {
+	RecordCredentialCandidate(credentialanalysis.Candidate) error
 }
 
 type SuppressedFinding struct {

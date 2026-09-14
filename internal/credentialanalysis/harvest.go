@@ -13,6 +13,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v3"
+
+	"snablr/internal/textdecode"
 )
 
 const (
@@ -72,19 +74,22 @@ func Harvest(input HarvestInput) []Candidate {
 		}
 		out = append(out, base(candidate))
 	}
-	text := string(content)
 	ext := strings.ToLower(filepath.Ext(input.Path))
-	addPrivateKeyCandidates(text, add)
+	textContent := textdecode.Normalize(content)
+	if strings.TrimSpace(textContent) == "" {
+		return out
+	}
+	addPrivateKeyCandidates(textContent, add)
+	normalizedContent := []byte(textContent)
 	structured := false
-	textContent := string(content)
 	if strings.HasPrefix(strings.TrimSpace(textContent), "{") || strings.HasPrefix(strings.TrimSpace(textContent), "[") {
-		if value, err := decodeJSON(content); err == nil {
+		if value, err := decodeJSON(normalizedContent); err == nil {
 			harvestJSON(value, add)
 			structured = true
 		}
 	}
 	if (ext == ".xml" || ext == ".config" || strings.HasPrefix(strings.TrimSpace(textContent), "<")) && strings.Contains(textContent, "<") && strings.Contains(textContent, ">") {
-		structured = harvestXML(content, add)
+		structured = harvestXML(normalizedContent, add)
 		// XML parsing is intentionally attempted before the generic line
 		// harvester; well-formed XML has its own object/attribute scope.
 	}
@@ -92,7 +97,7 @@ func Harvest(input HarvestInput) []Candidate {
 		if !structured {
 			harvestInlinePairs(textContent, add)
 			if ext == ".yaml" || ext == ".yml" {
-				if harvestYAML(content, add) {
+				if harvestYAML(normalizedContent, add) {
 					structured = true
 				}
 			}
@@ -191,6 +196,9 @@ type xmlHarvestNode struct {
 
 func parseXMLHarvestTree(content []byte) (*xmlHarvestNode, error) {
 	decoder := xml.NewDecoder(strings.NewReader(string(content)))
+	decoder.CharsetReader = func(_ string, reader io.Reader) (io.Reader, error) {
+		return reader, nil
+	}
 	var root *xmlHarvestNode
 	var current *xmlHarvestNode
 	for {

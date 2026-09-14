@@ -28,15 +28,15 @@ func Decode(content []byte) (string, bool) {
 	}
 
 	s := sample(content)
+	if text, ok := decodeUTF16(content); ok {
+		return normalizeString(text), true
+	}
+
 	if utf8.Valid(content) {
 		if !looksUTF8Text(s) {
 			return "", false
 		}
 		return normalizeString(string(content)), true
-	}
-
-	if text, ok := decodeUTF16(content); ok {
-		return normalizeString(text), true
 	}
 
 	if bytes.IndexByte(s, 0x00) >= 0 {

@@ -56,6 +56,15 @@ func Inspect(ctx context.Context, content []byte, opts Options, origin artifact.
 	if opts.MaxBinaryBytes <= 0 {
 		opts.MaxBinaryBytes = 64 * 1024 * 1024
 	}
+	if opts.MaxMembers <= 0 {
+		opts.MaxMembers = 8
+	}
+	if opts.MaxMemberBytes <= 0 {
+		opts.MaxMemberBytes = 1024 * 1024
+	}
+	if opts.MaxTotalBytes <= 0 {
+		opts.MaxTotalBytes = 4 * 1024 * 1024
+	}
 	if opts.MaxSAMBytes <= 0 {
 		opts.MaxSAMBytes = 32 * 1024 * 1024
 	}
@@ -336,19 +345,29 @@ func isTargetedPath(memberPath string) bool {
 		"/windows/ntds/ntds.dit":
 		return true
 	}
-	base := strings.ToLower(path.Base(memberPath))
-	if base == "bootstrap.ini" || base == "customsettings.ini" || base == "tasksequence.xml" {
+	if isWindowsDeploymentPath(memberPath) {
 		return true
 	}
 	return strings.HasPrefix(memberPath, "/windows/panther/") && strings.HasSuffix(memberPath, ".xml")
 }
 
 func shouldExtractContent(memberPath string) bool {
-	switch strings.ToLower(path.Base(memberPath)) {
-	case "bootstrap.ini", "customsettings.ini", "tasksequence.xml":
+	if isWindowsDeploymentPath(memberPath) {
 		return true
 	}
 	return strings.HasPrefix(memberPath, "/windows/panther/") && strings.HasSuffix(memberPath, ".xml")
+}
+
+func isWindowsDeploymentPath(memberPath string) bool {
+	base := strings.ToLower(path.Base(memberPath))
+	switch base {
+	case "bootstrap.ini", "customsettings.ini", "tasksequence.xml", "unattend.xml", "autounattend.xml", "unattended.xml":
+		return true
+	}
+	if strings.HasSuffix(base, ".xlm") && strings.Contains(base, "unatt") {
+		return true
+	}
+	return false
 }
 
 func binaryKindForPath(memberPath string) (artifact.Kind, bool) {

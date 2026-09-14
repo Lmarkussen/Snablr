@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v3"
@@ -172,44 +173,233 @@ func harvestYAML(content []byte, add func(Candidate)) bool {
 }
 
 func harvestXML(content []byte, add func(Candidate)) bool {
+	root, err := parseXMLHarvestTree(content)
+	if err != nil || root == nil {
+		return false
+	}
+	walkXMLHarvest(root, add)
+	return true
+}
+
+type xmlHarvestNode struct {
+	name     string
+	attrs    map[string]string
+	text     string
+	parent   *xmlHarvestNode
+	children []*xmlHarvestNode
+}
+
+func parseXMLHarvestTree(content []byte) (*xmlHarvestNode, error) {
 	decoder := xml.NewDecoder(strings.NewReader(string(content)))
-	stack := []map[string]string{}
+	var root *xmlHarvestNode
+	var current *xmlHarvestNode
 	for {
 		token, err := decoder.Token()
 		if err == io.EOF {
-			return true
+			break
 		}
 		if err != nil {
-			return false
+			return nil, err
 		}
 		switch item := token.(type) {
 		case xml.StartElement:
-			fields := map[string]string{}
+			node := &xmlHarvestNode{name: item.Name.Local, attrs: make(map[string]string)}
 			for _, attr := range item.Attr {
-				fields[normalizeKey(attr.Name.Local)] = strings.TrimSpace(attr.Value)
+				node.attrs[normalizeKey(attr.Name.Local)] = strings.TrimSpace(attr.Value)
 			}
-			if len(stack) > 0 && len(fields) > 0 {
-				key := firstNonEmpty(fields["key"], fields["name"])
-				value := firstNonEmpty(fields["value"], fields["text"])
-				if key != "" && value != "" {
-					stack[len(stack)-1][normalizeKey(key)] = value
-				}
+			if current == nil {
+				root = node
+			} else {
+				node.parent = current
+				current.children = append(current.children, node)
 			}
-			stack = append(stack, fields)
+			current = node
 		case xml.EndElement:
-			if len(stack) == 0 {
-				continue
+			if current != nil {
+				current = current.parent
 			}
-			fields := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			if key := firstNonEmpty(fields["key"], fields["name"]); key != "" {
-				if value := firstNonEmpty(fields["value"], fields["text"]); value != "" {
-					harvestFields(map[string]string{normalizeKey(key): value}, add, "structured XML object")
-				}
+		case xml.CharData:
+			if current != nil {
+				current.text += string(item)
 			}
-			harvestFields(fields, add, "structured XML object")
 		}
 	}
+	if root == nil {
+		return nil, io.EOF
+	}
+	return root, nil
+}
+
+func walkXMLHarvest(node *xmlHarvestNode, add func(Candidate)) {
+	if node == nil {
+		return
+	}
+	for _, child := range node.children {
+		walkXMLHarvest(child, add)
+	}
+	harvestGenericXMLNode(node, add)
+	if isSecretElement(node.name) {
+		harvestXMLSecretElement(node, add)
+	}
+}
+
+func harvestGenericXMLNode(node *xmlHarvestNode, add func(Candidate)) {
+	if node == nil {
+		return
+	}
+	fields := make(map[string]string)
+	if key := firstNonEmpty(node.attrs["key"], node.attrs["name"]); key != "" {
+		if value := firstNonEmpty(node.attrs["value"], node.attrs["text"]); value != "" {
+			fields[normalizeKey(key)] = value
+		}
+	}
+	for _, child := range node.children {
+		if !strings.EqualFold(child.name, "add") {
+			continue
+		}
+		key := firstNonEmpty(child.attrs["key"], child.attrs["name"])
+		value := firstNonEmpty(child.attrs["value"], child.attrs["text"])
+		if key != "" && value != "" {
+			fields[normalizeKey(key)] = value
+		}
+	}
+	if len(fields) > 0 {
+		harvestFields(fields, add, "structured XML object")
+	}
+}
+
+func harvestXMLSecretElement(node *xmlHarvestNode, add func(Candidate)) {
+	value := xmlElementValue(node)
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+	identity, domain := xmlCredentialContext(node)
+	plainText, hasPlainText := xmlChildValue(node, "plaintext")
+	verification := Review
+	basis := "windows_unattend_credential_element"
+	reasons := []string{"credential-like XML element requires semantic review"}
+
+	switch {
+	case strings.EqualFold(node.name, "administratorpassword"):
+		if identity == "" {
+			identity = "Administrator"
+		}
+		if hasPlainText && strings.EqualFold(plainText, "true") {
+			verification = Confirmed
+			basis = "windows_unattend_plaintext_administrator_password"
+		} else {
+			reasons = append(reasons, "plaintext flag was not positively confirmed")
+		}
+	case strings.EqualFold(node.name, "password"):
+		switch {
+		case hasPlainText && strings.EqualFold(plainText, "false"):
+			reasons = append(reasons, "plaintext flag is false")
+		case hasPlainText && strings.EqualFold(plainText, "true"):
+			if identity != "" {
+				verification = Confirmed
+				basis = "windows_unattend_plaintext_password"
+			}
+		case identity != "":
+			verification = Confirmed
+			basis = "windows_unattend_structured_password"
+		}
+	}
+
+	if looksReferenceOrTemplate(value) {
+		reasons = append(reasons, "value resembles template or variable reference")
+	} else if verification == Confirmed {
+		reasons = nil
+	}
+	add(Candidate{
+		Verification:    verification,
+		CredentialType:  credentialType(node.name),
+		Identity:        identity,
+		Domain:          domain,
+		Value:           value,
+		ValidationBasis: basis,
+		ReviewReasons:   reasons,
+	})
+}
+
+func xmlElementValue(node *xmlHarvestNode) string {
+	if node == nil {
+		return ""
+	}
+	if value := strings.TrimSpace(node.text); value != "" {
+		return value
+	}
+	if value, ok := node.attrs["value"]; ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	if value, ok := xmlChildValue(node, "value"); ok {
+		return value
+	}
+	return ""
+}
+
+func xmlChildValue(node *xmlHarvestNode, name string) (string, bool) {
+	if node == nil {
+		return "", false
+	}
+	for _, child := range node.children {
+		if !strings.EqualFold(child.name, name) && normalizeKey(child.name) != normalizeKey(name) {
+			continue
+		}
+		if value := strings.TrimSpace(child.text); value != "" {
+			return value, true
+		}
+		if value, ok := child.attrs["value"]; ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value), true
+		}
+	}
+	return "", false
+}
+
+func xmlCredentialContext(node *xmlHarvestNode) (string, string) {
+	if node == nil {
+		return "", ""
+	}
+	if strings.EqualFold(node.name, "administratorpassword") {
+		return "Administrator", xmlContextDomain(node.parent)
+	}
+	for ancestor := node.parent; ancestor != nil; ancestor = ancestor.parent {
+		fields := xmlDirectChildFields(ancestor)
+		identity := fieldIdentity(fields)
+		domain := fieldDomain(fields)
+		if identity != "" || domain != "" {
+			return identity, domain
+		}
+		if strings.EqualFold(ancestor.name, "credentials") || strings.EqualFold(ancestor.name, "autologon") || strings.EqualFold(ancestor.name, "domaincredentials") {
+			break
+		}
+	}
+	return "", ""
+}
+
+func xmlContextDomain(node *xmlHarvestNode) string {
+	for ancestor := node; ancestor != nil; ancestor = ancestor.parent {
+		if domain := fieldDomain(xmlDirectChildFields(ancestor)); domain != "" {
+			return domain
+		}
+	}
+	return ""
+}
+
+func xmlDirectChildFields(node *xmlHarvestNode) map[string]string {
+	fields := make(map[string]string)
+	if node == nil {
+		return fields
+	}
+	for _, child := range node.children {
+		if value := strings.TrimSpace(child.text); value != "" {
+			fields[normalizeKey(child.name)] = value
+		}
+	}
+	return fields
+}
+
+func isSecretElement(name string) bool {
+	return isSecretKey(name)
 }
 
 var assignmentPattern = regexp.MustCompile(`(?im)^\s*([A-Za-z][A-Za-z0-9_.-]{0,63})\s*(?:[:=])\s*(?:["']([^"']*)["']|([^#;\r\n]*))\s*$`)
@@ -290,14 +480,15 @@ func harvestFields(fields map[string]string, add func(Candidate), basis string) 
 	if len(fields) == 0 {
 		return
 	}
-	identity := firstNonEmpty(fields["username"], fields["user"], fields["userid"], fields["login"], fields["account"], fields["email"])
+	identity := fieldIdentity(fields)
+	domain := fieldDomain(fields)
 	strongAPI := (fields["access_key_id"] != "" || fields["access_key"] != "") && (fields["secret_access_key"] != "" || fields["secret_key"] != "")
 	strongClient := fields["client_id"] != "" && fields["client_secret"] != ""
 	for key, value := range fields {
 		if !isSecretKey(key) || value == "" {
 			continue
 		}
-		candidate := Candidate{Verification: Review, CredentialType: credentialType(key), Identity: identity, Value: value, ReviewReasons: []string{"credential-like value requires semantic review"}}
+		candidate := Candidate{Verification: Review, CredentialType: credentialType(key), Identity: identity, Domain: domain, Value: value, ReviewReasons: []string{"credential-like value requires semantic review"}}
 		if (identity != "" && isPasswordKey(key) || strongAPI || strongClient) && !looksReferenceOrTemplate(value) {
 			candidate.Verification = Confirmed
 			candidate.ValidationBasis = basis
@@ -368,19 +559,141 @@ func addPrivateKeyCandidates(text string, add func(Candidate)) {
 }
 
 func normalizeKey(key string) string {
-	key = strings.ToLower(strings.TrimSpace(key))
+	key = strings.TrimSpace(key)
+	runes := []rune(key)
+	var builder strings.Builder
+	for i, r := range runes {
+		switch {
+		case unicode.IsUpper(r):
+			if i > 0 {
+				prev := runes[i-1]
+				nextIsLower := i+1 < len(runes) && unicode.IsLower(runes[i+1])
+				if unicode.IsLower(prev) || unicode.IsDigit(prev) || (unicode.IsUpper(prev) && nextIsLower) {
+					builder.WriteByte('_')
+				}
+			}
+			builder.WriteRune(unicode.ToLower(r))
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			builder.WriteRune(unicode.ToLower(r))
+		default:
+			builder.WriteByte('_')
+		}
+	}
+	key = builder.String()
 	key = strings.NewReplacer("-", "_", " ", "_", ".", "_").Replace(key)
-	return key
+	return strings.Trim(key, "_")
 }
 
 func isSecretKey(key string) bool {
 	key = normalizeKey(key)
-	return isPasswordKey(key) || strings.Contains(key, "secret") || strings.Contains(key, "token") || strings.Contains(key, "api_key") || strings.Contains(key, "access_key")
+	if isPasswordKey(key) {
+		return true
+	}
+	tokens := keyTokens(key)
+	if len(tokens) == 0 {
+		return false
+	}
+	last := tokens[len(tokens)-1]
+	switch last {
+	case "secret", "token":
+		if last == "token" && len(tokens) >= 2 && tokens[len(tokens)-2] == "key" {
+			return false
+		}
+		return true
+	case "key":
+		if len(tokens) < 2 {
+			return false
+		}
+		prefix := tokens[len(tokens)-2]
+		return prefix == "api" || prefix == "access" || prefix == "secret"
+	default:
+		return false
+	}
 }
 
 func isPasswordKey(key string) bool {
-	key = normalizeKey(key)
-	return key == "password" || key == "passwd" || key == "pwd" || strings.HasSuffix(key, "_password") || strings.HasSuffix(key, "_passwd")
+	tokens := keyTokens(key)
+	if len(tokens) == 0 {
+		return false
+	}
+	switch tokens[len(tokens)-1] {
+	case "password", "passwd", "pwd", "passord":
+		return true
+	default:
+		return false
+	}
+}
+
+func keyTokens(key string) []string {
+	normalized := normalizeKey(key)
+	if normalized == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(normalized, func(r rune) bool {
+		return r == '_' || r == ' ' || r == '-' || r == '.'
+	})
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if strings.TrimSpace(part) != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func fieldIdentity(fields map[string]string) string {
+	for _, key := range []string{"username", "user", "userid", "login", "account", "email"} {
+		if value := strings.TrimSpace(fields[key]); value != "" {
+			return value
+		}
+	}
+	for key, value := range fields {
+		if semanticIdentityKey(key) {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func fieldDomain(fields map[string]string) string {
+	if value := strings.TrimSpace(fields["domain"]); value != "" {
+		return value
+	}
+	for key, value := range fields {
+		if semanticDomainKey(key) {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func semanticIdentityKey(key string) bool {
+	tokens := keyTokens(key)
+	if len(tokens) == 0 {
+		return false
+	}
+	last := tokens[len(tokens)-1]
+	switch last {
+	case "user", "username", "login", "account", "email":
+		return true
+	case "id", "name":
+		return len(tokens) >= 2 && tokens[len(tokens)-2] == "user"
+	default:
+		return false
+	}
+}
+
+func semanticDomainKey(key string) bool {
+	tokens := keyTokens(key)
+	if len(tokens) == 0 {
+		return false
+	}
+	switch tokens[len(tokens)-1] {
+	case "domain", "domene":
+		return true
+	default:
+		return false
+	}
 }
 
 func credentialType(key string) string {

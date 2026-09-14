@@ -56,6 +56,31 @@ func TestShouldInspectWIM(t *testing.T) {
 	}
 }
 
+func TestWindowsDeploymentPathTargeting(t *testing.T) {
+	for _, memberPath := range []string{
+		"/Windows/Panther/unattend.xml",
+		"/Windows/Panther/autounattend.xml",
+		"/autounattend.xml",
+		"/CustomSettings.ini",
+		"/Bootstrap.ini",
+		"/Deploy/Control/tasksequence.xml",
+		"/Windows/Panther/unattned.xlm",
+	} {
+		if !isTargetedPath(memberPath) || !shouldExtractContent(memberPath) {
+			t.Fatalf("expected deployment path to be targeted and extracted: %s", memberPath)
+		}
+	}
+	for _, memberPath := range []string{
+		"/Windows/Panther/readme.txt",
+		"/Sources/install.wim",
+		"/Windows/not-deployment.xml",
+	} {
+		if isTargetedPath(memberPath) && shouldExtractContent(memberPath) {
+			t.Fatalf("unexpected deployment path matched: %s", memberPath)
+		}
+	}
+}
+
 func TestInspectSelectivelyExtractsTargetedContent(t *testing.T) {
 	orig := runner
 	defer func() { runner = orig }()

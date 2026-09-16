@@ -468,6 +468,8 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 			FilesRecovered:      stats.FilesRecovered,
 			RetryExhausted:      stats.RetryExhausted,
 			EnumerationFailures: stats.EnumerationFailures,
+			OperationTimeouts:   stats.OperationTimeouts,
+			AuthFailures:        stats.AuthFailures,
 		})
 		// The failure artifact reports the same transport accounting.
 		if failures != nil {
@@ -479,6 +481,8 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 				OperationsRetried:   stats.OperationsRetried,
 				FilesRecovered:      stats.FilesRecovered,
 				RetryExhausted:      stats.RetryExhausted,
+				OperationTimeouts:   stats.OperationTimeouts,
+				AuthFailures:        stats.AuthFailures,
 			})
 		}
 	}()

@@ -36,6 +36,8 @@ type Counters struct {
 	SMBFilesRecovered           int64 `json:"smb_files_recovered,omitempty"`
 	SMBRetryExhausted           int64 `json:"smb_retry_exhausted,omitempty"`
 	SMBEnumerationFailures      int64 `json:"smb_enumeration_failures,omitempty"`
+	SMBOperationTimeouts        int64 `json:"smb_operation_timeouts,omitempty"`
+	SMBAuthFailures             int64 `json:"smb_auth_failures,omitempty"`
 	FinalFailureCount           int64 `json:"final_failure_count,omitempty"`
 }
 
@@ -51,6 +53,10 @@ type TransportCounters struct {
 	FilesRecovered      int64
 	RetryExhausted      int64
 	EnumerationFailures int64
+	// OperationTimeouts counts request phases abandoned by the operation bound.
+	OperationTimeouts int64
+	// AuthFailures counts terminal authentication failures (never retried).
+	AuthFailures int64
 }
 
 type Snapshot struct {
@@ -136,6 +142,8 @@ func (c *Collector) AddTransportCounters(counters TransportCounters) {
 		existing.SMBFilesRecovered += counters.FilesRecovered
 		existing.SMBRetryExhausted += counters.RetryExhausted
 		existing.SMBEnumerationFailures += counters.EnumerationFailures
+		existing.SMBOperationTimeouts += counters.OperationTimeouts
+		existing.SMBAuthFailures += counters.AuthFailures
 	})
 }
 

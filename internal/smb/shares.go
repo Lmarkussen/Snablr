@@ -54,7 +54,15 @@ func (c *Client) ListAccessibleShares(ctx context.Context) ([]ShareInfo, error) 
 func (c *Client) listShares(ctx context.Context, strict bool) ([]ShareInfo, error) {
 	var shares []string
 	if err := c.run(ctx, "list shares", func(session transportSession) error {
-		names, err := session.ListSharenames()
+		var names []string
+		err := c.bounded(ctx, "list shares", c.operationLimit(), func() error {
+			listed, listErr := session.ListSharenames()
+			if listErr != nil {
+				return listErr
+			}
+			names = listed
+			return nil
+		})
 		if err != nil {
 			return err
 		}

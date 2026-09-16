@@ -3,6 +3,7 @@ package smb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
@@ -33,7 +34,110 @@ const (
 	reconnectCooldown = 2 * time.Second
 	// reconnectBackoff is the pause before retrying an operation.
 	reconnectBackoff = 100 * time.Millisecond
+
+	// Bounded operation timing.
+	//
+	// Every network-facing call is wrapped in a hard watchdog. Only the TCP
+	// connect has an OS-level timeout; negotiation, session setup, tree connect,
+	// directory enumeration, open and read all use blocking socket I/O that a
+	// wedged server (or a filtering device that accepts and then stays silent)
+	// would otherwise hold forever. With these bounds the worst case for one
+	// operation is finite and the scan always makes forward progress.
+	//
+	// defaultHandshakeTimeout bounds SMB negotiate plus session setup.
+	defaultHandshakeTimeout = 20 * time.Second
+	// defaultOperationTimeout bounds one SMB request phase: tree connect,
+	// directory enumeration, stat, open, umount or share listing.
+	defaultOperationTimeout = 30 * time.Second
+	// defaultReadIdleTimeout bounds the time between read progress. A read that
+	// keeps delivering data is allowed to continue; a stalled read is abandoned.
+	defaultReadIdleTimeout = 60 * time.Second
+	// defaultReconnectWaitLimit is the hard cap on waiting for a coordinated
+	// reconnect, so waiters are released even if the leader cannot be interrupted.
+	defaultReconnectWaitLimit = 45 * time.Second
+	// defaultRecoveryBudget is the hard cap on one operation including every
+	// reconnect, backoff and retry. When it is exhausted the operation becomes a
+	// final failure and the scan continues.
+	defaultRecoveryBudget = 2 * time.Minute
 )
+
+// ErrOperationTimeout reports that one SMB request phase exceeded its bound and
+// the transport was invalidated.
+var ErrOperationTimeout = errors.New("smb operation timed out")
+
+// ErrReconnectTimeout reports that a coordinated reconnect did not complete
+// inside its bound. Waiting workers are released with this error.
+var ErrReconnectTimeout = errors.New("smb reconnect timed out")
+
+// ErrAuthFailure reports a terminal authentication failure. It is never retried
+// and never triggers transport recovery.
+var ErrAuthFailure = errors.New("smb authentication failed")
+
+// operationTimeoutError carries the operation and the bound that expired.
+type operationTimeoutError struct {
+	Operation string
+	Limit     time.Duration
+}
+
+func (e *operationTimeoutError) Error() string {
+	return fmt.Sprintf("smb operation timed out after %s: %s", e.Limit, e.Operation)
+}
+
+func (e *operationTimeoutError) Unwrap() error { return ErrOperationTimeout }
+
+// NTSTATUS codes for authentication and account-policy failures. These are
+// terminal: retrying or reconnecting cannot help and must not happen.
+const (
+	ntStatusLogonFailure        = 0xC000006D
+	ntStatusAccountRestriction  = 0xC000006E
+	ntStatusInvalidLogonHours   = 0xC0000070
+	ntStatusPasswordExpired     = 0xC0000071
+	ntStatusAccountDisabled     = 0xC0000072
+	ntStatusPasswordMustChange  = 0xC0000224
+	ntStatusLogonTypeNotGranted = 0xC000015B
+)
+
+// IsAuthFailure reports whether err is a terminal authentication failure. Such
+// failures must fail fast: no reconnect, no retry, no reconnect storm.
+func IsAuthFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrAuthFailure) {
+		return true
+	}
+	var responseErr *smb2.ResponseError
+	if errors.As(err, &responseErr) {
+		switch responseErr.Code {
+		case ntStatusLogonFailure,
+			ntStatusAccountRestriction,
+			ntStatusInvalidLogonHours,
+			ntStatusPasswordExpired,
+			ntStatusAccountDisabled,
+			ntStatusPasswordMustChange,
+			ntStatusLogonTypeNotGranted:
+			return true
+		}
+	}
+	message := strings.ToLower(err.Error())
+	for _, token := range []string{
+		"logon failure",
+		"invalid credentials",
+		"authentication failed",
+		"bad password",
+		"password expired",
+		"account disabled",
+		"logon type not granted",
+		"krb_ap_err",
+		"preauth",
+		"kinit",
+	} {
+		if strings.Contains(message, token) {
+			return true
+		}
+	}
+	return false
+}
 
 // NTSTATUS codes that mean the session or connection is gone. Everything else
 // the server reports (access denied, not found, bad password, sharing
@@ -63,6 +167,15 @@ const (
 func IsReconnectable(err error) bool {
 	if err == nil {
 		return false
+	}
+	// Authentication failures are terminal: reconnecting cannot help.
+	if IsAuthFailure(err) {
+		return false
+	}
+	// A watchdog timeout means the operation was abandoned mid-flight, so the
+	// SMB framing state is unknown and the transport must be re-established.
+	if errors.Is(err, ErrOperationTimeout) {
+		return true
 	}
 	// Cancellation and per-operation deadlines are caller decisions, not
 	// evidence of a dead transport.
@@ -123,6 +236,10 @@ func isRetryableOperation(err error) bool {
 	if err == nil {
 		return false
 	}
+	// Terminal authentication failures and caller cancellation are never retried.
+	if IsAuthFailure(err) {
+		return false
+	}
 	if IsReconnectable(err) {
 		return true
 	}
@@ -165,6 +282,10 @@ type TransportStats struct {
 	FilesRecovered      int64 `json:"files_recovered"`
 	RetryExhausted      int64 `json:"retry_exhausted"`
 	EnumerationFailures int64 `json:"enumeration_failures"`
+	// OperationTimeouts counts request phases abandoned by the watchdog.
+	OperationTimeouts int64 `json:"operation_timeouts"`
+	// AuthFailures counts terminal authentication failures. These never retry.
+	AuthFailures int64 `json:"auth_failures"`
 }
 
 // TransportEventKind classifies a transport lifecycle event.
@@ -204,6 +325,7 @@ const (
 	CategoryAccessDenied ErrorCategory = "access denied"
 	CategoryNotFound     ErrorCategory = "not found"
 	CategoryTimeout      ErrorCategory = "timeout"
+	CategoryAuthFailure  ErrorCategory = "authentication"
 	CategorySizeLimit    ErrorCategory = "resource/size limit"
 	CategoryRead         ErrorCategory = "read failure"
 	CategoryOther        ErrorCategory = "other"
@@ -214,6 +336,12 @@ const (
 func CategorizeError(err error) ErrorCategory {
 	if err == nil {
 		return CategoryOther
+	}
+	if IsAuthFailure(err) {
+		return CategoryAuthFailure
+	}
+	if errors.Is(err, ErrOperationTimeout) {
+		return CategoryTimeout
 	}
 	if errors.Is(err, ErrFileTooLarge) {
 		return CategorySizeLimit
@@ -302,15 +430,27 @@ type transportFile interface {
 // transportDialer establishes a new authenticated session. It is an interface so
 // fault injection can drive recovery deterministically.
 type transportDialer interface {
-	Dial(ctx context.Context, dialAddr string, auth resolvedAuth, timeout time.Duration) (transportSession, error)
+	Dial(ctx context.Context, dialAddr string, auth resolvedAuth, dialTimeout, handshakeTimeout time.Duration) (transportSession, error)
 }
 
 // smb2Dialer is the production dialer: one TCP transport plus SMB2 negotiation
 // and authentication using the operator's existing credential context.
 type smb2Dialer struct{}
 
-func (smb2Dialer) Dial(ctx context.Context, dialAddr string, auth resolvedAuth, timeout time.Duration) (transportSession, error) {
-	conn, err := net.DialTimeout("tcp", dialAddr, timeout)
+func (smb2Dialer) Dial(ctx context.Context, dialAddr string, auth resolvedAuth, dialTimeout, handshakeTimeout time.Duration) (transportSession, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if dialTimeout <= 0 {
+		dialTimeout = defaultDialTimeout
+	}
+	if handshakeTimeout <= 0 {
+		handshakeTimeout = defaultHandshakeTimeout
+	}
+	// The TCP connect is cancellable and bounded; the SMB handshake that follows
+	// is bounded by a socket deadline so a server that accepts the connection and
+	// then stops answering cannot block negotiate or session setup.
+	conn, err := (&net.Dialer{Timeout: dialTimeout}).DialContext(ctx, "tcp", dialAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -319,8 +459,28 @@ func (smb2Dialer) Dial(ctx context.Context, dialAddr string, auth resolvedAuth, 
 		_ = conn.Close()
 		return nil, err
 	}
+	if err := conn.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	// Closing the socket on cancellation interrupts an in-flight handshake; the
+	// watcher always exits with the handshake.
+	handshakeDone := make(chan struct{})
+	defer close(handshakeDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-handshakeDone:
+		}
+	}()
 	session, err := (&smb2.Dialer{Initiator: initiator}).DialContext(ctx, conn)
 	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		_ = session.Logoff()
 		_ = conn.Close()
 		return nil, err
 	}

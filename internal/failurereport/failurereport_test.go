@@ -229,6 +229,9 @@ func TestCategorizeErrorUsesStructuredInformation(t *testing.T) {
 		{os.ErrPermission, smb.CategoryAccessDenied},
 		{os.ErrNotExist, smb.CategoryNotFound},
 		{context.DeadlineExceeded, smb.CategoryTimeout},
+		{smb.ErrOperationTimeout, smb.CategoryTimeout},
+		{&smb2.ResponseError{Code: 0xC000006D}, smb.CategoryAuthFailure},
+		{fmt.Errorf("wrapped: %w", smb.ErrAuthFailure), smb.CategoryAuthFailure},
 		{smb.ErrFileTooLarge, smb.CategorySizeLimit},
 		{errors.New("something else"), smb.CategoryRead},
 	}
@@ -236,6 +239,10 @@ func TestCategorizeErrorUsesStructuredInformation(t *testing.T) {
 		if got := smb.CategorizeError(test.err); got != test.category {
 			t.Errorf("CategorizeError(%v) = %s, want %s", test.err, got, test.category)
 		}
+	}
+	// The failure model must never mark a rejected credential as retryable.
+	if got := CategoryForSMBCategory(smb.CategoryAuthFailure); got != CategoryAuthFailure {
+		t.Fatalf("auth failure mapped to %q, want %q", got, CategoryAuthFailure)
 	}
 }
 

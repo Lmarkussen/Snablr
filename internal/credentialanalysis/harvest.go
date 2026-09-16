@@ -298,7 +298,9 @@ func harvestXMLSecretElement(node *xmlHarvestNode, add func(Candidate)) {
 		} else {
 			reasons = append(reasons, "plaintext flag was not positively confirmed")
 		}
-	case strings.EqualFold(node.name, "password"):
+	case isPasswordKey(node.name):
+		// Any element whose terminal token is a password alias behaves like
+		// <Password>, including the Norwegian <Passord>.
 		switch {
 		case hasPlainText && strings.EqualFold(plainText, "false"):
 			reasons = append(reasons, "plaintext flag is false")
@@ -411,7 +413,7 @@ func isSecretElement(name string) bool {
 }
 
 var assignmentPattern = regexp.MustCompile(`(?im)^\s*([A-Za-z][A-Za-z0-9_.-]{0,63})\s*(?:[:=])\s*(?:["']([^"']*)["']|([^#;\r\n]*))\s*$`)
-var inlinePairPattern = regexp.MustCompile(`(?is)["']?(username|user|userid|login|account)["']?\s*[:=]\s*["']([^"']+)["']\s*[,}]\s*["']?(password|passwd|pwd)["']?\s*[:=]\s*["']([^"']+)["']`)
+var inlinePairPattern = regexp.MustCompile(`(?is)["']?(username|user|userid|login|account|brukernavn|bruker|kontonavn|konto)["']?\s*[:=]\s*["']([^"']+)["']\s*[,}]\s*["']?(password|passwd|pwd|passord)["']?\s*[:=]\s*["']([^"']+)["']`)
 
 func harvestInlinePairs(text string, add func(Candidate)) {
 	for _, match := range inlinePairPattern.FindAllStringSubmatch(text, -1) {
@@ -471,7 +473,7 @@ func harvestLines(text string, add func(Candidate)) {
 		if idx := strings.LastIndex(key, "_"); idx > 0 {
 			prefix := key[:idx]
 			field := key[idx+1:]
-			if field == "username" || field == "user" || field == "password" || field == "passwd" || field == "secret" || field == "token" {
+			if field == "username" || field == "user" || field == "password" || field == "passwd" || field == "passord" || field == "secret" || field == "token" {
 				if prefixes[prefix] == nil {
 					prefixes[prefix] = map[string]string{}
 				}
@@ -620,16 +622,7 @@ func isSecretKey(key string) bool {
 }
 
 func isPasswordKey(key string) bool {
-	tokens := keyTokens(key)
-	if len(tokens) == 0 {
-		return false
-	}
-	switch tokens[len(tokens)-1] {
-	case "password", "passwd", "pwd", "passord":
-		return true
-	default:
-		return false
-	}
+	return ClassifyFieldName(key) == FieldRolePassword
 }
 
 func keyTokens(key string) []string {
@@ -650,58 +643,11 @@ func keyTokens(key string) []string {
 }
 
 func fieldIdentity(fields map[string]string) string {
-	for _, key := range []string{"username", "user", "userid", "login", "account", "email"} {
-		if value := strings.TrimSpace(fields[key]); value != "" {
-			return value
-		}
-	}
-	for key, value := range fields {
-		if semanticIdentityKey(key) {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
+	return SelectFieldValue(fields, FieldRoleIdentity)
 }
 
 func fieldDomain(fields map[string]string) string {
-	if value := strings.TrimSpace(fields["domain"]); value != "" {
-		return value
-	}
-	for key, value := range fields {
-		if semanticDomainKey(key) {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
-func semanticIdentityKey(key string) bool {
-	tokens := keyTokens(key)
-	if len(tokens) == 0 {
-		return false
-	}
-	last := tokens[len(tokens)-1]
-	switch last {
-	case "user", "username", "login", "account", "email":
-		return true
-	case "id", "name":
-		return len(tokens) >= 2 && tokens[len(tokens)-2] == "user"
-	default:
-		return false
-	}
-}
-
-func semanticDomainKey(key string) bool {
-	tokens := keyTokens(key)
-	if len(tokens) == 0 {
-		return false
-	}
-	switch tokens[len(tokens)-1] {
-	case "domain", "domene":
-		return true
-	default:
-		return false
-	}
+	return SelectFieldValue(fields, FieldRoleDomain)
 }
 
 func credentialType(key string) string {

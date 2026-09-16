@@ -34,15 +34,19 @@ func credentialCandidatesFromFindings(findings []scanner.Finding) []credentialan
 		}
 
 		values := parseAssignmentValues(joinNonEmpty(finding.MatchedText, finding.Context))
-		password := firstNonEmpty(values["password"], values["passwd"], values["secret"], values["token"], values["api_key"])
+		// Password aliases (including Norwegian) are resolved by the shared
+		// semantic layer; non-password secret families keep their explicit
+		// fallbacks so existing behavior is unchanged.
+		passwordValue := credentialanalysis.SelectFieldValue(values, credentialanalysis.FieldRolePassword)
+		password := firstNonEmpty(passwordValue, values["secret"], values["token"], values["api_key"])
 		if password == "" {
 			continue
 		}
-		identity := firstNonEmpty(values["username"], values["user"], values["login"], values["account"], values["email"])
+		identity := credentialanalysis.SelectFieldValue(values, credentialanalysis.FieldRoleIdentity)
 		verification := credentialanalysis.Review
 		basis := "credential_like_value_without_conclusive_identity_association"
 		reasons := []string{"credential-like value extracted but identity association could not be conclusively established"}
-		if identity != "" && (values["password"] != "" || values["passwd"] != "") {
+		if identity != "" && passwordValue != "" {
 			verification = credentialanalysis.Confirmed
 			basis = "structured_config_pair"
 			reasons = nil

@@ -1,0 +1,2 @@
+Brukernavn=svc_backup
+Passord=Generisk-Hemmelighet-123!

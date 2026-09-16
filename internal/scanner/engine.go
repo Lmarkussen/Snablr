@@ -22,6 +22,7 @@ import (
 	"snablr/internal/credentialanalysis"
 	"snablr/internal/dbinspect"
 	"snablr/internal/keyinspect"
+	"snablr/internal/legacyoffice"
 	"snablr/internal/metrics"
 	"snablr/internal/rules"
 	"snablr/internal/sqliteinspect"
@@ -155,7 +156,7 @@ func (e *Engine) EvaluateContext(ctx context.Context, meta FileMetadata, content
 	}
 
 	if e.shouldSkipByPath(meta) {
-		e.harvestCredentialCandidates(meta, content)
+		_ = e.harvestCredentialCandidates(meta, content)
 		return Evaluation{
 			Skipped:     true,
 			SkipReason:  "matched skip rule",
@@ -295,9 +296,29 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 	if e.opts.MaxReadBytes > 0 && int64(len(content)) > e.opts.MaxReadBytes {
 		content = content[:e.opts.MaxReadBytes]
 	}
-	e.harvestCredentialCandidates(meta, content)
+	evaluation.InspectionFailures = append(evaluation.InspectionFailures, e.harvestCredentialCandidates(meta, content)...)
 
-	evaluation.Findings = append(evaluation.Findings, e.contentScanner.Scan(e.contentRules, meta, content)...)
+	// Content rules operate on human-readable text. Legacy OLE/CFB Office files
+	// are binary containers, so the recovered text is what the rules must see.
+	// The extraction is bounded and only performed when the active rule set
+	// actually targets this extension.
+	ruleContent := content
+	if legacyoffice.IsOLE(content) {
+		if _, wanted := e.contentExtHints[normalizeExtension(meta.Extension)]; wanted {
+			if document, ok := legacyoffice.Extract(content); ok {
+				text := document.Text
+				if strings.TrimSpace(text) == "" && len(document.Grid) > 0 {
+					// Spreadsheets are rendered through the shared table renderer
+					// so content rules see the same record form as modern formats.
+					text = credentialanalysis.RenderTableText(document.Grid, "legacy spreadsheet")
+				}
+				if strings.TrimSpace(text) != "" {
+					ruleContent = []byte(text)
+				}
+			}
+		}
+	}
+	evaluation.Findings = append(evaluation.Findings, e.contentScanner.Scan(e.contentRules, meta, ruleContent)...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromAWSMatches(meta, e.awsInspector.InspectContent(awsCandidate(meta), content))...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, e.dbInspector.InspectContent(dbCandidate(meta), content))...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromKeyMatches(meta, e.keyInspector.InspectContent(keyCandidate(meta), content))...)
@@ -309,19 +330,38 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 	return evaluation
 }
 
-func (e *Engine) harvestCredentialCandidates(meta FileMetadata, content []byte) {
-	if e == nil || e.candidateSink == nil || len(content) == 0 {
-		return
+func (e *Engine) harvestCredentialCandidates(meta FileMetadata, content []byte) []InspectionFailure {
+	return e.harvestCredentialCandidatesWithNotes(meta, content)
+}
+
+// harvestCredentialCandidatesWithNotes runs the shared harvester and returns any
+// content-inspection limitations it reported, so the engine can distinguish a
+// file that could not be read from one that was read but not fully parsed.
+func (e *Engine) harvestCredentialCandidatesWithNotes(meta FileMetadata, content []byte) []InspectionFailure {
+	if e == nil || len(content) == 0 {
+		return nil
 	}
-	candidates := credentialanalysis.Harvest(credentialanalysis.HarvestInput{
+	candidates, notes := credentialanalysis.HarvestWithReport(credentialanalysis.HarvestInput{
 		Content: content, Source: meta.Source, Host: meta.Host, Share: meta.Share,
 		Path: meta.FilePath, Container: meta.ArchivePath,
 	})
-	for _, candidate := range candidates {
-		if err := e.candidateSink.RecordCredentialCandidate(candidate); err != nil && e.log != nil {
-			e.log.Errorf("credential candidate recording failed for %s: %v", meta.FilePath, err)
+	if e.candidateSink != nil {
+		for _, candidate := range candidates {
+			if err := e.candidateSink.RecordCredentialCandidate(candidate); err != nil && e.log != nil {
+				e.log.Errorf("credential candidate recording failed for %s: %v", meta.FilePath, err)
+			}
 		}
 	}
+	if len(notes) == 0 {
+		return nil
+	}
+	failures := make([]InspectionFailure, 0, len(notes))
+	for _, note := range notes {
+		failures = append(failures, InspectionFailure{
+			Path: meta.FilePath, Parser: note.Parser, Category: note.Category, Detail: note.Detail,
+		})
+	}
+	return failures
 }
 
 func (e *Engine) evaluateLooseBinary(ctx context.Context, meta FileMetadata, content []byte, kind artifact.Kind) Evaluation {
@@ -453,6 +493,7 @@ func (e *Engine) evaluateArchive(meta FileMetadata, content []byte) Evaluation {
 
 		memberEvaluation := e.evaluateStandard(memberMeta, member.Content, true)
 		findings = append(findings, memberEvaluation.Findings...)
+		evaluation.InspectionFailures = append(evaluation.InspectionFailures, memberEvaluation.InspectionFailures...)
 	}
 
 	evaluation.Findings = findings
@@ -543,6 +584,20 @@ func (e *Engine) evaluateWIM(ctx context.Context, meta FileMetadata, content []b
 			// shared OOXML pipeline so its reconstructed text reaches the same
 			// credentialanalysis path as a loose document.
 			memberEvaluation := e.evaluateArchive(memberMeta, member.Content)
+			findings = append(findings, memberEvaluation.Findings...)
+			continue
+		}
+		if isLegacyOfficeDocumentExtension(member.Extension) && member.ContentRead && len(member.Content) > 0 {
+			// Legacy OLE/CFB Office members are reconstructed inside the shared
+			// harvester, so the ordinary path (which invokes it) is correct.
+			memberEvaluation := e.evaluateStandard(memberMeta, member.Content, true)
+			findings = append(findings, memberEvaluation.Findings...)
+			continue
+		}
+		if isLegacyOfficeDocumentExtension(member.Extension) && member.ContentRead && len(member.Content) > 0 {
+			// Legacy OLE/CFB Office members are reconstructed inside the shared
+			// harvester, so the ordinary path (which invokes it) is correct.
+			memberEvaluation := e.evaluateStandard(memberMeta, member.Content, true)
 			findings = append(findings, memberEvaluation.Findings...)
 			continue
 		}
@@ -906,6 +961,18 @@ func wimDisplayPath(outerPath string, imageIndex int, memberPath string) string 
 func isOfficeDocumentExtension(extension string) bool {
 	switch strings.ToLower(strings.TrimSpace(extension)) {
 	case ".docx", ".xlsx", ".xlsm", ".pptx":
+		return true
+	default:
+		return false
+	}
+}
+
+// isLegacyOfficeDocumentExtension covers the OLE/CFB Office families that the
+// shared harvester reconstructs (Word 97-2003, Excel 97-2003, PowerPoint
+// 97-2003).
+func isLegacyOfficeDocumentExtension(extension string) bool {
+	switch strings.ToLower(strings.TrimSpace(extension)) {
+	case ".doc", ".xls", ".ppt":
 		return true
 	default:
 		return false

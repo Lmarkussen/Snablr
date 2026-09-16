@@ -28,6 +28,29 @@ type Counters struct {
 	IncrementalRetried          int64 `json:"incremental_retried,omitempty"`
 	IncrementalNewAccessible    int64 `json:"incremental_new_accessible_known,omitempty"`
 	DependencyReloads           int64 `json:"dependency_reloads,omitempty"`
+	SMBTransportFailures        int64 `json:"smb_transport_failures,omitempty"`
+	SMBReconnectsAttempted      int64 `json:"smb_reconnects_attempted,omitempty"`
+	SMBReconnectsSucceeded      int64 `json:"smb_reconnects_succeeded,omitempty"`
+	SMBReconnectsFailed         int64 `json:"smb_reconnects_failed,omitempty"`
+	SMBOperationsRetried        int64 `json:"smb_operations_retried,omitempty"`
+	SMBFilesRecovered           int64 `json:"smb_files_recovered,omitempty"`
+	SMBRetryExhausted           int64 `json:"smb_retry_exhausted,omitempty"`
+	SMBEnumerationFailures      int64 `json:"smb_enumeration_failures,omitempty"`
+	FinalFailureCount           int64 `json:"final_failure_count,omitempty"`
+}
+
+// TransportCounters is the transport recovery accounting contributed by a
+// scanner transport. It is defined here so the metrics package stays free of
+// transport dependencies.
+type TransportCounters struct {
+	TransportFailures   int64
+	ReconnectsAttempted int64
+	ReconnectsSucceeded int64
+	ReconnectsFailed    int64
+	OperationsRetried   int64
+	FilesRecovered      int64
+	RetryExhausted      int64
+	EnumerationFailures int64
 }
 
 type Snapshot struct {
@@ -35,6 +58,8 @@ type Snapshot struct {
 	EndedAt   time.Time     `json:"ended_at"`
 	Counters  Counters      `json:"counters"`
 	Phases    []PhaseTiming `json:"phases,omitempty"`
+	// ReadErrorsLog names the per-scan failure artifact, when one was written.
+	ReadErrorsLog string `json:"read_errors_log,omitempty"`
 }
 
 type Recorder interface {
@@ -46,16 +71,19 @@ type Recorder interface {
 	IncFilesRead()
 	IncDependencyReload()
 	AddMatchesFound(int)
+	AddTransportCounters(TransportCounters)
+	SetFailureSummary(total int64, readErrorsLog string)
 	StartPhase(string) *Timer
 	Snapshot() Snapshot
 }
 
 type Collector struct {
-	mu        sync.Mutex
-	startedAt time.Time
-	endedAt   time.Time
-	counters  Counters
-	phases    map[string]time.Duration
+	mu            sync.Mutex
+	startedAt     time.Time
+	endedAt       time.Time
+	counters      Counters
+	phases        map[string]time.Duration
+	readErrorsLog string
 }
 
 func NewCollector() *Collector {
@@ -97,6 +125,32 @@ func (c *Collector) AddMatchesFound(n int) {
 	c.addCounter(func(counters *Counters) { counters.MatchesFound += int64(n) })
 }
 
+// AddTransportCounters accumulates transport recovery accounting for the run.
+func (c *Collector) AddTransportCounters(counters TransportCounters) {
+	c.addCounter(func(existing *Counters) {
+		existing.SMBTransportFailures += counters.TransportFailures
+		existing.SMBReconnectsAttempted += counters.ReconnectsAttempted
+		existing.SMBReconnectsSucceeded += counters.ReconnectsSucceeded
+		existing.SMBReconnectsFailed += counters.ReconnectsFailed
+		existing.SMBOperationsRetried += counters.OperationsRetried
+		existing.SMBFilesRecovered += counters.FilesRecovered
+		existing.SMBRetryExhausted += counters.RetryExhausted
+		existing.SMBEnumerationFailures += counters.EnumerationFailures
+	})
+}
+
+// SetFailureSummary records the final unresolved failure count and the failure
+// artifact path so console and JSON output agree with readErrors.log.
+func (c *Collector) SetFailureSummary(total int64, readErrorsLog string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.counters.FinalFailureCount = total
+	c.readErrorsLog = strings.TrimSpace(readErrorsLog)
+}
+
 // SetIncrementalCounters records run-local inventory statistics without
 // expanding the Recorder interface used by discovery and scanner packages.
 func (c *Collector) SetIncrementalCounters(discovered, inspected, skippedUnchanged, rescannedChanged, retried, newAccessible int64) {
@@ -135,10 +189,11 @@ func (c *Collector) Snapshot() Snapshot {
 	})
 
 	return Snapshot{
-		StartedAt: c.startedAt,
-		EndedAt:   c.endedAt,
-		Counters:  c.counters,
-		Phases:    phases,
+		StartedAt:     c.startedAt,
+		EndedAt:       c.endedAt,
+		Counters:      c.counters,
+		Phases:        phases,
+		ReadErrorsLog: c.readErrorsLog,
 	}
 }
 

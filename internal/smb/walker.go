@@ -2,6 +2,7 @@ package smb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,18 +48,32 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 				return nil, err
 			}
 			if tree == nil {
-				tree, err = c.mountTreeWithSession(current, share)
+				tree, err = c.mountTreeWithSession(context.Background(), current, share)
 				if err != nil {
 					return nil, err
 				}
 			}
-			entries, err = tree.ReadDir(path)
+			var listed []fs.FileInfo
+			listErr := c.bounded(context.Background(), "directory enumeration", c.operationLimit(), func() error {
+				listed, err = tree.ReadDir(path)
+				return err
+			})
+			err = listErr
 			if err == nil {
+				entries = listed
 				return entries, nil
 			}
 			lastErr = err
 			if !isRetryableOperation(err) {
 				return nil, err
+			}
+			// A directory enumeration that consumed its whole operation bound is
+			// not a transient blip: the transport was already invalidated. Allow
+			// one bounded retry, then fail the walk so the target moves on
+			// instead of spending the whole recovery budget on one directory.
+			if errors.Is(err, ErrOperationTimeout) && attempt >= 1 {
+				c.reportEnumerationFailure(share, path, lastErr, attempt+1)
+				return nil, fmt.Errorf("read dir %s on %s: %w", path, share, lastErr)
 			}
 			c.mu.Lock()
 			c.stats.OperationsRetried++

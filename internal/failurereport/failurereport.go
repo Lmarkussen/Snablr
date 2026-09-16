@@ -40,13 +40,16 @@ const (
 	CategoryAccessDenied Category = "access denied"
 	CategoryNotFound     Category = "not found"
 	CategoryTimeout      Category = "timeout"
-	CategoryRead         Category = "read failure"
-	CategorySizeLimit    Category = "resource/size limit"
-	CategoryEncrypted    Category = "encrypted content"
-	CategoryUnsupported  Category = "unsupported content"
-	CategoryMalformed    Category = "malformed content"
-	CategoryParser       Category = "parser/inspection failure"
-	CategoryOther        Category = "other"
+	// CategoryAuthFailure is a terminal authentication failure. It is never
+	// retryable: reconnecting with rejected credentials cannot succeed.
+	CategoryAuthFailure Category = "authentication"
+	CategoryRead        Category = "read failure"
+	CategorySizeLimit   Category = "resource/size limit"
+	CategoryEncrypted   Category = "encrypted content"
+	CategoryUnsupported Category = "unsupported content"
+	CategoryMalformed   Category = "malformed content"
+	CategoryParser      Category = "parser/inspection failure"
+	CategoryOther       Category = "other"
 )
 
 // Failure is one final unresolved scan failure.
@@ -79,6 +82,10 @@ type Counters struct {
 	OperationsRetried        int64
 	FilesRecovered           int64
 	RetryExhausted           int64
+	// OperationTimeouts counts request phases abandoned by the operation bound.
+	OperationTimeouts int64
+	// AuthFailures counts terminal authentication failures (never retried).
+	AuthFailures int64
 }
 
 // Snapshot is an immutable view of the collected failures.
@@ -149,6 +156,8 @@ func (c *Collector) RecordTransportCounters(counters Counters) {
 	c.counters.OperationsRetried += counters.OperationsRetried
 	c.counters.FilesRecovered += counters.FilesRecovered
 	c.counters.RetryExhausted += counters.RetryExhausted
+	c.counters.OperationTimeouts += counters.OperationTimeouts
+	c.counters.AuthFailures += counters.AuthFailures
 }
 
 func (c *Collector) Snapshot() Snapshot {
@@ -200,6 +209,8 @@ func Render(snapshot Snapshot) string {
 	fmt.Fprintf(&builder, "Operations retried: %d\n", snapshot.Counters.OperationsRetried)
 	fmt.Fprintf(&builder, "Files recovered after reconnect: %d\n", snapshot.Counters.FilesRecovered)
 	fmt.Fprintf(&builder, "Retry budget exhausted: %d\n", snapshot.Counters.RetryExhausted)
+	fmt.Fprintf(&builder, "Operations abandoned by timeout: %d\n", snapshot.Counters.OperationTimeouts)
+	fmt.Fprintf(&builder, "Authentication failures: %d\n", snapshot.Counters.AuthFailures)
 	fmt.Fprintf(&builder, "Coverage incomplete: %s\n\n", yesNo(snapshot.CoverageIncomplete()))
 
 	builder.WriteString("FINAL FAILED OBJECTS\n")
@@ -331,6 +342,8 @@ func CategoryForSMBCategory(category smb.ErrorCategory) Category {
 		return CategoryNotFound
 	case smb.CategoryTimeout:
 		return CategoryTimeout
+	case smb.CategoryAuthFailure:
+		return CategoryAuthFailure
 	case smb.CategorySizeLimit:
 		return CategorySizeLimit
 	case smb.CategoryRead:

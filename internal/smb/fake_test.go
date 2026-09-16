@@ -103,11 +103,9 @@ func resetError() error { return &smb2.TransportError{Err: syscall.ECONNRESET} }
 // deniedError is an ordinary SMB status that must never trigger a reconnect.
 func deniedError() error { return &smb2.ResponseError{Code: ntStatusAccessDenied} }
 
-const ntStatusLogonFailure = 0xC000006D
-
 func logonFailureError() error { return &smb2.ResponseError{Code: ntStatusLogonFailure} }
 
-func (s *fakeServer) Dial(_ context.Context, _ string, auth resolvedAuth, _ time.Duration) (transportSession, error) {
+func (s *fakeServer) Dial(_ context.Context, _ string, auth resolvedAuth, _, _ time.Duration) (transportSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dials++

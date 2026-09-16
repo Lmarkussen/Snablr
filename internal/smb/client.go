@@ -111,8 +111,18 @@ type Client struct {
 	auth       resolvedAuth
 
 	dialTimeout time.Duration
-	maxDepth    int
-	maxReadSize int64
+	// handshakeTimeout bounds SMB negotiate plus session setup.
+	handshakeTimeout time.Duration
+	// operationTimeout bounds one SMB request phase.
+	operationTimeout time.Duration
+	// readIdleTimeout bounds the time between read progress.
+	readIdleTimeout time.Duration
+	// reconnectWaitLimit is the hard cap on waiting for a coordinated reconnect.
+	reconnectWaitLimit time.Duration
+	// recoveryBudget is the hard cap on one operation including retries.
+	recoveryBudget time.Duration
+	maxDepth       int
+	maxReadSize    int64
 
 	dialer transportDialer
 
@@ -120,6 +130,12 @@ type Client struct {
 	recovering         bool
 	recoverDone        chan struct{}
 	lastFailedRecovery time.Time
+	// authFailure records a terminal authentication failure. Until the operator
+	// credential context changes, no further dial is attempted.
+	authFailure error
+	// lastRecoveryErr records why the last coordinated reconnect failed, so
+	// waiters are released with the real cause instead of a stale success.
+	lastRecoveryErr error
 
 	onEvent   func(TransportEvent)
 	onFailure func(OperationFailure)
@@ -169,11 +185,133 @@ func (c *Client) GoString() string { return "smb.Client<redacted>" }
 
 func NewClient() *Client {
 	return &Client{
-		dialTimeout: defaultDialTimeout,
-		maxDepth:    defaultMaxDepth,
-		maxReadSize: defaultMaxReadSize,
-		dialer:      smb2Dialer{},
+		dialTimeout:        defaultDialTimeout,
+		handshakeTimeout:   defaultHandshakeTimeout,
+		operationTimeout:   defaultOperationTimeout,
+		readIdleTimeout:    defaultReadIdleTimeout,
+		reconnectWaitLimit: defaultReconnectWaitLimit,
+		recoveryBudget:     defaultRecoveryBudget,
+		maxDepth:           defaultMaxDepth,
+		maxReadSize:        defaultMaxReadSize,
+		dialer:             smb2Dialer{},
 	}
+}
+
+// SetOperationTimeout overrides the bound applied to one SMB request phase.
+// Non-positive values restore the default.
+func (c *Client) SetOperationTimeout(limit time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if limit <= 0 {
+		c.operationTimeout = defaultOperationTimeout
+		return
+	}
+	c.operationTimeout = limit
+}
+
+// SetReadIdleTimeout overrides the bound between read progress. Non-positive
+// values restore the default.
+func (c *Client) SetReadIdleTimeout(limit time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if limit <= 0 {
+		c.readIdleTimeout = defaultReadIdleTimeout
+		return
+	}
+	c.readIdleTimeout = limit
+}
+
+// SetHandshakeTimeout overrides the bound on SMB negotiate plus session setup.
+// Non-positive values restore the default.
+func (c *Client) SetHandshakeTimeout(limit time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if limit <= 0 {
+		c.handshakeTimeout = defaultHandshakeTimeout
+		return
+	}
+	c.handshakeTimeout = limit
+}
+
+// SetReconnectWaitLimit overrides the hard cap on waiting for a coordinated
+// reconnect. Non-positive values restore the default.
+func (c *Client) SetReconnectWaitLimit(limit time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if limit <= 0 {
+		c.reconnectWaitLimit = defaultReconnectWaitLimit
+		return
+	}
+	c.reconnectWaitLimit = limit
+}
+
+// SetRecoveryBudget overrides the hard cap on one operation including every
+// reconnect, backoff and retry. Non-positive values restore the default.
+func (c *Client) SetRecoveryBudget(limit time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if limit <= 0 {
+		c.recoveryBudget = defaultRecoveryBudget
+		return
+	}
+	c.recoveryBudget = limit
+}
+
+// Timeouts returns the effective bounded-timing configuration.
+func (c *Client) Timeouts() (handshake, operation, readIdle, reconnectWait, recoveryBudget time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.handshakeTimeout, c.operationTimeout, c.readIdleTimeout, c.reconnectWaitLimit, c.recoveryBudget
+}
+
+// operationLimit reports the effective bound for one request phase.
+func (c *Client) operationLimit() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.operationTimeout <= 0 {
+		return defaultOperationTimeout
+	}
+	return c.operationTimeout
+}
+
+// handshakeLimit reports the effective bound for negotiate plus session setup.
+func (c *Client) handshakeLimit() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.handshakeTimeout <= 0 {
+		return defaultHandshakeTimeout
+	}
+	return c.handshakeTimeout
+}
+
+// readLimit reports the effective bound between read progress.
+func (c *Client) readLimit() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.readIdleTimeout <= 0 {
+		return defaultReadIdleTimeout
+	}
+	return c.readIdleTimeout
+}
+
+// waitLimit reports the effective bound on waiting for a coordinated reconnect.
+func (c *Client) waitLimit() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.reconnectWaitLimit <= 0 {
+		return defaultReconnectWaitLimit
+	}
+	return c.reconnectWaitLimit
+}
+
+// budgetLimit reports the effective cap on one operation including retries.
+func (c *Client) budgetLimit() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.recoveryBudget <= 0 {
+		return defaultRecoveryBudget
+	}
+	return c.recoveryBudget
 }
 
 // SetTransportEventHandler installs a structured transport lifecycle callback
@@ -252,22 +390,25 @@ func (c *Client) ConnectWithAuth(host string, auth Auth) error {
 
 	c.mu.Lock()
 	previous := c.session
-	dialer := c.dialer
-	timeout := c.dialTimeout
 	c.session = nil
 	c.host = host
 	c.serverName = serverName
 	c.dialAddr = dialAddr
 	c.auth = resolved
 	c.lastFailedRecovery = time.Time{}
+	c.authFailure = nil
+	c.lastRecoveryErr = nil
 	c.mu.Unlock()
 
 	if previous != nil {
 		_ = previous.Close()
 	}
 
-	session, err := dialer.Dial(context.Background(), dialAddr, resolved, timeout)
+	session, err := c.dialBounded(context.Background(), dialAddr, resolved)
 	if err != nil {
+		if IsAuthFailure(err) {
+			c.recordAuthFailure(err)
+		}
 		// Keep the resolved context so a later operation can retry the connect.
 		return fmt.Errorf("dial %s: %w", dialAddr, err)
 	}
@@ -319,6 +460,13 @@ func (c *Client) currentSession(ctx context.Context) (transportSession, error) {
 	}
 	for {
 		c.mu.Lock()
+		// A terminal authentication failure is not recoverable: fail fast
+		// instead of dialling the same rejected credentials again.
+		if c.authFailure != nil {
+			err := c.authFailure
+			c.mu.Unlock()
+			return nil, err
+		}
 		if c.session != nil && !c.recovering {
 			session := c.session
 			c.mu.Unlock()
@@ -342,11 +490,22 @@ func (c *Client) currentSession(ctx context.Context) (transportSession, error) {
 			continue
 		}
 		done := c.recoverDone
+		wait := c.reconnectWaitLimit
+		if wait <= 0 {
+			wait = defaultReconnectWaitLimit
+		}
 		c.mu.Unlock()
+		timer := time.NewTimer(wait)
 		select {
 		case <-done:
+			timer.Stop()
 		case <-ctx.Done():
+			timer.Stop()
 			return nil, ctx.Err()
+		case <-timer.C:
+			// The leader did not finish inside the wait bound. Waiting workers
+			// are always released rather than blocked on a wedged reconnect.
+			return nil, ErrReconnectTimeout
 		}
 	}
 }
@@ -363,6 +522,11 @@ func (c *Client) recover(ctx context.Context, used transportSession) error {
 		c.mu.Unlock()
 		return ErrNotConnected
 	}
+	if c.authFailure != nil {
+		err := c.authFailure
+		c.mu.Unlock()
+		return err
+	}
 	if c.session != nil && used != nil && c.session != used {
 		// Another worker already replaced the dead session.
 		c.mu.Unlock()
@@ -370,12 +534,37 @@ func (c *Client) recover(ctx context.Context, used transportSession) error {
 	}
 	if c.recovering {
 		done := c.recoverDone
+		wait := c.reconnectWaitLimit
+		if wait <= 0 {
+			wait = defaultReconnectWaitLimit
+		}
 		c.mu.Unlock()
+		timer := time.NewTimer(wait)
 		select {
 		case <-done:
-			return nil
+			timer.Stop()
+			// Reuse the recovered session, or report why the leader failed.
+			c.mu.Lock()
+			authFailure := c.authFailure
+			session := c.session
+			recoveryErr := c.lastRecoveryErr
+			c.mu.Unlock()
+			switch {
+			case authFailure != nil:
+				return authFailure
+			case session != nil:
+				return nil
+			case recoveryErr != nil:
+				return recoveryErr
+			default:
+				return ErrNotConnected
+			}
 		case <-ctx.Done():
+			timer.Stop()
 			return ctx.Err()
+		case <-timer.C:
+			// Never leave a waiter blocked on a leader that cannot finish.
+			return ErrReconnectTimeout
 		}
 	}
 	if c.session == nil && !c.lastFailedRecovery.IsZero() && time.Since(c.lastFailedRecovery) < reconnectCooldown {
@@ -387,9 +576,7 @@ func (c *Client) recover(ctx context.Context, used transportSession) error {
 	done := c.recoverDone
 	stale := c.session
 	auth := c.auth
-	dialer := c.dialer
 	dialAddr := c.dialAddr
-	timeout := c.dialTimeout
 	serverName := c.serverName
 	c.stats.ReconnectsAttempted++
 	c.mu.Unlock()
@@ -398,23 +585,30 @@ func (c *Client) recover(ctx context.Context, used transportSession) error {
 		_ = stale.Close()
 	}
 
-	session, err := dialer.Dial(ctx, dialAddr, auth, timeout)
+	session, err := c.dialBounded(ctx, dialAddr, auth)
 
 	c.mu.Lock()
 	c.recovering = false
-	close(done)
 	if err != nil {
 		c.stats.ReconnectsFailed++
 		c.session = nil
+		c.lastRecoveryErr = err
+		if IsAuthFailure(err) {
+			c.authFailure = fmt.Errorf("%w: %v", ErrAuthFailure, err)
+			c.stats.AuthFailures++
+		}
 		c.lastFailedRecovery = time.Now()
 		handler := c.onEvent
+		close(done)
 		c.mu.Unlock()
 		emitTransportEvent(handler, TransportEvent{Kind: TransportEventRecoveryFailed, Server: serverName, Operation: "reconnect", Err: err})
 		return err
 	}
 	c.session = session
+	c.lastRecoveryErr = nil
 	c.stats.ReconnectsSucceeded++
 	handler := c.onEvent
+	close(done)
 	c.mu.Unlock()
 	emitTransportEvent(handler, TransportEvent{Kind: TransportEventRestored, Server: serverName, Operation: "reconnect"})
 	return nil
@@ -426,6 +620,20 @@ func emitTransportEvent(handler func(TransportEvent), event TransportEvent) {
 	}
 }
 
+// recordAuthFailure marks the credential context as rejected so no further dial
+// is attempted until the operator supplies a new context.
+func (c *Client) recordAuthFailure(err error) {
+	if err == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.authFailure == nil {
+		c.stats.AuthFailures++
+	}
+	c.authFailure = fmt.Errorf("%w: %v", ErrAuthFailure, err)
+}
+
 // runOperation executes one SMB operation with bounded transport recovery. The
 // operation is retried from the beginning after a reconnect, so a file that hit
 // the reset is re-read rather than skipped.
@@ -435,12 +643,31 @@ func (c *Client) runOperation(ctx context.Context, operation string, fileOperati
 	}
 	var lastErr error
 	reconnectAttempted := false
+	budgetDeadline := time.Now().Add(c.budgetLimit())
 	for attempt := 0; attempt < totalOperationAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if time.Now().After(budgetDeadline) {
+			// The recovery budget for this operation is exhausted: record the
+			// final failure and let the scan continue with the next object.
+			c.mu.Lock()
+			c.stats.RetryExhausted++
+			handler := c.onEvent
+			serverName := c.serverName
+			c.mu.Unlock()
+			emitTransportEvent(handler, TransportEvent{
+				Kind: TransportEventRetryExhausted, Server: serverName, Operation: operation,
+				Attempt: attempt + 1, MaxAttempts: totalOperationAttempts, Err: lastErr,
+			})
+			c.reportOperationFailure(operation, lastErr, attempt+1, reconnectAttempted)
+			return fmt.Errorf("%s: %w", operation, lastErr)
+		}
 		session, err := c.currentSession(ctx)
 		if err != nil {
+			if IsAuthFailure(err) {
+				c.reportOperationFailure(operation, err, attempt+1, reconnectAttempted)
+			}
 			return err
 		}
 		c.mu.Lock()
@@ -460,6 +687,12 @@ func (c *Client) runOperation(ctx context.Context, operation string, fileOperati
 		c.mu.Lock()
 		c.stats.OperationFailures++
 		c.mu.Unlock()
+		if IsAuthFailure(err) {
+			// Authentication is terminal: no reconnect, no retry, no storm.
+			c.recordAuthFailure(err)
+			c.reportOperationFailure(operation, err, attempt+1, reconnectAttempted)
+			return err
+		}
 		if !isRetryableOperation(err) || ctx.Err() != nil {
 			// Non-retryable failures (access denied, not found, ...) are final
 			// immediately and are reported once.
@@ -548,8 +781,9 @@ func sleepContext(ctx context.Context, duration time.Duration) error {
 	}
 }
 
-// mountTreeWithSession mounts a share over the given session.
-func (c *Client) mountTreeWithSession(session transportSession, share string) (transportTree, error) {
+// mountTreeWithSession mounts a share over the given session within the bounded
+// operation timeout, so a tree connect that never answers cannot block a worker.
+func (c *Client) mountTreeWithSession(ctx context.Context, session transportSession, share string) (transportTree, error) {
 	if session == nil {
 		return nil, ErrNotConnected
 	}
@@ -561,7 +795,15 @@ func (c *Client) mountTreeWithSession(session transportSession, share string) (t
 	c.mu.Unlock()
 
 	mountPath := fmt.Sprintf(`\\%s\%s`, serverName, share)
-	tree, err := session.Mount(mountPath)
+	var tree transportTree
+	err := c.bounded(ctx, "tree connect", c.operationLimit(), func() error {
+		mounted, mountErr := session.Mount(mountPath)
+		if mountErr != nil {
+			return mountErr
+		}
+		tree = mounted
+		return nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("mount %s: %w", mountPath, err)
 	}
@@ -573,7 +815,7 @@ func (c *Client) mountTreeWithSession(session transportSession, share string) (t
 func (c *Client) mountShare(share string) (transportTree, error) {
 	var tree transportTree
 	err := c.run(context.Background(), "mount "+share, func(session transportSession) error {
-		mounted, err := c.mountTreeWithSession(session, share)
+		mounted, err := c.mountTreeWithSession(context.Background(), session, share)
 		if err != nil {
 			return err
 		}

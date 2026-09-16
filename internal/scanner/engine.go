@@ -318,6 +318,14 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 			}
 		}
 	}
+	// Natural-language credential expressions are normalised into the shared
+	// assignment form so the existing content findings apply to them too, for
+	// every text-bearing source.
+	if text := strings.TrimSpace(string(ruleContent)); text != "" {
+		if normalized := credentialanalysis.NormalizeCredentialExpressions(text); normalized != text {
+			ruleContent = []byte(normalized)
+		}
+	}
 	evaluation.Findings = append(evaluation.Findings, e.contentScanner.Scan(e.contentRules, meta, ruleContent)...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromAWSMatches(meta, e.awsInspector.InspectContent(awsCandidate(meta), content))...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, e.dbInspector.InspectContent(dbCandidate(meta), content))...)

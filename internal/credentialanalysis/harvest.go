@@ -604,6 +604,10 @@ func harvestInlinePairs(text string, add func(Candidate)) {
 }
 
 func harvestLines(text string, add func(Candidate)) {
+	// Natural-language credential expressions ("Passordet er; X") are rewritten
+	// into the shared assignment form before any line-based harvesting, so every
+	// text-bearing source is covered by one grammar.
+	text = NormalizeCredentialExpressions(text)
 	sections := map[string]map[string]string{"": {}}
 	section := ""
 	for _, line := range strings.Split(text, "\n") {

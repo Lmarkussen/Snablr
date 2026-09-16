@@ -112,6 +112,16 @@ func fixtures() map[string][]byte {
 	out["veiledning-for-passord.docx"] = officefixture.DOCX(officefixture.Paragraph("Veiledning for passord."))
 	out["passordliste.txt"] = []byte("Se vedlagt liste.\n")
 
+	// --- Natural-language credential expressions (shared grammar) ---
+	out["NaturalLanguageCredential-synthetic.docx"] = officefixture.DOCX(
+		officefixture.Paragraph("Brukernavn er; svc_example"),
+		officefixture.Paragraph("Domene er; KUNDE"),
+		officefixture.Paragraph("Passordet er; Synthetic-Example-123!"),
+	)
+	out["NaturalLanguageCredential-split.docx"] = officefixture.DOCXWithParts(nil,
+		officefixture.RunParagraph("Pass", "ordet", " er", "; ", "Synthetic-Split-123!"),
+	)
+
 	// --- Nested container ---
 	out["nested-passordliste.zip"] = officefixture.ZIPBytes(map[string]string{
 		"passordliste.docx": string(out["passordliste.docx"]),

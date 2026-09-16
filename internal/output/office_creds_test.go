@@ -68,6 +68,7 @@ func TestOfficeCredentialsRenderInCredsOut(t *testing.T) {
 
 	var candidates []credentialanalysis.Candidate
 	for _, fixture := range []string{
+		"NaturalLanguageCredential-synthetic.docx",
 		"passordliste.docx",
 		"norwegian-docx-pair.docx",
 		"norwegian-docx-utf8.docx",
@@ -111,6 +112,8 @@ func TestOfficeCredentialsRenderInCredsOut(t *testing.T) {
 		"Type: password",
 		"Identity: svc_word",
 		"Value: Word-Hemmelig-999!",
+		"Identity: svc_example",
+		"Value: Synthetic-Example-123!",
 		"Identity: backup-tjeneste",
 		"Value: Påloggings-Hemmelighet-ÆØÅ-123!",
 		"Value: Regnskap-ÆØÅ-123!",

@@ -260,14 +260,24 @@ func TestDirectoryEnumerationHangIsBounded(t *testing.T) {
 func TestOpenHangIsBounded(t *testing.T) {
 	server := newStallingServer()
 	server.openStall = true
+	// The file must exist so stat succeeds and the wedged open is actually
+	// reached; otherwise the read fails early and the test proves nothing.
+	server.files["A.txt"] = []byte("alpha")
 	client := hangClient(t, server)
 
 	start := time.Now()
-	if _, err := client.ReadFile("share", "A.txt"); err == nil {
+	data, err := client.ReadFile("share", "A.txt")
+	if err == nil {
 		t.Fatal("expected the wedged open to fail")
+	}
+	if len(data) != 0 {
+		t.Fatalf("a wedged open returned data: %d bytes", len(data))
 	}
 	if elapsed := time.Since(start); elapsed > 20*time.Second {
 		t.Fatalf("open was not bounded: %s", elapsed)
+	}
+	if client.TransportStats().OperationTimeouts == 0 {
+		t.Fatal("open timeout was not recorded")
 	}
 }
 
@@ -275,6 +285,7 @@ func TestOpenHangIsBounded(t *testing.T) {
 func TestStatHangIsBounded(t *testing.T) {
 	server := newStallingServer()
 	server.statStall = true
+	server.files["A.txt"] = []byte("alpha")
 	client := hangClient(t, server)
 
 	start := time.Now()

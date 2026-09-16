@@ -256,6 +256,9 @@ func TestOfficeFixtureAudit(t *testing.T) {
 	}
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
 		names = append(names, entry.Name())
 	}
 	sort.Strings(names)

@@ -286,14 +286,28 @@ func isAllowedOfficeMember(outerExtension, memberPath string) bool {
 	switch outerExtension {
 	case ".docx":
 		return memberPath == "word/document.xml" ||
+			// Secondary Word parts whose text is rendered on screen or in the
+			// review pane: footnotes, endnotes, comments, AutoText/Quick Parts,
+			// and drawing/diagram text.
+			memberPath == "word/footnotes.xml" ||
+			memberPath == "word/endnotes.xml" ||
+			memberPath == "word/comments.xml" ||
+			memberPath == "word/glossary/document.xml" ||
 			memberPath == "docprops/core.xml" ||
 			memberPath == "docprops/custom.xml" ||
+			strings.HasPrefix(memberPath, "word/diagrams/") && strings.HasSuffix(memberPath, ".xml") ||
+			strings.HasPrefix(memberPath, "word/drawings/") && strings.HasSuffix(memberPath, ".xml") ||
 			strings.HasPrefix(memberPath, "word/header") && strings.HasSuffix(memberPath, ".xml") ||
 			strings.HasPrefix(memberPath, "word/footer") && strings.HasSuffix(memberPath, ".xml")
 	case ".xlsx", ".xlsm":
 		return memberPath == "xl/sharedstrings.xml" ||
 			memberPath == "docprops/core.xml" ||
 			memberPath == "docprops/custom.xml" ||
+			// Cell comments and DrawingML text boxes are rendered next to the
+			// sheet and frequently hold the credential that the grid does not.
+			strings.HasPrefix(memberPath, "xl/comments") && strings.HasSuffix(memberPath, ".xml") ||
+			strings.HasPrefix(memberPath, "xl/threadedcomments/") && strings.HasSuffix(memberPath, ".xml") ||
+			strings.HasPrefix(memberPath, "xl/drawings/") && strings.HasSuffix(memberPath, ".xml") ||
 			strings.HasPrefix(memberPath, "xl/worksheets/") && strings.HasSuffix(memberPath, ".xml")
 	case ".pptx":
 		return memberPath == "docprops/core.xml" ||

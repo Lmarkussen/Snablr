@@ -897,11 +897,15 @@ type scanSemantics struct {
 // "completed" file was only inspected with weaker parsing. The rules hash covers
 // rule edits; this version covers engine/parser edits.
 //
+// v3 (natural-language credential expressions):
+//   - shared grammar for "Passordet er; <value>" / "Password is <value>" and the
+//     matching identity/domain phrases, applied to every text-bearing source
+//
 // v2 (Office credential harvesting):
 //   - reconstructed DOCX/XLSX/PPTX logical text (paragraphs, tables, rows)
 //   - rendered OOXML parts (footnotes, comments, diagrams, drawings, Excel comments)
 //   - DOCX header-row credential tables in the shared table renderer
-const scannerSemanticsVersion = "snablr-content-scan-v2"
+const scannerSemanticsVersion = "snablr-content-scan-v3"
 
 func scanSemanticsFingerprint(cfg config.Config, manager *rules.Manager) string {
 	return scanSemanticsFingerprintWithVersion(cfg, manager, scannerSemanticsVersion)

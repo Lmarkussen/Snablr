@@ -408,10 +408,10 @@ func TestSemanticsVersionReprocessesOldState(t *testing.T) {
 	if !strings.Contains(fingerprint, "") {
 		t.Fatal("unreachable")
 	}
-	if scannerSemanticsVersion != "snablr-content-scan-v2" {
-		t.Fatalf("scanner semantics version = %q, want v2", scannerSemanticsVersion)
+	if scannerSemanticsVersion != "snablr-content-scan-v3" {
+		t.Fatalf("scanner semantics version = %q, want v3", scannerSemanticsVersion)
 	}
-	legacyFingerprint := scanSemanticsFingerprintWithVersion(cfg, manager, "snablr-content-scan-v1")
+	legacyFingerprint := scanSemanticsFingerprintWithVersion(cfg, manager, "snablr-content-scan-v2")
 	if legacyFingerprint == fingerprint {
 		t.Fatal("v1 and v2 semantics fingerprints must differ")
 	}
@@ -421,7 +421,7 @@ func TestSemanticsVersionReprocessesOldState(t *testing.T) {
 		t.Fatal(err)
 	}
 	observation := state.FileObservation{Server: "host", Share: "share", Path: "Docs/file.docx", Size: 1024, ModifiedAt: time.Unix(1000, 0).UTC()}
-	// RUN 1: completed under the old semantics.
+	// RUN 1: completed under the previous semantics version.
 	first, err := inventory.Prepare(observation, "ctx", legacyFingerprint, false)
 	if err != nil {
 		t.Fatal(err)
@@ -433,7 +433,7 @@ func TestSemanticsVersionReprocessesOldState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if second.Skip {
-		t.Fatalf("v1 state was reused under v2 semantics: %s", second.Reason)
+		t.Fatalf("v2 state was reused under v3 semantics: %s", second.Reason)
 	}
 	inventory.MarkCompleted(second.Key)
 	// RUN 3: v2 state is skipped normally.
@@ -442,7 +442,7 @@ func TestSemanticsVersionReprocessesOldState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !third.Skip {
-		t.Fatalf("v2 state was not reused: %s", third.Reason)
+		t.Fatalf("v3 state was not reused: %s", third.Reason)
 	}
 	raw, err := os.ReadFile(inventory.Path())
 	if err != nil {

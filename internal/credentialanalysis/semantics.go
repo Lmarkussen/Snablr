@@ -26,6 +26,7 @@ var passwordTokenAliases = map[string]struct{}{
 var identityTokenAliases = map[string]struct{}{
 	"user": {}, "username": {}, "login": {}, "account": {}, "email": {},
 	"bruker": {}, "brukernavn": {}, "konto": {}, "kontonavn": {}, // Norwegian
+	"brukeren": {}, "brukernavnet": {}, // Norwegian definite forms
 }
 
 // identityQualifierAliases are trailing tokens that only carry identity meaning

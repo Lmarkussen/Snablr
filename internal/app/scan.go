@@ -18,6 +18,7 @@ import (
 	"snablr/internal/config"
 	"snablr/internal/diff"
 	"snablr/internal/discovery"
+	"snablr/internal/failurereport"
 	"snablr/internal/metrics"
 	"snablr/internal/output"
 	"snablr/internal/planner"
@@ -45,6 +46,25 @@ type scanClient interface {
 	ListShares() ([]smb.ShareInfo, error)
 	WalkShareWithOptions(string, smb.WalkOptions, func(smb.RemoteFile) error) error
 	ReadFile(string, string) ([]byte, error)
+}
+
+// transportAccounting is implemented by the real SMB client so a scan can
+// report transport recovery coverage. Test fakes may omit it.
+type transportAccounting interface {
+	TransportStats() smb.TransportStats
+}
+
+// connectionObserver is implemented by clients that expose transport lifecycle
+// events for logging (reconnect attempts, restores, exhausted retries).
+type connectionObserver interface {
+	SetTransportEventHandler(func(smb.TransportEvent))
+}
+
+// operationFailureReporter is implemented by clients that report one structured
+// record per ultimately failed SMB operation (with attempt and reconnect
+// detail). Test fakes may omit it.
+type operationFailureReporter interface {
+	SetOperationFailureHandler(func(smb.OperationFailure))
 }
 
 func bundleKind(remote smb.RemoteFile) (artifact.Kind, bool) {
@@ -108,6 +128,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	var sink scanner.FindingSink
 
 	recorder := metrics.NewCollector()
+	failures := failurereport.NewCollector()
 	totalTimer := recorder.StartPhase("total_scan")
 	defer func() {
 		totalTimer.Stop()
@@ -284,6 +305,23 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			}
 		}
 	}()
+	// The failure artifact is written before the metrics snapshot is published so
+	// console, JSON and readErrors.log always agree.
+	defer func() {
+		snapshot := failures.Snapshot()
+		path := readErrorsLogPath(cfg)
+		written, writeErr := failurereport.WriteFile(path, snapshot)
+		if writeErr != nil && logger != nil {
+			logger.Warnf("could not write readErrors.log: %v", writeErr)
+		}
+		if !written {
+			path = ""
+		}
+		recorder.SetFailureSummary(int64(snapshot.Total()), path)
+		if snapshot.CoverageIncomplete() && logger != nil {
+			logger.Warnf("Scan completed with incomplete coverage: %d object(s) could not be fully inspected. See %s.", snapshot.Total(), valueOrPath(path))
+		}
+	}()
 	defer func() {
 		if inventory != nil {
 			stats := inventory.Stats()
@@ -348,7 +386,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		if progress != nil {
 			progress.SetCurrentHost(target.Host)
 		}
-		if err := scanHost(scanCtx, target.Host, target.Source, resolvedTargets.DFSTargets, checkpoints, inventory, credentialContextID, semantics, cfg.Scan.ForceRescan, recorder, cfg, engine, sink, logger); err != nil {
+		if err := scanHost(scanCtx, target.Host, target.Source, resolvedTargets.DFSTargets, checkpoints, inventory, credentialContextID, semantics, cfg.Scan.ForceRescan, recorder, cfg, engine, sink, failures, logger); err != nil {
 			if errors.Is(err, context.Canceled) && output.WasCanceledByUser(sink) {
 				return nil
 			}
@@ -395,7 +433,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	return nil
 }
 
-func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.DFSTarget, checkpoints *state.Manager, inventory *state.InventoryManager, credentialContextID, semantics string, forceRescan bool, recorder metrics.Recorder, cfg config.Config, engine *scanner.Engine, sink scanner.FindingSink, logger *logx.Logger) error {
+func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.DFSTarget, checkpoints *state.Manager, inventory *state.InventoryManager, credentialContextID, semantics string, forceRescan bool, recorder metrics.Recorder, cfg config.Config, engine *scanner.Engine, sink scanner.FindingSink, failures *failurereport.Collector, logger *logx.Logger) error {
 	logger.Infof("scanning host %s", host)
 	if observer, ok := sink.(scanner.ScanObserver); ok {
 		observer.RecordHost(host)
@@ -404,6 +442,69 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 	client := newScanClientFunc()
 	client.SetMaxReadSize(scanReadLimit(cfg))
 	defer client.Close()
+
+	// Final failure reporting: the transport reports one record per ultimately
+	// failed operation, including attempt and reconnect detail.
+	_, reportsOwnFailures := client.(operationFailureReporter)
+	if reporter, ok := client.(operationFailureReporter); ok && failures != nil {
+		reporter.SetOperationFailureHandler(func(failure smb.OperationFailure) {
+			failures.Record(failureReportEntry(host, failure))
+		})
+	}
+	// Covereage accounting: transport recovery counters are folded into the run
+	// metrics so a scan with failed reads cannot look like a complete scan.
+	defer func() {
+		provider, ok := client.(transportAccounting)
+		if !ok || recorder == nil {
+			return
+		}
+		stats := provider.TransportStats()
+		recorder.AddTransportCounters(metrics.TransportCounters{
+			TransportFailures:   stats.TransportFailures,
+			ReconnectsAttempted: stats.ReconnectsAttempted,
+			ReconnectsSucceeded: stats.ReconnectsSucceeded,
+			ReconnectsFailed:    stats.ReconnectsFailed,
+			OperationsRetried:   stats.OperationsRetried,
+			FilesRecovered:      stats.FilesRecovered,
+			RetryExhausted:      stats.RetryExhausted,
+			EnumerationFailures: stats.EnumerationFailures,
+		})
+		// The failure artifact reports the same transport accounting.
+		if failures != nil {
+			failures.RecordTransportCounters(failurereport.Counters{
+				TransportFailures:   stats.TransportFailures,
+				ReconnectsAttempted: stats.ReconnectsAttempted,
+				ReconnectsSucceeded: stats.ReconnectsSucceeded,
+				ReconnectsFailed:    stats.ReconnectsFailed,
+				OperationsRetried:   stats.OperationsRetried,
+				FilesRecovered:      stats.FilesRecovered,
+				RetryExhausted:      stats.RetryExhausted,
+			})
+		}
+	}()
+
+	// Transport lifecycle logging: one warning per reconnect (not one per file),
+	// detail stays available in the counters and in debug logs.
+	if observer, ok := client.(connectionObserver); ok {
+		observer.SetTransportEventHandler(func(event smb.TransportEvent) {
+			switch event.Kind {
+			case smb.TransportEventRetrying:
+				logger.Warnf("SMB connection to %s reset; reconnecting (%d/%d) while %s", event.Server, event.Attempt, event.MaxAttempts, event.Operation)
+				if event.Err != nil {
+					logger.Debugf("smb transport detail for %s: %v", event.Server, event.Err)
+				}
+			case smb.TransportEventRestored:
+				logger.Infof("SMB connection to %s restored", event.Server)
+			case smb.TransportEventRecoveryFailed:
+				logger.Warnf("SMB reconnect to %s failed; affected reads will be marked failed/retryable", event.Server)
+				if event.Err != nil {
+					logger.Debugf("smb reconnect detail for %s: %v", event.Server, event.Err)
+				}
+			case smb.TransportEventRetryExhausted:
+				logger.Warnf("Read failed after reconnect retries: %s", event.Operation)
+			}
+		})
+	}
 
 	auth, err := smbAuthForHost(host, cfg.Scan)
 	if err != nil {
@@ -561,11 +662,29 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 					if checkpoints != nil {
 						checkpoints.RecordFileResult(meta.Host, meta.Share, meta.FilePath, meta.Size, meta.ModifiedAt, err == nil)
 					}
+					// Final failure reporting: transports that report their own
+					// failures (the real SMB client) already did so with attempt
+					// and reconnect detail; other implementations are recorded
+					// here so coverage accounting is never lost.
+					if failures != nil {
+						if err != nil && !reportsOwnFailures {
+							failures.Record(readFailureEntry(meta, err))
+						}
+						for _, inspection := range evaluation.InspectionFailures {
+							failures.Record(inspectionFailureEntry(meta, inspection))
+						}
+					}
 					if inventory == nil {
 						return
 					}
 					if err != nil {
 						inventory.MarkFailed(inventoryKey)
+						return
+					}
+					if len(evaluation.InspectionFailures) > 0 {
+						// Read succeeded but content could not be inspected: the
+						// object must not be recorded as completed.
+						inventory.MarkPartial(inventoryKey)
 						return
 					}
 					if evaluation.Skipped && evaluation.NeedContent {
@@ -770,14 +889,35 @@ type scanSemantics struct {
 	RulesFingerprint string
 }
 
+// scannerSemanticsVersion is part of the incremental reuse decision: a change
+// here makes every previously completed object eligible for re-inspection.
+//
+// It must be bumped when content parsing or classification behaviour changes
+// materially, because the inventory cannot otherwise tell that a previously
+// "completed" file was only inspected with weaker parsing. The rules hash covers
+// rule edits; this version covers engine/parser edits.
+//
+// v2 (Office credential harvesting):
+//   - reconstructed DOCX/XLSX/PPTX logical text (paragraphs, tables, rows)
+//   - rendered OOXML parts (footnotes, comments, diagrams, drawings, Excel comments)
+//   - DOCX header-row credential tables in the shared table renderer
+const scannerSemanticsVersion = "snablr-content-scan-v2"
+
 func scanSemanticsFingerprint(cfg config.Config, manager *rules.Manager) string {
+	return scanSemanticsFingerprintWithVersion(cfg, manager, scannerSemanticsVersion)
+}
+
+// scanSemanticsFingerprintWithVersion computes the fingerprint for an explicit
+// semantics version. It exists so tests can build state produced by an older
+// scanner version.
+func scanSemanticsFingerprintWithVersion(cfg config.Config, manager *rules.Manager, version string) string {
 	ruleFingerprint := ""
 	if manager != nil {
 		ruleFingerprint = state.SemanticsFingerprint(manager.EnabledRules())
 	}
 	return state.SemanticsFingerprint(scanSemantics{
 		SchemaVersion:    1,
-		ScannerVersion:   "snablr-content-scan-v1",
+		ScannerVersion:   version,
 		Profile:          strings.TrimSpace(cfg.Scan.Profile),
 		MaxFileSize:      cfg.Scan.MaxFileSize,
 		MaxReadBytes:     scanReadLimit(cfg),
@@ -790,6 +930,167 @@ func scanSemanticsFingerprint(cfg config.Config, manager *rules.Manager) string 
 
 func incrementalScanEnabled(cfg config.Config) bool {
 	return cfg.Scan.Incremental || strings.TrimSpace(cfg.Scan.StateDir) != ""
+}
+
+// readErrorsLogPath places readErrors.log beside the normal scan artifacts.
+func readErrorsLogPath(cfg config.Config) string {
+	directory := strings.TrimSpace(outputArtifactDirectory(cfg))
+	if directory == "" {
+		directory = "."
+	}
+	return filepath.Join(directory, "readErrors.log")
+}
+
+// outputArtifactDirectory resolves the directory that holds this scan's output
+// artifacts, preferring explicitly selected formats.
+func outputArtifactDirectory(cfg config.Config) string {
+	selection, err := config.ParseOutputFormat(cfg.Output.Format)
+	if err != nil {
+		selection = config.OutputFormatSelection{}
+	}
+	candidates := make([]string, 0, 6)
+	if selection.JSON {
+		candidates = append(candidates, cfg.Output.JSONOut)
+	}
+	if selection.HTML {
+		candidates = append(candidates, cfg.Output.HTMLOut)
+	}
+	candidates = append(candidates,
+		cfg.Output.CSVOut,
+		cfg.Output.MDOut,
+		cfg.Output.CredsOut,
+		cfg.Output.ScannedTargetsOut,
+	)
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate) != "" {
+			return filepath.Dir(candidate)
+		}
+	}
+	return ""
+}
+
+// failureReportEntry maps a transport failure into the report model, keeping
+// share-relative logical paths and container provenance.
+func failureReportEntry(host string, failure smb.OperationFailure) failurereport.Failure {
+	operation := failurereport.OperationRead
+	category := failurereport.CategoryForSMBCategory(failure.Category)
+	coverageImpact := ""
+	switch {
+	case strings.Contains(strings.ToLower(failure.Operation), "enumeration"):
+		operation = failurereport.OperationEnumeration
+		category = failurereport.CategoryEnumeration
+		coverageImpact = "subtree may be incomplete"
+	case strings.Contains(strings.ToLower(failure.Operation), "mount"):
+		operation = failurereport.OperationMount
+	case failure.Category == smb.CategoryAccessDenied:
+		operation = failurereport.OperationOpen
+	}
+	path := strings.TrimSpace(failure.Path)
+	if share := strings.TrimSpace(failure.Share); share != "" && path != "" {
+		path = share + "/" + path
+	}
+	target := strings.TrimSpace(host)
+	if target != "" {
+		target = `\\` + strings.TrimPrefix(target, `\\`)
+	}
+	detail := ""
+	if failure.Err != nil {
+		detail = failure.Err.Error()
+	}
+	return failurereport.Failure{
+		Target:             target,
+		Path:               path,
+		Operation:          operation,
+		Category:           category,
+		Attempts:           failure.AttemptsUsed(),
+		ReconnectAttempted: failure.ReconnectAttempted,
+		Retryable:          retryableCategory(category),
+		CoverageImpact:     coverageImpact,
+		FinalError:         detail,
+	}
+}
+
+// retryableCategory reports whether a later healthy scan could succeed.
+func retryableCategory(category failurereport.Category) bool {
+	switch category {
+	case failurereport.CategoryTransport,
+		failurereport.CategoryMount,
+		failurereport.CategoryEnumeration,
+		failurereport.CategoryTimeout,
+		failurereport.CategoryRead,
+		failurereport.CategoryOther:
+		return true
+	default:
+		return false
+	}
+}
+
+// valueOrPath renders the artifact path for operator messages.
+func valueOrPath(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return "readErrors.log"
+	}
+	return path
+}
+
+// readFailureEntry records an unreadable file for a transport that does not
+// report its own operations.
+func readFailureEntry(meta scanner.FileMetadata, err error) failurereport.Failure {
+	category := failurereport.CategoryForSMBCategory(smb.CategorizeError(err))
+	target := strings.TrimSpace(meta.Host)
+	if target != "" {
+		target = `\\` + strings.TrimPrefix(target, `\\`)
+	}
+	path := strings.TrimSpace(meta.FilePath)
+	if share := strings.TrimSpace(meta.Share); share != "" && path != "" && !strings.Contains(path, "!") {
+		path = share + "/" + path
+	} else if share != "" && path == "" {
+		path = share
+	}
+	return failurereport.Failure{
+		Target:     target,
+		Path:       path,
+		Operation:  failurereport.OperationRead,
+		Category:   category,
+		Attempts:   1,
+		Retryable:  retryableCategory(category),
+		FinalError: err.Error(),
+	}
+}
+
+// inspectionFailureEntry records content that was read but could not be fully
+// inspected, keeping container provenance from the evaluation.
+func inspectionFailureEntry(meta scanner.FileMetadata, inspection scanner.InspectionFailure) failurereport.Failure {
+	category := failurereport.CategoryParser
+	switch strings.ToLower(strings.TrimSpace(inspection.Category)) {
+	case "encrypted content":
+		category = failurereport.CategoryEncrypted
+	case "unsupported content":
+		category = failurereport.CategoryUnsupported
+	case "malformed content":
+		category = failurereport.CategoryMalformed
+	case "resource/size limit":
+		category = failurereport.CategorySizeLimit
+	}
+	target := strings.TrimSpace(meta.Host)
+	if target != "" {
+		target = `\\` + strings.TrimPrefix(target, `\\`)
+	}
+	path := strings.TrimSpace(inspection.Path)
+	if path == "" {
+		path = strings.TrimSpace(meta.FilePath)
+	}
+	return failurereport.Failure{
+		Target:        target,
+		Path:          path,
+		Operation:     failurereport.OperationInspection,
+		Category:      category,
+		Parser:        inspection.Parser,
+		ReadSucceeded: true,
+		Attempts:      1,
+		Retryable:     false,
+		FinalError:    inspection.Detail,
+	}
 }
 
 func resolveSMBSPN(target, hostname, override string) (string, error) {

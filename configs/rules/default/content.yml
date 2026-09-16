@@ -19,7 +19,12 @@ rules:
     enabled: true
     include_paths: []
     exclude_paths: [node_modules, vendor, cache, temp, tmp, winsxs]
-    file_extensions: [.conf, .config, .env, .ini, .json, .properties, .ps1, .py, .sh, .txt, .xml, .yaml, .yml]
+    # .doc/.xls are legacy Office formats whose text is now recovered by the
+    # built-in legacy parser, so they share the same assignment semantics as the
+    # modern formats above. Extension parity only: severity, expression, and
+    # classification are unchanged. Legacy .ppt extraction is deferred, so .ppt
+    # is intentionally absent.
+    file_extensions: [.conf, .config, .doc, .env, .ini, .json, .properties, .ps1, .py, .sh, .txt, .xls, .xml, .yaml, .yml]
     max_file_size: 524288
     action: report
 

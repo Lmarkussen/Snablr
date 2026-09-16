@@ -26,3 +26,19 @@ implementation code from these dependencies.
 - Snablr implements NTDS account selection and credential decryption
   independently in `internal/ntdsparse`; no external implementation code is
   copied or adapted into that package.
+
+## github.com/richardlehane/mscfb (and github.com/richardlehane/msoleps)
+
+- Source: https://github.com/richardlehane/mscfb
+- Version: v1.0.8 (direct dependency); transitively depends on
+  github.com/richardlehane/msoleps v1.0.3
+- License: Apache License 2.0 (both modules)
+- Use: read-only Microsoft Compound File Binary (OLE/CFB) container access so
+  Snablr can locate the legacy Office streams (`WordDocument`, `0Table`/`1Table`,
+  `Workbook`/`Book`, `PowerPoint Document`).
+- Snablr implements legacy document text extraction independently in
+  `internal/legacyoffice` from the published on-disk structures (Word FIB and
+  piece table, Excel BIFF8 records). No implementation code is copied,
+  translated, or adapted from the dependency or from any other parser.
+- Legacy `.ppt` text extraction remains deferred; the container dependency is
+  still used only to recognise that a document is a legacy Office file.

@@ -105,7 +105,10 @@ func InspectZIP(content []byte, outerExtension string, opts Options, allowedExte
 		// inspected as its own container so its extracted text reaches the same
 		// credential pipeline as a loose document.
 		nestedOffice := !officeContainer && isOfficeOpenXMLExtension(memberExt)
-		if !nestedOffice && !shouldInspectMember(outerExtension, cleanedPath, memberExt, opts, allowedExtensions) {
+		// Legacy OLE/CFB Office documents are binary containers: keep the raw
+		// member so the shared harvester can reconstruct their text.
+		nestedLegacy := !officeContainer && isLegacyOfficeExtension(memberExt)
+		if !nestedOffice && !nestedLegacy && !shouldInspectMember(outerExtension, cleanedPath, memberExt, opts, allowedExtensions) {
 			continue
 		}
 
@@ -116,6 +119,19 @@ func InspectZIP(content []byte, outerExtension string, opts Options, allowedExte
 
 		if nestedOffice {
 			appendNestedOfficeMembers(&result, data, memberExt, cleanedPath, opts, allowedExtensions, &totalBytes, &inspectedMembers)
+			continue
+		}
+
+		if nestedLegacy {
+			totalBytes += int64(len(data))
+			inspectedMembers++
+			result.Members = append(result.Members, Member{
+				Path:      cleanedPath,
+				Name:      memberName,
+				Extension: memberExt,
+				Size:      int64(len(data)),
+				Content:   data,
+			})
 			continue
 		}
 
@@ -250,6 +266,17 @@ func ResolveArchiveExtension(name, filePath, ext string) string {
 func isOfficeOpenXMLExtension(ext string) bool {
 	switch strings.ToLower(strings.TrimSpace(ext)) {
 	case ".docx", ".xlsx", ".xlsm", ".pptx":
+		return true
+	default:
+		return false
+	}
+}
+
+// isLegacyOfficeExtension reports whether the member is a legacy OLE/CFB Office
+// document (Word 97-2003, Excel 97-2003, PowerPoint 97-2003).
+func isLegacyOfficeExtension(ext string) bool {
+	switch strings.ToLower(strings.TrimSpace(ext)) {
+	case ".doc", ".xls", ".ppt":
 		return true
 	default:
 		return false

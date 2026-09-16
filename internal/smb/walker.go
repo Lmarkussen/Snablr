@@ -1,12 +1,13 @@
 package smb
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/hirochachacha/go-smb2"
+	"io/fs"
 )
 
 type WalkOptions struct {
@@ -24,11 +25,78 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 		return fmt.Errorf("walk callback cannot be nil")
 	}
 
-	fs, err := c.mountShare(share)
+	tree, err := c.mountShare(share)
 	if err != nil {
 		return err
 	}
-	defer fs.Umount()
+	defer func() {
+		if tree != nil {
+			_ = tree.Umount()
+		}
+	}()
+
+	// readDir restarts the directory listing after a transport recovery so no
+	// entries are silently lost; any entry already reported is de-duplicated by
+	// the planner/inventory because batches are keyed by remote path.
+	readDir := func(path string) ([]fs.FileInfo, error) {
+		var entries []fs.FileInfo
+		var lastErr error
+		for attempt := 0; attempt < totalOperationAttempts; attempt++ {
+			current, err := c.currentSession(context.Background())
+			if err != nil {
+				return nil, err
+			}
+			if tree == nil {
+				tree, err = c.mountTreeWithSession(current, share)
+				if err != nil {
+					return nil, err
+				}
+			}
+			entries, err = tree.ReadDir(path)
+			if err == nil {
+				return entries, nil
+			}
+			lastErr = err
+			if !isRetryableOperation(err) {
+				return nil, err
+			}
+			c.mu.Lock()
+			c.stats.OperationsRetried++
+			if IsReconnectable(err) {
+				c.stats.TransportFailures++
+			}
+			c.mu.Unlock()
+			// Drop the stale tree and re-establish the transport before
+			// restarting this directory.
+			if tree != nil {
+				_ = tree.Umount()
+				tree = nil
+			}
+			if IsReconnectable(err) {
+				c.mu.Lock()
+				c.stats.EnumerationFailures++
+				handler := c.onEvent
+				serverName := c.serverName
+				c.mu.Unlock()
+				emitTransportEvent(handler, TransportEvent{
+					Kind: TransportEventRetrying, Server: serverName, Share: share, Operation: "read dir " + path,
+					Attempt: attempt + 1, MaxAttempts: maxReconnectAttempts, Err: err,
+				})
+				if rerr := c.recover(context.Background(), current); rerr != nil {
+					c.reportEnumerationFailure(share, path, lastErr, attempt+1)
+					return nil, fmt.Errorf("read dir %s on %s: %w", path, share, lastErr)
+				}
+			}
+			if err := sleepContext(context.Background(), reconnectBackoff); err != nil {
+				return nil, err
+			}
+		}
+		c.mu.Lock()
+		c.stats.RetryExhausted++
+		c.mu.Unlock()
+		c.reportEnumerationFailure(share, path, lastErr, totalOperationAttempts)
+		return nil, fmt.Errorf("read dir %s on %s: %w", path, share, lastErr)
+	}
 
 	type walkItem struct {
 		path  string
@@ -44,7 +112,7 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 		item := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 
-		entries, err := fs.ReadDir(item.path)
+		entries, err := readDir(item.path)
 		if err != nil {
 			if isPermissionError(err) || os.IsNotExist(err) {
 				continue
@@ -111,6 +179,32 @@ func joinRemotePath(parent, name string) string {
 	return parent + `\` + name
 }
 
+// reportEnumerationFailure records one failed directory enumeration. The
+// directory path is preserved so the operator sees which subtree may be
+// incomplete rather than a single missing file.
+func (c *Client) reportEnumerationFailure(share, dir string, err error, attempts int) {
+	if err == nil {
+		return
+	}
+	c.mu.Lock()
+	handler := c.onFailure
+	serverName := c.serverName
+	c.mu.Unlock()
+	if handler == nil {
+		return
+	}
+	handler(OperationFailure{
+		Operation:          "directory enumeration",
+		Share:              share,
+		Path:               normalizeRemotePath(dir),
+		Server:             serverName,
+		Category:           CategoryEnumeration,
+		Attempts:           attempts,
+		ReconnectAttempted: true,
+		Err:                err,
+	})
+}
+
 func normalizeRemotePath(path string) string {
 	path = strings.ReplaceAll(path, `\`, `/`)
 	path = strings.TrimPrefix(path, "./")
@@ -130,12 +224,6 @@ func isPermissionError(err error) bool {
 		strings.Contains(msg, "access denied") ||
 		strings.Contains(msg, "permission denied") ||
 		strings.Contains(msg, "logon failure")
-}
-
-func closeShare(fs *smb2.Share) {
-	if fs != nil {
-		_ = fs.Umount()
-	}
 }
 
 func shouldDescendRemoteDir(path string, depth int, opts WalkOptions, maxDepth int) bool {

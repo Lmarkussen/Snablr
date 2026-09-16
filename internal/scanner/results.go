@@ -163,6 +163,16 @@ type FileMetadata struct {
 	BundleDependency    bool
 }
 
+// InspectionFailure describes content that was read successfully but could not
+// be fully inspected (for example an encrypted legacy document). It carries no
+// credential material.
+type InspectionFailure struct {
+	Path     string
+	Parser   string
+	Category string
+	Detail   string
+}
+
 type Evaluation struct {
 	Skipped         bool
 	SkipReason      string
@@ -171,6 +181,10 @@ type Evaluation struct {
 	Findings        []Finding
 	BinaryArtifacts []artifact.Binary
 	Cleanup         func() error
+	// InspectionFailures lists content that was read successfully but could not
+	// be fully inspected (for example an encrypted legacy document). It carries
+	// no credential material.
+	InspectionFailures []InspectionFailure
 }
 
 func (m FileMetadata) Normalized() FileMetadata {

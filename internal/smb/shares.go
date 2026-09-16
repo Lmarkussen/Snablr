@@ -52,13 +52,15 @@ func (c *Client) ListAccessibleShares(ctx context.Context) ([]ShareInfo, error) 
 }
 
 func (c *Client) listShares(ctx context.Context, strict bool) ([]ShareInfo, error) {
-	session, _, err := c.connectedSession()
-	if err != nil {
-		return nil, err
-	}
-
-	shares, err := session.ListSharenames()
-	if err != nil {
+	var shares []string
+	if err := c.run(ctx, "list shares", func(session transportSession) error {
+		names, err := session.ListSharenames()
+		if err != nil {
+			return err
+		}
+		shares = names
+		return nil
+	}); err != nil {
 		return nil, fmt.Errorf("list shares: %w", err)
 	}
 

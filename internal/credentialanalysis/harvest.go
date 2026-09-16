@@ -8,12 +8,14 @@ import (
 	"io"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v3"
 
+	"snablr/internal/legacyoffice"
 	"snablr/internal/textdecode"
 )
 
@@ -54,6 +56,40 @@ func NeedsContent(path, name string, size int64) bool {
 }
 
 func Harvest(input HarvestInput) []Candidate {
+	candidates, _ := HarvestWithReport(input)
+	return candidates
+}
+
+// InspectionNote describes a content-inspection limitation for material that was
+// read successfully but could not be fully parsed. It carries no credential
+// values.
+type InspectionNote struct {
+	Parser   string
+	Category string
+	Detail   string
+}
+
+// HarvestWithReport runs the shared harvester and additionally reports
+// inspection limitations (for example an encrypted legacy document), so callers
+// can distinguish "could not read" from "read but could not inspect".
+func HarvestWithReport(input HarvestInput) ([]Candidate, []InspectionNote) {
+	report := &harvestReport{}
+	candidates := harvest(input, report)
+	return candidates, report.notes
+}
+
+type harvestReport struct {
+	notes []InspectionNote
+}
+
+func (r *harvestReport) note(note InspectionNote) {
+	if r == nil || note.Category == "" {
+		return
+	}
+	r.notes = append(r.notes, note)
+}
+
+func harvest(input HarvestInput, report *harvestReport) []Candidate {
 	content := input.Content
 	if len(content) > maxHarvestBytes {
 		content = content[:maxHarvestBytes]
@@ -75,6 +111,13 @@ func Harvest(input HarvestInput) []Candidate {
 		out = append(out, base(candidate))
 	}
 	ext := strings.ToLower(filepath.Ext(input.Path))
+	// Legacy OLE/CFB Office documents are binary containers: their visible text
+	// is recovered structurally and then fed through the same semantic layer and
+	// table renderer used for modern Office and delimited exports.
+	if legacyoffice.IsOLE(content) {
+		harvestLegacyOffice(content, add, report)
+		return out
+	}
 	textContent := textdecode.Normalize(content)
 	if strings.TrimSpace(textContent) == "" {
 		return out
@@ -128,6 +171,123 @@ func delimitedRecordText(text string) string {
 		return ""
 	}
 	return RenderTableText(rows, "delimited")
+}
+
+// harvestLegacyOffice recovers credential material from a legacy OLE/CFB
+// Office document (Word 97-2003, Excel 97-2003). Extracted spreadsheet grids and
+// tab-separated document tables go through the same shared table renderer, and
+// plain document text goes through the same line harvester.
+func harvestLegacyOffice(content []byte, add func(Candidate), report *harvestReport) {
+	document, ok := legacyoffice.Extract(content)
+	if !ok {
+		return
+	}
+	switch document.Status {
+	case legacyoffice.StatusEncrypted:
+		report.note(InspectionNote{Parser: document.Kind.ParserName(), Category: "encrypted content", Detail: document.Detail()})
+		return
+	case legacyoffice.StatusMalformed:
+		report.note(InspectionNote{Parser: document.Kind.ParserName(), Category: "malformed content", Detail: document.Detail()})
+		return
+	case legacyoffice.StatusUnsupported:
+		report.note(InspectionNote{Parser: document.Kind.ParserName(), Category: "unsupported content", Detail: document.Detail()})
+		return
+	case legacyoffice.StatusTooLarge:
+		report.note(InspectionNote{Parser: document.Kind.ParserName(), Category: "resource/size limit", Detail: document.Detail()})
+		return
+	}
+	if document.Encrypted {
+		report.note(InspectionNote{Parser: document.Kind.ParserName(), Category: "encrypted content", Detail: document.Detail()})
+		return
+	}
+	scope := string(document.Kind)
+	if scope == "" {
+		scope = "legacy office"
+	}
+	if len(document.Grid) > 0 {
+		if rendered := RenderTableText(document.Grid, scope+" spreadsheet"); rendered != "" {
+			harvestLines(rendered, add)
+			return
+		}
+		rows := make([]string, 0, len(document.Grid))
+		for _, row := range document.Grid {
+			rows = append(rows, joinTableRow(row))
+		}
+		if rendered := RenderTableText(parseRowCells(rows), scope+" spreadsheet"); rendered != "" {
+			harvestLines(rendered, add)
+			return
+		}
+	}
+	if strings.TrimSpace(document.Text) == "" {
+		return
+	}
+	// Document tables are reconstructed as tab-separated rows; the shared
+	// renderer applies header/label semantics, otherwise the text is harvested
+	// as ordinary lines.
+	if rendered := RenderTableText(parseRowCells(strings.Split(document.Text, "\n")), scope+" document"); rendered != "" {
+		harvestLines(rendered, add)
+		return
+	}
+	// Paragraph-form documents are grouped into bounded blocks so a label and its
+	// value inside one block correlate, matching the DOCX body behaviour.
+	if rendered := renderDocumentBlocks(document.Text, scope+" document"); rendered != "" {
+		harvestLines(rendered, add)
+		return
+	}
+	harvestLines(document.Text, add)
+}
+
+// renderDocumentBlocks renders reconstructed document text as bounded [scope
+// block N] sections. Blank lines delimit blocks and each block is capped so a
+// label can never pair with unrelated text far away in the document.
+func renderDocumentBlocks(text, scope string) string {
+	const maxBlockLines = 12
+	var builder strings.Builder
+	var block []string
+	index := 0
+	emit := func(lines []string) {
+		if len(lines) == 0 {
+			return
+		}
+		index++
+		builder.WriteString("[" + scope + " block " + strconv.Itoa(index) + "]\n")
+		for _, line := range lines {
+			builder.WriteString(line)
+			builder.WriteString("\n")
+		}
+	}
+	for _, raw := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			emit(block)
+			block = nil
+			continue
+		}
+		block = append(block, line)
+		if len(block) >= maxBlockLines {
+			emit(block)
+			block = nil
+		}
+	}
+	emit(block)
+	return builder.String()
+}
+
+// parseRowCells splits tab-separated logical rows into a table, dropping rows
+// that carry no cells.
+func parseRowCells(rows []string) [][]string {
+	table := make([][]string, 0, len(rows))
+	for _, row := range rows {
+		if strings.TrimSpace(row) == "" {
+			continue
+		}
+		table = append(table, strings.Split(row, "\t"))
+	}
+	return table
+}
+
+func joinTableRow(row []string) string {
+	return strings.Join(row, "\t")
 }
 
 func decodeJSON(content []byte) (any, error) {

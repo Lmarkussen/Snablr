@@ -23,6 +23,45 @@ rules:
     max_file_size: 0
     action: report
 
+  # Safe default: Norwegian password-list naming. "passordliste" ("password
+  # list"), user-password combinations, and password dumps are strong signals
+  # that a file holds stored credentials. Policy and documentation naming is
+  # excluded so those files stay supporting material at most.
+  - id: filename.norwegian_password_list_keywords
+    name: Norwegian Password List Keywords
+    description: Detect Norwegian password-list, user-password, and password-export filenames that strongly suggest stored credentials.
+    type: filename
+    pattern: '(?i)(passord[-_ ]?liste|bruker[-_ ]?passord|passord[-_ ]?(?:dump|eksport|export|oversikt|samling|database)|(?:innlogging|palogging|pålogging)[-_ ]?(?:info|detaljer|liste|oversikt|opplysninger))'
+    case_sensitive: false
+    severity: high
+    tags: [credentials, filenames, review, norwegian]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: [passordpolicy, passordpolitikk, passordkrav, passordrutine, passordregel, veiledning, cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: report
+
+  # Supporting: a bare Norwegian credential word is weaker than a list-like
+  # name, so it is a medium review signal and excludes policy/documentation
+  # naming that merely mentions passwords.
+  - id: filename.norwegian_credential_review_keywords
+    name: Norwegian Credential Review Keywords
+    description: Detect generic Norwegian login, username, and password file naming as supporting review material.
+    type: filename
+    pattern: '(?i)(^|[^a-z0-9])(passord|brukernavn|kontonavn|innlogging|palogging|pålogging)([^a-z0-9]|$)'
+    case_sensitive: false
+    severity: medium
+    tags: [credentials, filenames, review, norwegian]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: [passordpolicy, passordpolitikk, passordkrav, passordrutine, passordregel, veiledning, cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: report
+
   # Safe default: common high-value application config names.
   - id: filename.sensitive_config_names
     name: Sensitive Config Names

@@ -1754,6 +1754,11 @@ func TestEngineEvaluatesDOCXMembers(t *testing.T) {
 	}
 	foundContent := false
 	for _, finding := range evaluation.Findings {
+		if finding.ArchivePath == "" {
+			// Filename/extension metadata findings describe the container
+			// itself and legitimately carry no member path.
+			continue
+		}
 		if finding.ArchivePath != "Docs/credentials.docx" || finding.ArchiveMemberPath != "word/document.xml" {
 			t.Fatalf("expected Office archive metadata on finding, got %#v", finding)
 		}
@@ -1839,6 +1844,9 @@ func TestEngineEvaluatesPPTXSlideText(t *testing.T) {
 	}
 	foundContent := false
 	for _, finding := range evaluation.Findings {
+		if finding.ArchivePath == "" {
+			continue
+		}
 		if finding.ArchiveMemberPath != "ppt/slides/slide1.xml" {
 			t.Fatalf("expected pptx findings to stay on slide xml members, got %#v", evaluation.Findings)
 		}

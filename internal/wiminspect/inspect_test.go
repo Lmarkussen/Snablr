@@ -240,3 +240,108 @@ func TestInspectPropagatesCancellation(t *testing.T) {
 		t.Fatal("expected cancellation")
 	}
 }
+
+// TestInspectSelectsInterestingOfficeMembers covers targeted Office extraction:
+// only documents the caller's discovery rules consider interesting are pulled
+// from the image, and each extracted member records its image index.
+func TestInspectSelectsInterestingOfficeMembers(t *testing.T) {
+	orig := runner
+	defer func() { runner = orig }()
+
+	fake := &fakeRunner{
+		images: []int{2},
+		listPaths: []string{
+			"/Docs/passordliste.docx",
+			"/General/ordinary.docx",
+			"/Finance/credentials.xlsx",
+		},
+		extractByPath: map[string][]byte{
+			"/docs/passordliste.docx":   []byte("docx-bytes"),
+			"/general/ordinary.docx":    []byte("ordinary-bytes"),
+			"/finance/credentials.xlsx": []byte("xlsx-bytes"),
+		},
+	}
+	runner = fake
+
+	result, err := Inspect(context.Background(), []byte("demo"), Options{
+		Enabled:        true,
+		AutoWIMMaxSize: 1 << 20,
+		MaxMembers:     8,
+		MaxMemberBytes: 1 << 20,
+		MaxTotalBytes:  1 << 20,
+		OfficeInterest: func(memberPath string) bool {
+			return strings.Contains(memberPath, "passordliste")
+		},
+	}, artifact.Origin{ContainerPath: "image.wim"})
+	if err != nil {
+		t.Fatalf("Inspect returned error: %v", err)
+	}
+	if len(result.Members) != 1 {
+		t.Fatalf("expected only the interesting Office member, got %#v", result.Members)
+	}
+	member := result.Members[0]
+	if member.Path != "Docs/passordliste.docx" || !member.ContentRead || string(member.Content) != "docx-bytes" {
+		t.Fatalf("unexpected Office member extraction: %#v", member)
+	}
+	if member.ImageIndex != 2 {
+		t.Fatalf("image index not recorded: %#v", member)
+	}
+	for _, call := range fake.extractCalls {
+		if strings.Contains(call, "ordinary.docx") || strings.Contains(call, "credentials.xlsx") {
+			t.Fatalf("uninteresting Office document was extracted: %#v", fake.extractCalls)
+		}
+	}
+}
+
+// TestInspectWithoutOfficeInterestStaysTargeted confirms Office content is not
+// pulled from images when no interest predicate is configured.
+func TestInspectWithoutOfficeInterestStaysTargeted(t *testing.T) {
+	orig := runner
+	defer func() { runner = orig }()
+
+	fake := &fakeRunner{
+		listPaths: []string{"/Docs/passordliste.docx", "/Finance/credentials.xlsx"},
+		extractByPath: map[string][]byte{
+			"/docs/passordliste.docx":   []byte("docx-bytes"),
+			"/finance/credentials.xlsx": []byte("xlsx-bytes"),
+		},
+	}
+	runner = fake
+
+	result, err := Inspect(context.Background(), []byte("demo"), Options{
+		Enabled: true, AutoWIMMaxSize: 1 << 20, MaxMembers: 8, MaxMemberBytes: 1 << 20, MaxTotalBytes: 1 << 20,
+	}, artifact.Origin{ContainerPath: "image.wim"})
+	if err != nil {
+		t.Fatalf("Inspect returned error: %v", err)
+	}
+	if len(result.Members) != 0 || len(fake.extractCalls) != 0 {
+		t.Fatalf("Office content was extracted without an interest predicate: %#v", result.Members)
+	}
+}
+
+// TestInspectRespectsMemberLimitsForOffice confirms the configured byte limit
+// still bounds Office member extraction.
+func TestInspectRespectsMemberLimitsForOffice(t *testing.T) {
+	orig := runner
+	defer func() { runner = orig }()
+
+	fake := &fakeRunner{
+		listPaths: []string{"/Docs/passordliste.docx"},
+		extractByPath: map[string][]byte{
+			"/docs/passordliste.docx": bytes.Repeat([]byte("A"), 4096),
+		},
+	}
+	runner = fake
+
+	result, err := Inspect(context.Background(), []byte("demo"), Options{
+		Enabled: true, AutoWIMMaxSize: 1 << 20, MaxMembers: 8,
+		MaxMemberBytes: 512, MaxTotalBytes: 1 << 20,
+		OfficeInterest: func(string) bool { return true },
+	}, artifact.Origin{ContainerPath: "image.wim"})
+	if err != nil {
+		t.Fatalf("Inspect returned error: %v", err)
+	}
+	if len(result.Members) != 0 {
+		t.Fatalf("oversized Office member exceeded configured limits: %#v", result.Members)
+	}
+}

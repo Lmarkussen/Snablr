@@ -17,6 +17,11 @@ type Options struct {
 	MaxSECURITYBytes   int64
 	MaxNTDSBytes       int64
 	MaxImages          int
+	// OfficeInterest reports whether an Office document member is an
+	// interesting content candidate. It lets the caller reuse the configured
+	// filename/path discovery rules instead of duplicating vocabulary here.
+	// Targeting stays bounded by MaxMembers, MaxMemberBytes, and MaxTotalBytes.
+	OfficeInterest func(memberPath string) bool
 }
 
 type Candidate struct {
@@ -32,14 +37,16 @@ type Member struct {
 	Size        int64
 	Content     []byte
 	ContentRead bool
+	ImageIndex  int
 }
 
 type BinaryMember struct {
-	Path      string
-	Name      string
-	Extension string
-	Size      int64
-	Artifact  artifact.Binary
+	Path       string
+	Name       string
+	Extension  string
+	Size       int64
+	Artifact   artifact.Binary
+	ImageIndex int
 }
 
 type Result struct {

@@ -27,7 +27,7 @@ func ShouldInspect(candidate Candidate, opts Options) (bool, string) {
 		return false, "archive inspection disabled"
 	}
 	switch resolvedExt {
-	case ".zip", ".docx", ".xlsx", ".pptx":
+	case ".zip", ".docx", ".xlsx", ".xlsm", ".pptx":
 		if opts.AutoZIPMaxSize > 0 && candidate.Size <= opts.AutoZIPMaxSize {
 			return true, ""
 		}
@@ -73,6 +73,12 @@ func InspectZIP(content []byte, outerExtension string, opts Options, allowedExte
 	totalBytes := int64(0)
 	inspectedMembers := 0
 
+	officeContainer := isOfficeOpenXMLExtension(outerExtension)
+	officeCtx := &officeContext{}
+	if officeContainer && strings.EqualFold(outerExtension, ".xlsx") {
+		officeCtx.sharedStrings = loadOfficeSharedStrings(reader, opts)
+	}
+
 	for _, file := range reader.File {
 		if opts.MaxMembers > 0 && inspectedMembers >= opts.MaxMembers {
 			break
@@ -95,36 +101,29 @@ func InspectZIP(content []byte, outerExtension string, opts Options, allowedExte
 		memberName := path.Base(cleanedPath)
 		memberExt := strings.ToLower(filepath.Ext(memberName))
 
-		if !shouldInspectMember(outerExtension, cleanedPath, memberExt, opts, allowedExtensions) {
+		// A supported Office document stored inside a generic archive is
+		// inspected as its own container so its extracted text reaches the same
+		// credential pipeline as a loose document.
+		nestedOffice := !officeContainer && isOfficeOpenXMLExtension(memberExt)
+		if !nestedOffice && !shouldInspectMember(outerExtension, cleanedPath, memberExt, opts, allowedExtensions) {
 			continue
 		}
 
-		rc, err := file.Open()
-		if err != nil {
+		data, ok := readZIPMember(file, memberSize, opts)
+		if !ok {
 			continue
 		}
-		readLimit := memberSize
-		if opts.MaxMemberBytes > 0 && readLimit > opts.MaxMemberBytes {
-			readLimit = opts.MaxMemberBytes
-		}
-		if readLimit <= 0 {
-			readLimit = memberSize
-		}
-		data, err := io.ReadAll(io.LimitReader(rc, readLimit+1))
-		_ = rc.Close()
-		if err != nil {
+
+		if nestedOffice {
+			appendNestedOfficeMembers(&result, data, memberExt, cleanedPath, opts, allowedExtensions, &totalBytes, &inspectedMembers)
 			continue
 		}
-		if opts.MaxMemberBytes > 0 && int64(len(data)) > opts.MaxMemberBytes {
-			continue
-		}
+
 		if !looksTextLike(data) {
 			continue
 		}
-		if isOfficeOpenXMLExtension(outerExtension) && memberExt == ".xml" {
-			if extracted := extractOfficeXMLText(data); len(extracted) > 0 {
-				data = extracted
-			}
+		if officeContainer && memberExt == ".xml" {
+			data = reconstructOfficeMemberContent(outerExtension, cleanedPath, data, officeCtx)
 		}
 
 		totalBytes += int64(len(data))
@@ -139,6 +138,88 @@ func InspectZIP(content []byte, outerExtension string, opts Options, allowedExte
 	}
 
 	return result, nil
+}
+
+func readZIPMember(file *zip.File, memberSize int64, opts Options) ([]byte, bool) {
+	rc, err := file.Open()
+	if err != nil {
+		return nil, false
+	}
+	readLimit := memberSize
+	if opts.MaxMemberBytes > 0 && readLimit > opts.MaxMemberBytes {
+		readLimit = opts.MaxMemberBytes
+	}
+	if readLimit <= 0 {
+		readLimit = memberSize
+	}
+	data, err := io.ReadAll(io.LimitReader(rc, readLimit+1))
+	_ = rc.Close()
+	if err != nil {
+		return nil, false
+	}
+	if opts.MaxMemberBytes > 0 && int64(len(data)) > opts.MaxMemberBytes {
+		return nil, false
+	}
+	return data, true
+}
+
+// appendNestedOfficeMembers inspects an Office document embedded in a generic
+// archive and records its extracted members with nested provenance
+// (outer.zip!document.docx!word/document.xml). Nesting is bounded to one level
+// because the nested inspection does not recurse further.
+func appendNestedOfficeMembers(result *Result, content []byte, extension, outerMemberPath string, opts Options, allowedExtensions map[string]struct{}, totalBytes *int64, inspectedMembers *int) {
+	nested, err := InspectZIP(content, extension, opts, allowedExtensions)
+	if err != nil {
+		return
+	}
+	for _, member := range nested.Members {
+		if opts.MaxMembers > 0 && *inspectedMembers >= opts.MaxMembers {
+			return
+		}
+		if opts.MaxTotalUncompressed > 0 && *totalBytes+member.Size > opts.MaxTotalUncompressed {
+			return
+		}
+		prefixed := member
+		prefixed.Path = outerMemberPath + "!" + member.Path
+		prefixed.Name = path.Base(member.Path)
+		prefixed.Extension = strings.ToLower(filepath.Ext(prefixed.Name))
+		*totalBytes += member.Size
+		*inspectedMembers++
+		result.Members = append(result.Members, prefixed)
+	}
+}
+
+// reconstructOfficeMemberContent replaces raw OOXML with reconstructed logical
+// text. Parts without reconstructable text fall back to the generic character
+// data extraction so nothing regresses.
+func reconstructOfficeMemberContent(outerExtension, memberPath string, data []byte, ctx *officeContext) []byte {
+	if reconstructed := reconstructOfficeMember(outerExtension, memberPath, data, ctx); len(reconstructed) > 0 {
+		return reconstructed
+	}
+	if extracted := extractOfficeXMLText(data); len(extracted) > 0 {
+		return extracted
+	}
+	return data
+}
+
+func loadOfficeSharedStrings(reader *zip.Reader, opts Options) []string {
+	for _, file := range reader.File {
+		if file.FileInfo().IsDir() || isEncrypted(file) || isSuspiciousArchivePath(file.Name) {
+			continue
+		}
+		if !strings.EqualFold(cleanedArchivePath(file.Name), "xl/sharedStrings.xml") {
+			continue
+		}
+		if opts.MaxMemberBytes > 0 && int64(file.UncompressedSize64) > opts.MaxMemberBytes {
+			return nil
+		}
+		data, ok := readZIPMember(file, int64(file.UncompressedSize64), opts)
+		if !ok {
+			return nil
+		}
+		return parseSharedStrings(data)
+	}
+	return nil
 }
 
 func isSupportedArchiveExtension(ext string) bool {
@@ -168,7 +249,7 @@ func ResolveArchiveExtension(name, filePath, ext string) string {
 
 func isOfficeOpenXMLExtension(ext string) bool {
 	switch strings.ToLower(strings.TrimSpace(ext)) {
-	case ".docx", ".xlsx", ".pptx":
+	case ".docx", ".xlsx", ".xlsm", ".pptx":
 		return true
 	default:
 		return false
@@ -182,7 +263,7 @@ func shouldInspectMember(outerExtension, memberPath, memberExt string, opts Opti
 			return false
 		}
 		return isAllowedOfficeMember(".docx", memberPath)
-	case ".xlsx":
+	case ".xlsx", ".xlsm":
 		if memberExt != ".xml" {
 			return false
 		}
@@ -209,7 +290,7 @@ func isAllowedOfficeMember(outerExtension, memberPath string) bool {
 			memberPath == "docprops/custom.xml" ||
 			strings.HasPrefix(memberPath, "word/header") && strings.HasSuffix(memberPath, ".xml") ||
 			strings.HasPrefix(memberPath, "word/footer") && strings.HasSuffix(memberPath, ".xml")
-	case ".xlsx":
+	case ".xlsx", ".xlsm":
 		return memberPath == "xl/sharedstrings.xml" ||
 			memberPath == "docprops/core.xml" ||
 			memberPath == "docprops/custom.xml" ||

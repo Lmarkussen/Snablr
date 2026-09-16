@@ -107,9 +107,27 @@ func Harvest(input HarvestInput) []Candidate {
 		}
 		if !structured {
 			harvestLines(textContent, add)
+			// Delimited exports (CSV/TSV) keep their rows as records so that
+			// header-mapped credentials correlate per row and never across rows.
+			if ext == ".csv" || ext == ".tsv" {
+				if rendered := delimitedRecordText(textContent); rendered != "" {
+					harvestLines(rendered, add)
+				}
+			}
 		}
 	}
 	return out
+}
+
+// delimitedRecordText renders delimited text as sectioned records using the
+// shared table renderer. It returns "" when the text is not a recognizable
+// credential table.
+func delimitedRecordText(text string) string {
+	rows, ok := ParseDelimitedText(text)
+	if !ok {
+		return ""
+	}
+	return RenderTableText(rows, "delimited")
 }
 
 func decodeJSON(content []byte) (any, error) {

@@ -548,7 +548,14 @@ func createOutputFile(path string) (*os.File, error) {
 }
 
 func uncPath(f scanner.Finding) string {
-	path := strings.ReplaceAll(f.FilePath, "/", `\`)
+	// Logical container member paths keep forward slashes
+	// ("document.docx!word/document.xml"); only the SMB file path itself is
+	// rendered with Windows separators.
+	outer, members := splitLogicalContainerPath(f.FilePath)
+	path := strings.ReplaceAll(outer, "/", `\`)
+	if len(members) > 0 {
+		path = path + "!" + strings.Join(members, "!")
+	}
 	if f.Host == "" && f.Share == "" {
 		return path
 	}
@@ -556,6 +563,17 @@ func uncPath(f scanner.Finding) string {
 		path = `\` + path
 	}
 	return fmt.Sprintf(`\\%s\%s%s`, valueOrDash(f.Host), valueOrDash(f.Share), path)
+}
+
+// splitLogicalContainerPath separates the outer file path from logical
+// container members joined with "!" (for example
+// "backup.zip!docs/passordliste.docx!word/document.xml").
+func splitLogicalContainerPath(value string) (string, []string) {
+	parts := strings.Split(value, "!")
+	if len(parts) == 1 {
+		return value, nil
+	}
+	return parts[0], parts[1:]
 }
 
 func remoteFilePath(f scanner.Finding) string {

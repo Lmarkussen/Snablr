@@ -8,6 +8,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -19,10 +20,17 @@ const (
 )
 
 func DOCX(body ...string) []byte {
+	return DOCXWithParts(nil, body...)
+}
+
+// DOCXWithParts builds a DOCX and merges additional Word parts into the
+// package. Tests use it to place text in secondary Word parts such as
+// word/footnotes.xml, word/comments.xml, or word/diagrams/data1.xml.
+func DOCXWithParts(extra map[string]string, body ...string) []byte {
 	document := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
 		`<w:document ` + WNS + `><w:body>` + strings.Join(body, "") +
 		`<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>`
-	return ZIPBytes(map[string]string{
+	parts := map[string]string{
 		"[Content_Types].xml": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
 			`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
 			`<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
@@ -34,7 +42,11 @@ func DOCX(body ...string) []byte {
 			`<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>` +
 			`</Relationships>`,
 		"word/document.xml": document,
-	})
+	}
+	for name, part := range extra {
+		parts[name] = part
+	}
+	return ZIPBytes(parts)
 }
 
 func Paragraph(text string) string {
@@ -65,14 +77,106 @@ func Table(rows ...[]string) string {
 	return builder.String()
 }
 
+// TableCell describes one Word table cell for fixtures that need more than a
+// single plain paragraph: split runs, multiple paragraphs, blank cells, or a
+// horizontal merge.
+type TableCell struct {
+	// Paragraphs renders one paragraph per entry (an empty entry is a blank
+	// paragraph, which terminates a logical block).
+	Paragraphs []string
+	// Runs, when set, renders one paragraph whose runs are concatenated without
+	// separators, modelling a word split by Word's run boundaries.
+	Runs [][]string
+	// GridSpan marks a horizontal merge across N columns (0 or 1 means none).
+	GridSpan int
+}
+
+// TableXML renders a Word table from explicit cell definitions so tests can
+// model real-world header-row credential tables.
+func TableXML(rows ...[]TableCell) string {
+	var builder strings.Builder
+	builder.WriteString(`<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>`)
+	for _, row := range rows {
+		builder.WriteString(`<w:tr>`)
+		for _, cell := range row {
+			builder.WriteString(`<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/>`)
+			if cell.GridSpan > 1 {
+				builder.WriteString(fmt.Sprintf(`<w:gridSpan w:val="%d"/>`, cell.GridSpan))
+			}
+			builder.WriteString(`</w:tcPr>`)
+			switch {
+			case len(cell.Runs) > 0:
+				builder.WriteString(`<w:p>`)
+				for _, run := range cell.Runs {
+					if len(run) == 0 {
+						builder.WriteString(Paragraph(""))
+						continue
+					}
+					builder.WriteString(`<w:r>`)
+					for _, part := range run {
+						builder.WriteString(`<w:t xml:space="preserve">` + xmlEscape(part) + `</w:t>`)
+					}
+					builder.WriteString(`</w:r>`)
+				}
+				builder.WriteString(`</w:p>`)
+			case len(cell.Paragraphs) > 0:
+				for _, paragraph := range cell.Paragraphs {
+					builder.WriteString(Paragraph(paragraph))
+				}
+			default:
+				builder.WriteString(Paragraph(""))
+			}
+			builder.WriteString(`</w:tc>`)
+		}
+		builder.WriteString(`</w:tr>`)
+	}
+	builder.WriteString(`</w:tbl>`)
+	return builder.String()
+}
+
+// Cell builds a plain single-paragraph table cell.
+func Cell(text string) TableCell {
+	return TableCell{Paragraphs: []string{text}}
+}
+
+// SplitCell builds a cell whose visible text is split across Word runs.
+func SplitCell(parts ...string) TableCell {
+	return TableCell{Runs: [][]string{parts}}
+}
+
+// ParaCell builds a cell holding several paragraphs.
+func ParaCell(paragraphs ...string) TableCell {
+	return TableCell{Paragraphs: paragraphs}
+}
+
+// MergedCell builds a horizontally merged cell spanning columns.
+func MergedCell(span int, text string) TableCell {
+	return TableCell{Paragraphs: []string{text}, GridSpan: span}
+}
+
 func XLSX(rows [][]string) []byte {
+	return XLSXWithParts(nil, rows, false)
+}
+
+// XLSXInline builds a spreadsheet that stores cell text inline (t="inlineStr")
+// instead of through the shared string table, which is what several exporters
+// and "save as" paths produce.
+func XLSXInline(rows [][]string) []byte {
+	return XLSXWithParts(nil, rows, true)
+}
+
+// XLSXWithParts builds a spreadsheet and merges additional parts such as
+// xl/comments1.xml or xl/drawings/drawing1.xml.
+func XLSXWithParts(extra map[string]string, rows [][]string, inline bool) []byte {
 	var shared []string
 	index := map[string]int{}
-	for _, row := range rows {
-		for _, cell := range row {
-			if _, ok := index[cell]; !ok {
-				index[cell] = len(shared)
-				shared = append(shared, cell)
+	if !inline {
+		for _, row := range rows {
+			for _, cell := range row {
+				if _, ok := index[cell]; !ok {
+					index[cell] = len(shared)
+					shared = append(shared, cell)
+				}
 			}
 		}
 	}
@@ -83,6 +187,10 @@ func XLSX(rows [][]string) []byte {
 		sheet.WriteString(fmt.Sprintf(`<row r="%d">`, rowIndex+1))
 		for columnIndex, cell := range row {
 			reference := columnName(columnIndex) + fmt.Sprintf("%d", rowIndex+1)
+			if inline {
+				sheet.WriteString(fmt.Sprintf(`<c r="%s" t="inlineStr"><is><t xml:space="preserve">%s</t></is></c>`, reference, xmlEscape(cell)))
+				continue
+			}
 			sheet.WriteString(fmt.Sprintf(`<c r="%s" t="s"><v>%d</v></c>`, reference, index[cell]))
 		}
 		sheet.WriteString(`</row>`)
@@ -97,7 +205,7 @@ func XLSX(rows [][]string) []byte {
 	}
 	sst.WriteString(`</sst>`)
 
-	return ZIPBytes(map[string]string{
+	parts := map[string]string{
 		"[Content_Types].xml": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
 			`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
 			`<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
@@ -119,7 +227,11 @@ func XLSX(rows [][]string) []byte {
 			`</Relationships>`,
 		"xl/sharedStrings.xml":     sst.String(),
 		"xl/worksheets/sheet1.xml": sheet.String(),
-	})
+	}
+	for name, part := range extra {
+		parts[name] = part
+	}
+	return ZIPBytes(parts)
 }
 
 func PPTX(paragraphs []string) []byte {
@@ -158,12 +270,29 @@ func PPTX(paragraphs []string) []byte {
 func ZIPBytes(members map[string]string) []byte {
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
-	// Deterministic order for reproducible fixtures.
+	// Deterministic order for reproducible fixtures: the well-known parts keep
+	// their historical order (so existing fixtures stay byte-identical), then
+	// any additional part is appended in sorted order.
+	written := make(map[string]struct{}, len(members))
+	names := make([]string, 0, len(members))
 	for _, name := range []string{"[Content_Types].xml", "_rels/.rels", "word/document.xml", "ppt/presentation.xml", "ppt/_rels/presentation.xml.rels", "ppt/slides/slide1.xml", "xl/workbook.xml", "xl/_rels/workbook.xml.rels", "xl/sharedStrings.xml", "xl/worksheets/sheet1.xml", "passordliste.docx"} {
-		content, ok := members[name]
-		if !ok {
+		if _, ok := members[name]; !ok {
 			continue
 		}
+		names = append(names, name)
+		written[name] = struct{}{}
+	}
+	extra := make([]string, 0, len(members))
+	for name := range members {
+		if _, ok := written[name]; ok {
+			continue
+		}
+		extra = append(extra, name)
+	}
+	sort.Strings(extra)
+	names = append(names, extra...)
+	for _, name := range names {
+		content := members[name]
 		fileWriter, err := writer.Create(name)
 		if err != nil {
 			panic(err)

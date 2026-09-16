@@ -41,7 +41,7 @@ func RenderTableText(rows [][]string, scope string) string {
 	}
 
 	for i := 0; i < len(grid) && i < headerSearchDepth; i++ {
-		if !isHeaderRow(grid[i]) {
+		if !isCredentialHeaderRow(grid[i]) {
 			continue
 		}
 		return renderHeaderRecords(grid[i], grid[i+1:], width, scope)
@@ -60,6 +60,11 @@ func renderHeaderRecords(header []string, data [][]string, width int, scope stri
 	for _, row := range data {
 		if records >= maxRenderedRecords {
 			break
+		}
+		// Word repeats header rows across page breaks; a repeated header
+		// reaffirms the schema and is never a data credential.
+		if repeatsHeaderSchema(header, row) {
+			continue
 		}
 		fields := make([]string, 0, width)
 		for column := 0; column < width; column++ {
@@ -84,6 +89,12 @@ func renderHeaderRecords(header []string, data [][]string, width int, scope stri
 // accumulate into one record until a label repeats, at which point a new record
 // starts; this keeps multi-account label/value lists from mixing accounts.
 func renderLabelValueRecords(grid [][]string, scope string) string {
+	// A label/value table is only a credential table when its labels name both a
+	// password and an identity. Documentation tables such as
+	// "Passord | Kommentar" or "Policy | Password" must not become credentials.
+	if !hasCredentialLabelPair(grid) {
+		return ""
+	}
 	var (
 		builder strings.Builder
 		current []string
@@ -227,21 +238,62 @@ func leadingNonEmptyLines(text string, limit int) []string {
 	return lines
 }
 
-// isHeaderRow reports whether every non-empty cell names a known credential
-// field (identity, password, or domain) and at least two do.
-func isHeaderRow(row []string) bool {
-	fields := 0
+// isCredentialHeaderRow reports whether a row defines a credential schema:
+// at least one password column plus at least one identity column. Unrelated
+// columns (server names, free-text comments) are allowed and ignored, which is
+// what real password lists with extra columns look like.
+func isCredentialHeaderRow(row []string) bool {
+	passwords, identities := 0, 0
 	for _, cell := range row {
 		cell = strings.TrimSpace(cell)
 		if cell == "" {
 			continue
 		}
-		if ClassifyFieldName(cell) == FieldRoleNone {
+		switch ClassifyFieldName(cell) {
+		case FieldRolePassword:
+			passwords++
+		case FieldRoleIdentity:
+			identities++
+		}
+	}
+	return passwords >= 1 && identities >= 1
+}
+
+// repeatsHeaderSchema reports whether a data row is actually a repeated header
+// row: every non-empty cell names the same semantic role as the header cell in
+// the same column, and the row defines a credential schema itself.
+func repeatsHeaderSchema(header, row []string) bool {
+	if !isCredentialHeaderRow(row) {
+		return false
+	}
+	for index, cell := range row {
+		cell = strings.TrimSpace(cell)
+		if cell == "" {
+			continue
+		}
+		if len(header) <= index {
 			return false
 		}
-		fields++
+		if ClassifyFieldName(cell) != ClassifyFieldName(header[index]) {
+			return false
+		}
 	}
-	return fields >= 2
+	return true
+}
+
+// hasCredentialLabelPair reports whether the first column of a two-column table
+// labels both a password and an identity somewhere in the table.
+func hasCredentialLabelPair(grid [][]string) bool {
+	passwords, identities := 0, 0
+	for _, row := range grid {
+		switch ClassifyFieldName(cellAt(row, 0)) {
+		case FieldRolePassword:
+			passwords++
+		case FieldRoleIdentity:
+			identities++
+		}
+	}
+	return passwords >= 1 && identities >= 1
 }
 
 func normalizeGrid(rows [][]string) [][]string {

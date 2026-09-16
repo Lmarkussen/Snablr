@@ -58,6 +58,18 @@ func reconstructOfficeMember(outerExtension, memberPath string, raw []byte, ctx 
 		if text := reconstructWorksheet(raw, ctx); text != "" {
 			return []byte(text)
 		}
+	case isSpreadsheetExtension(outerExtension) && strings.HasPrefix(memberPath, "xl/comments"):
+		if text := reconstructSpreadsheetComments(raw); text != "" {
+			return []byte(text)
+		}
+	case isSpreadsheetExtension(outerExtension) && strings.HasPrefix(memberPath, "xl/threadedcomments/"):
+		if text := reconstructSpreadsheetComments(raw); text != "" {
+			return []byte(text)
+		}
+	case isSpreadsheetExtension(outerExtension) && strings.HasPrefix(memberPath, "xl/drawings/"):
+		if text := reconstructParagraphBlocks(raw, "excel drawing"); text != "" {
+			return []byte(text)
+		}
 	case outerExtension == ".pptx" && strings.HasPrefix(memberPath, "ppt/slides/"):
 		if text := reconstructSlide(raw); text != "" {
 			return []byte(text)
@@ -243,6 +255,166 @@ func splitParagraphLines(paragraph string) []string {
 	paragraph = strings.ReplaceAll(paragraph, "\r\n", "\n")
 	paragraph = strings.ReplaceAll(paragraph, "\r", "\n")
 	return strings.Split(paragraph, "\n")
+}
+
+// reconstructParagraphBlocks reconstructs paragraph text from a non-body part,
+// such as a spreadsheet DrawingML text box. WordprocessingML (w:p/w:t) and
+// DrawingML (a:p/a:t) share the same local element names, so one walker covers
+// both. Text is emitted as bounded logical blocks so labels and values inside
+// one text box correlate without merging unrelated shapes.
+func reconstructParagraphBlocks(raw []byte, scope string) string {
+	return renderParagraphBlocks(parseParagraphTexts(raw), scope)
+}
+
+// parseParagraphTexts collects the text of every paragraph element. Runs inside
+// a paragraph are concatenated without a separator so words split across runs
+// survive; "br" elements become line breaks.
+func parseParagraphTexts(raw []byte) []string {
+	decoder := xml.NewDecoder(bytes.NewReader(raw))
+	decoder.CharsetReader = passThroughCharset
+	var (
+		paragraphs []string
+		current    strings.Builder
+		inBlock    bool
+	)
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			break
+		}
+		switch element := token.(type) {
+		case xml.StartElement:
+			switch element.Name.Local {
+			case "p":
+				inBlock = true
+				current.Reset()
+			case "br":
+				if inBlock {
+					current.WriteString("\n")
+				}
+			}
+		case xml.CharData:
+			if inBlock {
+				current.WriteString(string(element))
+			}
+		case xml.EndElement:
+			if element.Name.Local == "p" && inBlock {
+				paragraphs = append(paragraphs, current.String())
+				current.Reset()
+				inBlock = false
+			}
+		}
+	}
+	return paragraphs
+}
+
+// renderParagraphBlocks renders paragraph text as bounded [scope block N]
+// sections with adjacency pairing applied.
+func renderParagraphBlocks(paragraphs []string, scope string) string {
+	var builder strings.Builder
+	var block []string
+	index := 0
+	flush := func() {
+		lines := pairAdjacentLabels(block)
+		block = nil
+		if len(lines) == 0 {
+			return
+		}
+		index++
+		builder.WriteString(fmt.Sprintf("[%s block %d]\n", scope, index))
+		for _, line := range lines {
+			builder.WriteString(line)
+			builder.WriteString("\n")
+		}
+	}
+	for _, paragraph := range paragraphs {
+		if strings.TrimSpace(paragraph) == "" {
+			flush()
+			continue
+		}
+		for _, line := range splitParagraphLines(paragraph) {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			block = append(block, line)
+			if len(block) >= maxBodyBlockLines {
+				flush()
+			}
+		}
+	}
+	flush()
+	return truncateText(builder.String())
+}
+
+// reconstructSpreadsheetComments reconstructs Excel cell comments (legacy
+// comments1.xml and threaded comments). Each comment becomes its own record so a
+// label/value pair written in a note correlates with that note only.
+func reconstructSpreadsheetComments(raw []byte) string {
+	decoder := xml.NewDecoder(bytes.NewReader(raw))
+	decoder.CharsetReader = passThroughCharset
+	var (
+		comments []string
+		current  strings.Builder
+		inNote   bool
+	)
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			break
+		}
+		switch element := token.(type) {
+		case xml.StartElement:
+			switch element.Name.Local {
+			case "comment", "threadedComment":
+				inNote = true
+				current.Reset()
+			case "br":
+				if inNote {
+					current.WriteString("\n")
+				}
+			}
+		case xml.CharData:
+			if inNote {
+				current.WriteString(string(element))
+			}
+		case xml.EndElement:
+			if (element.Name.Local == "comment" || element.Name.Local == "threadedComment") && inNote {
+				comments = append(comments, current.String())
+				current.Reset()
+				inNote = false
+			}
+		}
+	}
+	if len(comments) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	index := 0
+	for _, comment := range comments {
+		var lines []string
+		for _, line := range splitParagraphLines(comment) {
+			if strings.TrimSpace(line) != "" {
+				lines = append(lines, line)
+			}
+		}
+		lines = pairAdjacentLabels(lines)
+		if len(lines) == 0 {
+			continue
+		}
+		index++
+		builder.WriteString(fmt.Sprintf("[excel comment %d]\n", index))
+		for _, line := range lines {
+			builder.WriteString(line)
+			builder.WriteString("\n")
+		}
+	}
+	return truncateText(builder.String())
 }
 
 // pairAdjacentLabels joins a bare label line with the value line that

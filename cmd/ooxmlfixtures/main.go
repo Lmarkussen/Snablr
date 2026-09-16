@@ -16,6 +16,9 @@ func main() {
 	}
 	for name, content := range fixtures() {
 		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			panic(err)
+		}
 		if err := os.WriteFile(path, content, 0o644); err != nil {
 			panic(err)
 		}

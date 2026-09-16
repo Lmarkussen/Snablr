@@ -27,6 +27,36 @@ func TestAssessSensitiveValueQualityKeepsStrongValues(t *testing.T) {
 	if quality.Weak || quality.Score < 12 {
 		t.Fatalf("expected strong-looking value to retain useful quality, got %#v", quality)
 	}
+	if quality.LengthOnly {
+		t.Fatalf("strong value was marked as length-only weak, got %#v", quality)
+	}
+}
+
+// TestAssessSensitiveValueQualityDistinguishesLengthOnlyWeakness keeps the
+// reporting exception narrow: only shortness may be excused for an explicit
+// password assignment, never placeholders or low-entropy values.
+func TestAssessSensitiveValueQualityDistinguishesLengthOnlyWeakness(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		value      string
+		lengthOnly bool
+	}{
+		{"8392", true},
+		{"1111", true},
+		{"changeme", false},
+		{"example", false},
+		{"aaaaaaaa", false},
+	}
+	for _, test := range cases {
+		quality := assessSensitiveValueQuality(test.value)
+		if !quality.Weak {
+			t.Fatalf("expected %q to be weak, got %#v", test.value, quality)
+		}
+		if quality.LengthOnly != test.lengthOnly {
+			t.Errorf("%q length-only = %t, want %t (%#v)", test.value, quality.LengthOnly, test.lengthOnly, quality)
+		}
+	}
 }
 
 func TestAssessConnectionStringQualityRejectsWeakCredentialValues(t *testing.T) {

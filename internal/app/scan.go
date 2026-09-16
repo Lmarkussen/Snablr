@@ -897,6 +897,15 @@ type scanSemantics struct {
 // "completed" file was only inspected with weaker parsing. The rules hash covers
 // rule edits; this version covers engine/parser edits.
 //
+// v4 (natural-language credential detection):
+//   - short explicit password values ("Passordet er; 8392") are no longer
+//     refused by the generic six-rune inference floor
+//   - a bounded explicit expression may follow ordinary prefix text on the same
+//     logical line
+//   - a bounded subject phrase between label and copula
+//     ("Passordet for nettverket er; <value>") is recognised
+//   - the Norwegian definite identity labels (brukernavnet, brukeren) classify
+//
 // v3 (natural-language credential expressions):
 //   - shared grammar for "Passordet er; <value>" / "Password is <value>" and the
 //     matching identity/domain phrases, applied to every text-bearing source
@@ -905,7 +914,7 @@ type scanSemantics struct {
 //   - reconstructed DOCX/XLSX/PPTX logical text (paragraphs, tables, rows)
 //   - rendered OOXML parts (footnotes, comments, diagrams, drawings, Excel comments)
 //   - DOCX header-row credential tables in the shared table renderer
-const scannerSemanticsVersion = "snablr-content-scan-v3"
+const scannerSemanticsVersion = "snablr-content-scan-v4"
 
 func scanSemanticsFingerprint(cfg config.Config, manager *rules.Manager) string {
 	return scanSemanticsFingerprintWithVersion(cfg, manager, scannerSemanticsVersion)

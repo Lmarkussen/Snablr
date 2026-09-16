@@ -170,3 +170,180 @@ func TestNaturalLanguageTwoLineBoundaries(t *testing.T) {
 		t.Fatalf("bounded two-line form was not recognised: %#v", candidates)
 	}
 }
+
+// TestNaturalLanguageShortExplicitValues proves an explicitly labelled password
+// is surfaced even when the value is below the generic inference floor. Poor,
+// short, all-digit and PIN-like credentials are still credentials.
+func TestNaturalLanguageShortExplicitValues(t *testing.T) {
+	positives := []struct {
+		name    string
+		content string
+		value   string
+	}{
+		{"short numeric", "Passordet er; 8392\n", "8392"},
+		{"short mixed", "Passordet er: A7x!\n", "A7x!"},
+		{"english short numeric", "Password is; 7319\n", "7319"},
+		{"short without separator", "Passordet er 8392\n", "8392"},
+		{"short two-line", "Passordet er;\n7319\n", "7319"},
+	}
+	for _, test := range positives {
+		candidates := Harvest(HarvestInput{Content: []byte(test.content), Path: "a.txt"})
+		candidate := candidateForValue(candidates, test.value)
+		if candidate == nil {
+			t.Errorf("%s: short explicit value %q was not surfaced: %#v", test.name, test.value, candidates)
+			continue
+		}
+		if candidate.CredentialType != "password" {
+			t.Errorf("%s: credential type = %q, want password", test.name, candidate.CredentialType)
+		}
+		// A standalone short value must not be promoted by the relaxation.
+		if candidate.Verification != Review {
+			t.Errorf("%s: standalone verification = %q, want review", test.name, candidate.Verification)
+		}
+	}
+
+	// Bounded structural context still decides Confirmed, unchanged by the floor.
+	confirmed := Harvest(HarvestInput{
+		Content: []byte("[Default]\nBrukernavn er; user1\nPassordet er; 8392\n"),
+		Path:    "a.ini",
+	})
+	block := candidateForValue(confirmed, "8392")
+	if block == nil {
+		t.Fatalf("short value in a bounded block was not surfaced: %#v", confirmed)
+	}
+	if block.Verification == Review {
+		t.Errorf("short value in a bounded block stayed at review: %#v", block)
+	}
+	if block.Identity != "user1" {
+		t.Errorf("identity correlation regressed: %#v", block)
+	}
+}
+
+// TestNaturalLanguagePrefixExpressions proves a bounded expression may follow
+// ordinary prefix text on the same line, and that the prefix never leaks into
+// the value.
+func TestNaturalLanguagePrefixExpressions(t *testing.T) {
+	positives := []struct {
+		name    string
+		content string
+		value   string
+	}{
+		{"norwegian prefix", "Lokal innlogging. Passordet er; Synthetic-One-123!\n", "Synthetic-One-123!"},
+		{"english prefix", "Login information. Password is; Synthetic-Two-123!\n", "Synthetic-Two-123!"},
+		{"norwegian prefix short", "Lokal innlogging. Passordet er; 8392\n", "8392"},
+	}
+	for _, test := range positives {
+		candidates := Harvest(HarvestInput{Content: []byte(test.content), Path: "a.txt"})
+		if candidateForValue(candidates, test.value) == nil {
+			t.Errorf("%s: prefixed expression value %q was not surfaced: %#v", test.name, test.value, candidates)
+			continue
+		}
+		for _, candidate := range candidates {
+			if strings.ContainsAny(candidate.Value, " ") {
+				t.Errorf("%s: prefix text leaked into the value: %#v", test.name, candidate)
+			}
+		}
+	}
+}
+
+// TestNaturalLanguageSubjectExpressions proves a bounded subject phrase between
+// the label and the copula is recognised without creating subject-specific
+// credential types.
+func TestNaturalLanguageSubjectExpressions(t *testing.T) {
+	positives := []struct {
+		name    string
+		content string
+		value   string
+	}{
+		{"norwegian subject", "Passordet for nettverket er; Synthetic-Net-123!\n", "Synthetic-Net-123!"},
+		{"norwegian acronym subject", "Passordet for VPN er; Synthetic-VPN-123!\n", "Synthetic-VPN-123!"},
+		{"english subject", "Password for VPN is; Synthetic-English-123!\n", "Synthetic-English-123!"},
+		{"norwegian subject short", "Passordet for VPN er; 8392\n", "8392"},
+	}
+	for _, test := range positives {
+		candidates := Harvest(HarvestInput{Content: []byte(test.content), Path: "a.txt"})
+		candidate := candidateForValue(candidates, test.value)
+		if candidate == nil {
+			t.Errorf("%s: subject expression value %q was not surfaced: %#v", test.name, test.value, candidates)
+			continue
+		}
+		if candidate.CredentialType != "password" {
+			t.Errorf("%s: credential type = %q, want password (no subject-specific types)", test.name, candidate.CredentialType)
+		}
+	}
+}
+
+// TestNaturalLanguageIdentityDefiniteForms proves the Norwegian definite forms of
+// the identity labels map onto the shared identity role.
+func TestNaturalLanguageIdentityDefiniteForms(t *testing.T) {
+	wanted := map[string]FieldRole{
+		"brukernavn": FieldRoleIdentity, "brukernavnet": FieldRoleIdentity,
+		"bruker": FieldRoleIdentity, "brukeren": FieldRoleIdentity,
+		"konto": FieldRoleIdentity, "username": FieldRoleIdentity,
+		"user": FieldRoleIdentity, "account": FieldRoleIdentity,
+	}
+	for label, role := range wanted {
+		if got := ClassifyFieldName(label); got != role {
+			t.Errorf("identity label %q = %v, want %v", label, got, role)
+		}
+	}
+	if got := ClassifyFieldName("passordet"); got != FieldRolePassword {
+		t.Errorf("password label passordet = %v, want password", got)
+	}
+	if got := ClassifyFieldName("domene"); got != FieldRoleDomain {
+		t.Errorf("domain label domene = %v, want domain", got)
+	}
+
+	// The definite forms must correlate exactly like the base forms.
+	for _, test := range []struct{ label, identity string }{
+		{"Brukernavnet", "user2"},
+		{"Brukeren", "user3"},
+	} {
+		block := Harvest(HarvestInput{
+			Content: []byte("[Default]\n" + test.label + " er; " + test.identity + "\nPassordet er; A7x!\n"),
+			Path:    "a.ini",
+		})
+		candidate := candidateForValue(block, "A7x!")
+		if candidate == nil {
+			t.Errorf("%s: credential not surfaced: %#v", test.label, block)
+			continue
+		}
+		if candidate.Identity != test.identity {
+			t.Errorf("%s: identity = %q, want %q", test.label, candidate.Identity, test.identity)
+		}
+	}
+}
+
+// TestNaturalLanguageFollowUpNegativesOracle proves the widened grammar still
+// refuses prose, policy sentences and subject-shaped prose in both languages.
+func TestNaturalLanguageFollowUpNegativesOracle(t *testing.T) {
+	negatives := []string{
+		"Passordet er viktig.\n",
+		"Passordet er påkrevd.\n",
+		"Passordet er kort.\n",
+		"Passordet er deaktivert.\n",
+		"Passordet er fire tegn langt.\n",
+		"Passordet er definert av policy.\n",
+		"Password is required.\n",
+		"Password is disabled.\n",
+		"Password is short.\n",
+		"Password is defined by policy.\n",
+		"Password is case-sensitive.\n",
+		"Vi snakker om passord i denne teksten.\n",
+		"Dette dokumentet sier at passord er viktig.\n",
+		"Passordet for brukere må endres hver måned.\n",
+		"Passordet for systemet er definert av policy.\n",
+		"Password for users must be changed monthly.\n",
+	}
+	falsePositives := 0
+	for _, content := range negatives {
+		candidates := Harvest(HarvestInput{Content: []byte(content), Path: "a.txt"})
+		if len(candidates) != 0 {
+			falsePositives += len(candidates)
+			t.Errorf("negative produced credential candidates: %q -> %#v", strings.TrimSpace(content), candidates)
+		}
+	}
+	if falsePositives != 0 {
+		t.Fatalf("negative false credential candidates: %d", falsePositives)
+	}
+}

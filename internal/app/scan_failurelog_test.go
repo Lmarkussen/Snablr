@@ -399,8 +399,9 @@ func TestPreviousFailureDisappearsOnHealthyScan(t *testing.T) {
 	}
 }
 
-// TestSemanticsVersionReprocessesOldState covers Task 10: v1 state is
-// invalidated once, and v2 state is skipped normally afterwards.
+// TestSemanticsVersionReprocessesOldState covers Task 10: state completed under
+// the previous semantics version is invalidated once, and current state is
+// skipped normally afterwards.
 func TestSemanticsVersionReprocessesOldState(t *testing.T) {
 	cfg := config.Default()
 	manager := loadFailureRules(t)
@@ -408,12 +409,12 @@ func TestSemanticsVersionReprocessesOldState(t *testing.T) {
 	if !strings.Contains(fingerprint, "") {
 		t.Fatal("unreachable")
 	}
-	if scannerSemanticsVersion != "snablr-content-scan-v3" {
-		t.Fatalf("scanner semantics version = %q, want v3", scannerSemanticsVersion)
+	if scannerSemanticsVersion != "snablr-content-scan-v4" {
+		t.Fatalf("scanner semantics version = %q, want v4", scannerSemanticsVersion)
 	}
-	legacyFingerprint := scanSemanticsFingerprintWithVersion(cfg, manager, "snablr-content-scan-v2")
+	legacyFingerprint := scanSemanticsFingerprintWithVersion(cfg, manager, "snablr-content-scan-v3")
 	if legacyFingerprint == fingerprint {
-		t.Fatal("v1 and v2 semantics fingerprints must differ")
+		t.Fatal("v3 and v4 semantics fingerprints must differ")
 	}
 
 	inventory, err := state.OpenInventory(filepath.Join(t.TempDir(), "inventory.json"))
@@ -433,16 +434,16 @@ func TestSemanticsVersionReprocessesOldState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if second.Skip {
-		t.Fatalf("v2 state was reused under v3 semantics: %s", second.Reason)
+		t.Fatalf("v3 state was reused under v4 semantics: %s", second.Reason)
 	}
 	inventory.MarkCompleted(second.Key)
-	// RUN 3: v2 state is skipped normally.
+	// RUN 3: current state is skipped normally.
 	third, err := inventory.Prepare(observation, "ctx", fingerprint, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !third.Skip {
-		t.Fatalf("v3 state was not reused: %s", third.Reason)
+		t.Fatalf("v4 state was not reused: %s", third.Reason)
 	}
 	raw, err := os.ReadFile(inventory.Path())
 	if err != nil {

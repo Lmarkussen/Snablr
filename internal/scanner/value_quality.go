@@ -12,6 +12,10 @@ type valueQuality struct {
 	Reason string
 	Weak   bool
 	Strong bool
+	// LengthOnly records that the only weakness found was the value being
+	// shorter than a plausible credential. Some callers treat that as a reporting
+	// decision rather than as evidence that the value is unusable.
+	LengthOnly bool
 }
 
 var weakValueBases = []string{
@@ -180,10 +184,11 @@ func assessSensitiveValueQuality(value string) valueQuality {
 	length := len(trimmed)
 	if length < 8 {
 		return valueQuality{
-			Score:  2,
-			Label:  "low",
-			Reason: "value is shorter than a plausible credential or secret",
-			Weak:   true,
+			Score:      2,
+			Label:      "low",
+			Reason:     "value is shorter than a plausible credential or secret",
+			Weak:       true,
+			LengthOnly: true,
 		}
 	}
 

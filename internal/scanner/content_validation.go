@@ -45,6 +45,19 @@ func weakContentSuppression(ruleID string, category string, matchedText string, 
 			return true, "connection string values look placeholder-like or weak"
 		}
 		return false, ""
+	case "content.password_assignment_indicators":
+		// An explicit "<password> = <value>" assignment states a credential
+		// outright. Shortness alone is therefore not enough to withhold the
+		// finding: weak, predictable and PIN-like credentials are exactly what has
+		// to be discovered, and the value has already passed the bounded grammar.
+		// Placeholder-like and low-entropy values are still suppressed, and the
+		// finding itself keeps its low confidence from the same value-quality
+		// assessment.
+		quality := assessExtractedValuesQuality(extractedSensitiveValues(blob))
+		if quality.Weak && !quality.LengthOnly {
+			return true, "sensitive values look placeholder-like or low quality"
+		}
+		return false, ""
 	}
 
 	switch strings.ToLower(strings.TrimSpace(category)) {

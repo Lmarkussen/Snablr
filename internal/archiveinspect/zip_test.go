@@ -282,8 +282,11 @@ func TestInspectZIPExtractsOfficeXMLText(t *testing.T) {
 		t.Fatalf("expected one office member, got %#v", result.Members)
 	}
 	got := string(result.Members[0].Content)
-	if got != "service_account=svc_backup\npassword=FAKE_DB_PASSWORD_001\n" {
-		t.Fatalf("expected extracted Office text, got %q", got)
+	// Reconstructed text keeps logical boundaries: each bounded paragraph block
+	// becomes its own section so fields correlate only inside one record.
+	want := "[word body block 1]\nservice_account=svc_backup\npassword=FAKE_DB_PASSWORD_001\n"
+	if got != want {
+		t.Fatalf("expected reconstructed Office text %q, got %q", want, got)
 	}
 }
 

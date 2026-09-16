@@ -141,7 +141,13 @@ func Inspect(ctx context.Context, content []byte, opts Options, origin artifact.
 		for _, rawPath := range paths {
 			displayPath := cleanWIMDisplayPath(rawPath)
 			memberPath := normalizeWIMPath(rawPath)
-			if memberPath == "" || !isTargetedPath(memberPath) {
+			if memberPath == "" {
+				continue
+			}
+			memberExtension := strings.ToLower(filepath.Ext(memberPath))
+			// Targeted selection only: existing artifact paths plus interesting
+			// Office documents chosen by the caller's discovery rules.
+			if !isTargetedPath(memberPath) && !isInterestingOfficeMember(memberPath, memberExtension, opts) {
 				continue
 			}
 			identity := strconv.Itoa(imageIndex) + "\x00" + memberPath
@@ -154,9 +160,10 @@ func Inspect(ctx context.Context, content []byte, opts Options, origin artifact.
 			}
 
 			member := Member{
-				Path:      strings.TrimPrefix(displayPath, "/"),
-				Name:      path.Base(displayPath),
-				Extension: strings.ToLower(filepath.Ext(displayPath)),
+				Path:       strings.TrimPrefix(displayPath, "/"),
+				Name:       path.Base(displayPath),
+				Extension:  strings.ToLower(filepath.Ext(displayPath)),
+				ImageIndex: imageIndex,
 			}
 
 			if binaryKind, ok := binaryKindForPath(memberPath); ok {
@@ -195,10 +202,10 @@ func Inspect(ctx context.Context, content []byte, opts Options, origin artifact.
 					continue
 				}
 				binaryBytes += statSize
-				result.BinaryMembers = append(result.BinaryMembers, BinaryMember{Path: strings.TrimPrefix(displayPath, "/"), Name: path.Base(displayPath), Extension: strings.ToLower(filepath.Ext(displayPath)), Size: statSize, Artifact: binary})
+				result.BinaryMembers = append(result.BinaryMembers, BinaryMember{Path: strings.TrimPrefix(displayPath, "/"), Name: path.Base(displayPath), Extension: strings.ToLower(filepath.Ext(displayPath)), Size: statSize, Artifact: binary, ImageIndex: imageIndex})
 				continue
 			}
-			if shouldExtractContent(memberPath) {
+			if shouldExtractContent(memberPath) || isInterestingOfficeMember(memberPath, member.Extension, opts) {
 				var data []byte
 				buf := &boundedBytesBuffer{max: opts.MaxMemberBytes}
 				err := runner.ExtractFile(ctx, tmpPath, imageIndex, displayPath, buf)
@@ -356,6 +363,23 @@ func shouldExtractContent(memberPath string) bool {
 		return true
 	}
 	return strings.HasPrefix(memberPath, "/windows/panther/") && strings.HasSuffix(memberPath, ".xml")
+}
+
+// isInterestingOfficeMember reports whether a supported Office document in the
+// image should be content-inspected. Extraction stays targeted: the caller's
+// discovery rules decide which names are interesting, and the configured member
+// count/byte limits still apply. The document itself is then parsed by the
+// shared OOXML pipeline rather than being treated as opaque bytes.
+func isInterestingOfficeMember(memberPath, extension string, opts Options) bool {
+	if opts.OfficeInterest == nil {
+		return false
+	}
+	switch extension {
+	case ".docx", ".xlsx", ".xlsm", ".pptx":
+	default:
+		return false
+	}
+	return opts.OfficeInterest(memberPath)
 }
 
 func isWindowsDeploymentPath(memberPath string) bool {

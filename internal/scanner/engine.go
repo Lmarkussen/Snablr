@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -400,6 +402,11 @@ func (e *Engine) submitBinaryArtifact(ctx context.Context, binary artifact.Binar
 
 func (e *Engine) evaluateArchive(meta FileMetadata, content []byte) Evaluation {
 	evaluation := Evaluation{NeedContent: true}
+	// The container's own filename, path, and extension are discovery signals
+	// and must not depend on the archive body being readable. Office documents
+	// and archives previously had only their members evaluated, so a name such
+	// as "passordliste.docx" could never match a filename rule.
+	evaluation.Findings = append(evaluation.Findings, e.evaluateStandard(meta, nil, false).Findings...)
 	if len(content) == 0 {
 		evaluation.Skipped = true
 		evaluation.SkipReason = "archive content unavailable"
@@ -413,7 +420,7 @@ func (e *Engine) evaluateArchive(meta FileMetadata, content []byte) Evaluation {
 		err    error
 	)
 	switch archiveExt {
-	case ".zip", ".docx", ".xlsx", ".pptx":
+	case ".zip", ".docx", ".xlsx", ".xlsm", ".pptx":
 		result, err = archiveinspect.InspectZIP(content, archiveExt, e.opts.Archives, e.archiveExtHints)
 	case ".tar", ".tar.gz", ".tgz":
 		result, err = archiveinspect.InspectTAR(content, archiveExt, e.opts.Archives, e.archiveExtHints)
@@ -433,7 +440,7 @@ func (e *Engine) evaluateArchive(meta FileMetadata, content []byte) Evaluation {
 		return evaluation
 	}
 
-	findings := make([]Finding, 0)
+	findings := evaluation.Findings
 	for _, member := range result.Members {
 		memberMeta := meta
 		memberMeta.ArchivePath = meta.FilePath
@@ -461,7 +468,12 @@ func (e *Engine) evaluateWIM(ctx context.Context, meta FileMetadata, content []b
 	}
 	evaluation.ContentRead = true
 
-	result, err := wiminspect.Inspect(ctx, content, e.wimInspector, artifact.Origin{
+	wimOptions := e.wimInspector
+	// Targeted Office content inspection reuses the configured filename
+	// discovery rules, so vocabulary lives in one place and the configured
+	// member/byte limits still bound extraction.
+	wimOptions.OfficeInterest = e.officeMemberInterest()
+	result, err := wiminspect.Inspect(ctx, content, wimOptions, artifact.Origin{
 		Host: meta.Host, Share: meta.Share, ContainerPath: meta.FilePath,
 	})
 	if err != nil {
@@ -509,7 +521,7 @@ func (e *Engine) evaluateWIM(ctx context.Context, meta FileMetadata, content []b
 		memberMeta.ArchivePath = meta.FilePath
 		memberMeta.ArchiveMemberPath = member.Path
 		memberMeta.ArchiveLocalInspect = result.InspectedLocally
-		memberMeta.FilePath = archiveDisplayPath(meta.FilePath, member.Path)
+		memberMeta.FilePath = wimDisplayPath(meta.FilePath, member.ImageIndex, member.Path)
 		memberMeta.Name = member.Name
 		memberMeta.Extension = member.Extension
 		memberMeta.Size = member.Size
@@ -521,11 +533,19 @@ func (e *Engine) evaluateWIM(ctx context.Context, meta FileMetadata, content []b
 		memberMeta.ArchivePath = meta.FilePath
 		memberMeta.ArchiveMemberPath = member.Path
 		memberMeta.ArchiveLocalInspect = result.InspectedLocally
-		memberMeta.FilePath = archiveDisplayPath(meta.FilePath, member.Path)
+		memberMeta.FilePath = wimDisplayPath(meta.FilePath, member.ImageIndex, member.Path)
 		memberMeta.Name = member.Name
 		memberMeta.Extension = member.Extension
 		memberMeta.Size = member.Size
 
+		if isOfficeDocumentExtension(member.Extension) && member.ContentRead && len(member.Content) > 0 {
+			// An interesting Office document inside the image is parsed by the
+			// shared OOXML pipeline so its reconstructed text reaches the same
+			// credentialanalysis path as a loose document.
+			memberEvaluation := e.evaluateArchive(memberMeta, member.Content)
+			findings = append(findings, memberEvaluation.Findings...)
+			continue
+		}
 		memberEvaluation := e.evaluateStandard(memberMeta, member.Content, member.ContentRead)
 		findings = append(findings, memberEvaluation.Findings...)
 	}
@@ -537,7 +557,7 @@ func (e *Engine) evaluateWIM(ctx context.Context, meta FileMetadata, content []b
 func (e *Engine) archiveDecision(meta FileMetadata) (bool, string, bool) {
 	normalized := archiveinspect.ResolveArchiveExtension(meta.Name, meta.FilePath, meta.Extension)
 	switch normalized {
-	case ".zip", ".docx", ".xlsx", ".pptx", ".tar", ".tar.gz", ".tgz":
+	case ".zip", ".docx", ".xlsx", ".xlsm", ".pptx", ".tar", ".tar.gz", ".tgz":
 	default:
 		return false, "", false
 	}
@@ -590,7 +610,7 @@ func (e *Engine) shouldSkipByPath(meta FileMetadata) bool {
 	ext := meta.Extension
 	if resolved := archiveinspect.ResolveArchiveExtension(meta.Name, meta.FilePath, meta.Extension); resolved != "" {
 		switch resolved {
-		case ".zip", ".docx", ".xlsx", ".pptx", ".tar", ".tar.gz", ".tgz":
+		case ".zip", ".docx", ".xlsx", ".xlsm", ".pptx", ".tar", ".tar.gz", ".tgz":
 			ext = resolved
 		}
 	}
@@ -870,6 +890,50 @@ func buildArchiveExtensionHints(contentHints map[string]struct{}) map[string]str
 
 func archiveDisplayPath(outerPath, memberPath string) string {
 	return rules.NormalizePath(strings.TrimSpace(outerPath) + "!" + strings.TrimSpace(memberPath))
+}
+
+// wimDisplayPath records the image index in the logical member path so
+// provenance survives multi-index images, for example
+// "backup.wim[index=2]!Users/Admin/Desktop/passordliste.docx".
+func wimDisplayPath(outerPath string, imageIndex int, memberPath string) string {
+	outer := rules.NormalizePath(strings.TrimSpace(outerPath))
+	if imageIndex > 0 {
+		outer += "[index=" + strconv.Itoa(imageIndex) + "]"
+	}
+	return outer + "!" + rules.NormalizePath(strings.TrimSpace(memberPath))
+}
+
+func isOfficeDocumentExtension(extension string) bool {
+	switch strings.ToLower(strings.TrimSpace(extension)) {
+	case ".docx", ".xlsx", ".xlsm", ".pptx":
+		return true
+	default:
+		return false
+	}
+}
+
+// officeMemberInterest reuses the configured filename discovery rules to decide
+// whether an Office document found inside a container (WIM image member) is
+// interesting enough for targeted content inspection. Returning nil disables
+// Office content extraction.
+func (e *Engine) officeMemberInterest() func(string) bool {
+	if e == nil || len(e.filenameRules) == 0 {
+		return nil
+	}
+	rules := e.filenameRules
+	scanner := e.filenameScanner
+	return func(memberPath string) bool {
+		memberPath = strings.TrimSpace(memberPath)
+		if memberPath == "" {
+			return false
+		}
+		meta := FileMetadata{
+			FilePath:  memberPath,
+			Name:      path.Base(strings.ReplaceAll(memberPath, `\`, "/")),
+			Extension: strings.ToLower(filepath.Ext(memberPath)),
+		}
+		return len(scanner.Scan(rules, meta)) > 0
+	}
 }
 
 func normalizeExtension(ext string) string {

@@ -1464,19 +1464,22 @@ func TestGeneratedWIMSeedProducesFindings(t *testing.T) {
 
 	foundExpectedPath := false
 	foundContentDriven := false
+	// WIM findings record the image index in the logical member path, for
+	// example ".../deploy-image.wim[index=1]!Windows/Panther/unattend.xml".
+	expectedWIMPath := strings.Replace(wimSeed.ExpectedPath, "deploy-image.wim!", "deploy-image.wim[index=1]!", 1)
 	for _, finding := range evaluation.Findings {
-		if strings.EqualFold(finding.FilePath, wimSeed.ExpectedPath) &&
+		if strings.EqualFold(finding.FilePath, expectedWIMPath) &&
 			strings.EqualFold(finding.ArchivePath, FullPath(*wimSeed)) &&
 			strings.EqualFold(strings.ReplaceAll(finding.ArchiveMemberPath, `\`, "/"), "Windows/Panther/unattend.xml") {
 			foundExpectedPath = true
 		}
-		if strings.EqualFold(finding.FilePath, wimSeed.ExpectedPath) &&
+		if strings.EqualFold(finding.FilePath, expectedWIMPath) &&
 			(finding.RuleID == "content.unattended_deployment_password_fields" || finding.RuleID == "content.password_assignment_indicators") {
 			foundContentDriven = true
 		}
 	}
 	if !foundExpectedPath {
-		t.Fatalf("expected WIM finding path %q, got %#v", wimSeed.ExpectedPath, evaluation.Findings)
+		t.Fatalf("expected WIM finding path %q, got %#v", expectedWIMPath, evaluation.Findings)
 	}
 	if !foundContentDriven {
 		t.Fatalf("expected generated WIM seed to produce content-driven findings, got %#v", evaluation.Findings)

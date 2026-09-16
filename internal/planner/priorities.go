@@ -103,7 +103,8 @@ func scoreFile(input FileInput) (int, []string) {
 	}
 
 	switch {
-	case containsAny(path, "secret", "password", "passwd", "token", "key", "cred", "vpn"):
+	case containsAny(path, "secret", "password", "passwd", "token", "key", "cred", "vpn",
+		"passord", "brukerpassord", "innlogging", "palogging", "pålogging"):
 		score += 55
 		reasons = append(reasons, "path suggests credential or secret material")
 	case containsAny(path, "config", "settings", "unattend", "sysprep", "groups.xml", "registry.xml", "scripts.ini"):

@@ -67,6 +67,20 @@ type operationFailureReporter interface {
 	SetOperationFailureHandler(func(smb.OperationFailure))
 }
 
+// contextWalker is implemented by clients whose share walk honours the caller's
+// context, so a target that is waiting on a withheld share is released by
+// Ctrl-C, --max-scan-time or a cancelled target.
+type contextWalker interface {
+	WalkShareWithOptionsContext(context.Context, string, smb.WalkOptions, func(smb.RemoteFile) error) error
+}
+
+// contextReader is implemented by clients whose reads honour the caller's
+// context, so a worker parked in containment recovery is released by
+// cancellation instead of holding the pool open.
+type contextReader interface {
+	ReadFileContext(context.Context, string, string) ([]byte, error)
+}
+
 func bundleKind(remote smb.RemoteFile) (artifact.Kind, bool) {
 	kind, ok := artifact.KindForPath(remote.Path)
 	return kind, ok && (kind == artifact.KindSAM || kind == artifact.KindSYSTEM || kind == artifact.KindSECURITY || kind == artifact.KindNTDS)
@@ -443,6 +457,13 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 	client.SetMaxReadSize(scanReadLimit(cfg))
 	defer client.Close()
 
+	// Cancellation must reach the SMB containment waits: a client that exposes
+	// context-aware walk/read entry points is used with the scan's context so a
+	// target parked on a withheld share exits promptly on Ctrl-C or
+	// --max-scan-time instead of holding the scan open.
+	walker, hasContextWalk := client.(contextWalker)
+	reader, hasContextRead := client.(contextReader)
+
 	// Final failure reporting: the transport reports one record per ultimately
 	// failed operation, including attempt and reconnect detail.
 	_, reportsOwnFailures := client.(operationFailureReporter)
@@ -662,7 +683,11 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 						return nil, ctx.Err()
 					default:
 					}
-					return client.ReadFile(shareName, strings.ReplaceAll(remotePath, "/", `\`))
+					path := strings.ReplaceAll(remotePath, "/", `\`)
+					if hasContextRead {
+						return reader.ReadFileContext(ctx, shareName, path)
+					}
+					return client.ReadFile(shareName, path)
 				}, OnComplete: func(meta scanner.FileMetadata, evaluation scanner.Evaluation, err error) {
 					if dependency {
 						return
@@ -770,11 +795,12 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 			return nil
 		}
 
-		err := client.WalkShareWithOptions(shareName, smb.WalkOptions{
+		walkOptions := smb.WalkOptions{
 			IncludePaths: append([]string{}, cfg.Scan.Path...),
 			ExcludePaths: append([]string{}, cfg.Scan.ExcludePath...),
 			MaxDepth:     cfg.Scan.MaxDepth,
-		}, func(remote smb.RemoteFile) error {
+		}
+		walkFn := func(remote smb.RemoteFile) error {
 			if remote.IsDir {
 				return nil
 			}
@@ -795,13 +821,19 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 				return flushBatch()
 			}
 			return nil
-		})
-		if err != nil {
-			logger.Warnf("walk failed for %s/%s: %v", host, shareName, err)
+		}
+		var walkErr error
+		if hasContextWalk {
+			walkErr = walker.WalkShareWithOptionsContext(ctx, shareName, walkOptions, walkFn)
+		} else {
+			walkErr = client.WalkShareWithOptions(shareName, walkOptions, walkFn)
+		}
+		if walkErr != nil {
+			logger.Warnf("walk failed for %s/%s: %v", host, shareName, walkErr)
 			if checkpoints != nil {
 				checkpoints.AbortShare(host, shareName)
 			}
-			walkErrs = append(walkErrs, fmt.Errorf("%s/%s: %w", host, shareName, err))
+			walkErrs = append(walkErrs, fmt.Errorf("%s/%s: %w", host, shareName, walkErr))
 			continue
 		}
 		if err := flushBatch(); err != nil {

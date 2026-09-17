@@ -1,7 +1,6 @@
 package smb
 
 import (
-	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -107,311 +106,24 @@ type Client struct {
 
 	host       string
 	serverName string
-	dialAddr   string
-	auth       resolvedAuth
+	user       string
+	password   string
+	domain     string
 
 	dialTimeout time.Duration
-	// handshakeTimeout bounds SMB negotiate plus session setup.
-	handshakeTimeout time.Duration
-	// operationTimeout bounds one SMB request phase.
-	operationTimeout time.Duration
-	// readIdleTimeout bounds the time between read progress.
-	readIdleTimeout time.Duration
-	// readTotalTimeout is the absolute bound on reading one object.
-	readTotalTimeout time.Duration
-	// reconnectWaitLimit is the hard cap on waiting for a coordinated reconnect.
-	reconnectWaitLimit time.Duration
-	// recoveryBudget is the hard cap on one operation including retries.
-	recoveryBudget time.Duration
-	// targetRecoveryBudget bounds continuous transport failure on one target.
-	targetRecoveryBudget time.Duration
-	// shareRecoveryBudget is the cumulative time one share may be withheld.
-	shareRecoveryBudget time.Duration
-	// shareProbeCooldown is the pause before one probe is allowed through.
-	shareProbeCooldown time.Duration
-	maxDepth           int
-	maxReadSize        int64
+	maxDepth    int
+	maxReadSize int64
 
-	dialer transportDialer
-
-	session            transportSession
-	recovering         bool
-	recoverDone        chan struct{}
-	lastFailedRecovery time.Time
-	// authFailure records a terminal authentication failure. Until the operator
-	// credential context changes, no further dial is attempted.
-	authFailure error
-	// lastRecoveryErr records why the last coordinated reconnect failed, so
-	// waiters are released with the real cause instead of a stale success.
-	lastRecoveryErr error
-
-	onEvent   func(TransportEvent)
-	onFailure func(OperationFailure)
-	stats     TransportStats
-	// health holds the circuit-breaker evidence for this target.
-	health healthState
+	conn    net.Conn
+	session *smb2.Session
 }
-
-// resolvedAuth is the operator credential context resolved once at connect time
-// and reused verbatim for every reconnect. It is never rendered: String and
-// GoString redact it, and no log line includes it.
-type resolvedAuth struct {
-	mode     AuthMode
-	username string
-	domain   string
-	password string
-	ntHash   [16]byte
-	ccache   string
-	spn      string
-}
-
-func (a resolvedAuth) String() string   { return "smb<redacted>" }
-func (a resolvedAuth) GoString() string { return "smb<redacted>" }
-
-func (a resolvedAuth) initiator() (smb2.Initiator, error) {
-	switch a.mode {
-	case AuthModeKerberos:
-		ccache, err := smbkerberos.ResolveCCache(a.ccache)
-		if err != nil {
-			return nil, err
-		}
-		return smbkerberos.NewFromCCache(ccache, smbkerberos.ResolveConfig(), a.spn)
-	case AuthModeNTHash:
-		initiator := &smb2.NTLMInitiator{User: a.username, Domain: a.domain}
-		initiator.Hash = append([]byte(nil), a.ntHash[:]...)
-		return initiator, nil
-	case AuthModePassword:
-		return &smb2.NTLMInitiator{User: a.username, Domain: a.domain, Password: a.password}, nil
-	default:
-		return nil, fmt.Errorf("%w: unsupported SMB authentication mode %q", ErrInvalidAuth, a.mode)
-	}
-}
-
-// String redacts the client so accidental formatting cannot leak credentials.
-func (c *Client) String() string { return "smb.Client<redacted>" }
-
-// GoString redacts the client for %#v formatting.
-func (c *Client) GoString() string { return "smb.Client<redacted>" }
 
 func NewClient() *Client {
 	return &Client{
-		dialTimeout:          defaultDialTimeout,
-		handshakeTimeout:     defaultHandshakeTimeout,
-		operationTimeout:     defaultOperationTimeout,
-		readIdleTimeout:      defaultReadIdleTimeout,
-		readTotalTimeout:     defaultReadTotalTimeout,
-		reconnectWaitLimit:   defaultReconnectWaitLimit,
-		recoveryBudget:       defaultRecoveryBudget,
-		targetRecoveryBudget: defaultTargetRecoveryBudget,
-		shareRecoveryBudget:  defaultShareRecoveryBudget,
-		shareProbeCooldown:   defaultShareProbeCooldown,
-		maxDepth:             defaultMaxDepth,
-		maxReadSize:          defaultMaxReadSize,
-		dialer:               smb2Dialer{},
-		health:               healthState{lastSuccess: time.Now()},
+		dialTimeout: defaultDialTimeout,
+		maxDepth:    defaultMaxDepth,
+		maxReadSize: defaultMaxReadSize,
 	}
-}
-
-// SetOperationTimeout overrides the bound applied to one SMB request phase.
-// Non-positive values restore the default.
-func (c *Client) SetOperationTimeout(limit time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if limit <= 0 {
-		c.operationTimeout = defaultOperationTimeout
-		return
-	}
-	c.operationTimeout = limit
-}
-
-// SetReadIdleTimeout overrides the bound between read progress. Non-positive
-// values restore the default.
-func (c *Client) SetReadIdleTimeout(limit time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if limit <= 0 {
-		c.readIdleTimeout = defaultReadIdleTimeout
-		return
-	}
-	c.readIdleTimeout = limit
-}
-
-// SetReadTotalTimeout overrides the absolute bound on reading one object.
-// Non-positive values restore the default.
-func (c *Client) SetReadTotalTimeout(limit time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if limit <= 0 {
-		c.readTotalTimeout = defaultReadTotalTimeout
-		return
-	}
-	c.readTotalTimeout = limit
-}
-
-// readTotalLimit reports the absolute bound on reading one object.
-func (c *Client) readTotalLimit() time.Duration {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.readTotalTimeout <= 0 {
-		return defaultReadTotalTimeout
-	}
-	return c.readTotalTimeout
-}
-
-// SetHandshakeTimeout overrides the bound on SMB negotiate plus session setup.
-// Non-positive values restore the default.
-func (c *Client) SetHandshakeTimeout(limit time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if limit <= 0 {
-		c.handshakeTimeout = defaultHandshakeTimeout
-		return
-	}
-	c.handshakeTimeout = limit
-}
-
-// SetReconnectWaitLimit overrides the hard cap on waiting for a coordinated
-// reconnect. Non-positive values restore the default.
-func (c *Client) SetReconnectWaitLimit(limit time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if limit <= 0 {
-		c.reconnectWaitLimit = defaultReconnectWaitLimit
-		return
-	}
-	c.reconnectWaitLimit = limit
-}
-
-// SetRecoveryBudget overrides the hard cap on one operation including every
-// reconnect, backoff and retry. Non-positive values restore the default.
-func (c *Client) SetRecoveryBudget(limit time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if limit <= 0 {
-		c.recoveryBudget = defaultRecoveryBudget
-		return
-	}
-	c.recoveryBudget = limit
-}
-
-// SetTargetRecoveryBudget overrides the wall-clock bound on continuous
-// transport failure on one target with no successful operation. Non-positive
-// values restore the default.
-func (c *Client) SetTargetRecoveryBudget(limit time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if limit <= 0 {
-		c.targetRecoveryBudget = defaultTargetRecoveryBudget
-		return
-	}
-	c.targetRecoveryBudget = limit
-}
-
-// SetShareRecoveryBudget overrides the cumulative time one share may be
-// withheld before it is abandoned. Non-positive values restore the default.
-func (c *Client) SetShareRecoveryBudget(limit time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if limit <= 0 {
-		c.shareRecoveryBudget = defaultShareRecoveryBudget
-		return
-	}
-	c.shareRecoveryBudget = limit
-}
-
-// SetShareProbeCooldown overrides the pause before one probe is allowed through
-// a withheld share. Non-positive values restore the default.
-func (c *Client) SetShareProbeCooldown(limit time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if limit <= 0 {
-		c.shareProbeCooldown = defaultShareProbeCooldown
-		return
-	}
-	c.shareProbeCooldown = limit
-}
-
-// Timeouts returns the effective bounded-timing configuration.
-func (c *Client) Timeouts() (handshake, operation, readIdle, reconnectWait, recoveryBudget time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.handshakeTimeout, c.operationTimeout, c.readIdleTimeout, c.reconnectWaitLimit, c.recoveryBudget
-}
-
-// operationLimit reports the effective bound for one request phase.
-func (c *Client) operationLimit() time.Duration {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.operationTimeout <= 0 {
-		return defaultOperationTimeout
-	}
-	return c.operationTimeout
-}
-
-// handshakeLimit reports the effective bound for negotiate plus session setup.
-func (c *Client) handshakeLimit() time.Duration {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.handshakeTimeout <= 0 {
-		return defaultHandshakeTimeout
-	}
-	return c.handshakeTimeout
-}
-
-// readLimit reports the effective bound between read progress.
-func (c *Client) readLimit() time.Duration {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.readIdleTimeout <= 0 {
-		return defaultReadIdleTimeout
-	}
-	return c.readIdleTimeout
-}
-
-// waitLimit reports the effective bound on waiting for a coordinated reconnect.
-func (c *Client) waitLimit() time.Duration {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.reconnectWaitLimit <= 0 {
-		return defaultReconnectWaitLimit
-	}
-	return c.reconnectWaitLimit
-}
-
-// budgetLimit reports the effective cap on one operation including retries.
-func (c *Client) budgetLimit() time.Duration {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.recoveryBudget <= 0 {
-		return defaultRecoveryBudget
-	}
-	return c.recoveryBudget
-}
-
-// SetTransportEventHandler installs a structured transport lifecycle callback
-// (reconnect attempts, restores, exhausted retries). Events never contain
-// credential material.
-func (c *Client) SetTransportEventHandler(handler func(TransportEvent)) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.onEvent = handler
-}
-
-// SetOperationFailureHandler installs a callback that receives one structured
-// record per operation that ultimately failed (retry budget exhausted, or
-// immediately for non-retryable failures such as access denied). Operations
-// that recover after a reconnect are never reported.
-func (c *Client) SetOperationFailureHandler(handler func(OperationFailure)) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.onFailure = handler
-}
-
-// TransportStats returns the run-local transport recovery accounting.
-func (c *Client) TransportStats() TransportStats {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.stats
 }
 
 func (c *Client) SetMaxReadSize(limit int64) {
@@ -425,6 +137,13 @@ func (c *Client) Connect(host, user, pass string) error {
 }
 
 func (c *Client) ConnectWithAuth(host string, auth Auth) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.session != nil || c.conn != nil {
+		_ = c.closeLocked()
+	}
+
 	serverName, dialAddr, err := splitHost(host)
 	if err != nil {
 		return err
@@ -452,64 +171,87 @@ func (c *Client) ConnectWithAuth(host string, auth Auth) error {
 		return fmt.Errorf("%w: SMB Kerberos requires a service principal", ErrInvalidAuth)
 	}
 
-	resolved := resolvedAuth{
-		mode:     auth.Mode,
-		username: username,
-		domain:   domain,
-		password: auth.Password,
-		ntHash:   auth.NTHash,
-		ccache:   auth.CCache,
-		spn:      auth.SPN,
-	}
-
-	c.mu.Lock()
-	previous := c.session
-	c.session = nil
-	c.host = host
-	c.serverName = serverName
-	c.dialAddr = dialAddr
-	c.auth = resolved
-	c.lastFailedRecovery = time.Time{}
-	c.authFailure = nil
-	c.lastRecoveryErr = nil
-	// A connect establishes a fresh target context: clear any breaker evidence
-	// from an earlier connection so a new target is not pre-condemned.
-	c.health = healthState{lastSuccess: time.Now()}
-	c.mu.Unlock()
-
-	if previous != nil {
-		closeSessionAsync(previous)
-	}
-
-	session, err := c.dialBounded(context.Background(), dialAddr, resolved)
+	conn, err := net.DialTimeout("tcp", dialAddr, c.dialTimeout)
 	if err != nil {
-		if IsAuthFailure(err) {
-			c.recordAuthFailure(err)
-		}
-		// Keep the resolved context so a later operation can retry the connect.
 		return fmt.Errorf("dial %s: %w", dialAddr, err)
 	}
 
-	c.mu.Lock()
+	var initiator smb2.Initiator
+	if auth.Mode == AuthModeKerberos {
+		ccache, err := smbkerberos.ResolveCCache(auth.CCache)
+		if err != nil {
+			_ = conn.Close()
+			return err
+		}
+		mechanism, err := smbkerberos.NewFromCCache(ccache, smbkerberos.ResolveConfig(), auth.SPN)
+		if err != nil {
+			_ = conn.Close()
+			return err
+		}
+		initiator = mechanism
+	} else {
+		initiator = newNTLMInitiator(auth, username, domain)
+	}
+	dialer := &smb2.Dialer{Initiator: initiator}
+
+	session, err := dialer.Dial(conn)
+	if err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("authenticate to %s: %w", serverName, err)
+	}
+
+	c.host = host
+	c.serverName = serverName
+	c.user = username
+	c.password = auth.Password
+	c.domain = domain
+	c.conn = conn
 	c.session = session
-	c.mu.Unlock()
+
 	return nil
+}
+
+func newNTLMInitiator(auth Auth, username, domain string) *smb2.NTLMInitiator {
+	initiator := &smb2.NTLMInitiator{User: username, Domain: domain}
+	if auth.Mode == AuthModeNTHash {
+		initiator.Hash = append([]byte(nil), auth.NTHash[:]...)
+		return initiator
+	}
+	initiator.Password = auth.Password
+	return initiator
 }
 
 func (c *Client) Close() error {
 	c.mu.Lock()
-	session := c.session
-	c.session = nil
+	defer c.mu.Unlock()
+	return c.closeLocked()
+}
+
+func (c *Client) closeLocked() error {
+	var errs []error
+
+	if c.session != nil {
+		if err := c.session.Logoff(); err != nil && !isIgnorableCloseError(err) {
+			errs = append(errs, err)
+		}
+		c.session = nil
+	}
+	if c.conn != nil {
+		if err := c.conn.Close(); err != nil && !isIgnorableCloseError(err) {
+			errs = append(errs, err)
+		}
+		c.conn = nil
+	}
+
 	c.host = ""
 	c.serverName = ""
-	c.dialAddr = ""
-	c.auth = resolvedAuth{}
-	c.mu.Unlock()
+	c.user = ""
+	c.password = ""
+	c.domain = ""
 
-	// Closing the session is a network call (logoff) that can contend with a
-	// wedged in-flight request, so it is detached: target completion must never
-	// wait for a peer that stopped answering.
-	closeSessionAsync(session)
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
 	return nil
 }
 
@@ -520,586 +262,38 @@ func isIgnorableCloseError(err error) bool {
 	if errors.Is(err, net.ErrClosed) {
 		return true
 	}
-	// A logoff that hit its bound means the server stopped answering; the
-	// socket is closed regardless, so the failed handshake is not an error
-	// worth surfacing during shutdown.
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return true
-	}
 
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "use of closed network connection") ||
 		strings.Contains(message, "connection already closed")
 }
 
-// currentSession returns the live session. While another worker is recovering
-// the transport it waits for that recovery instead of dialing again, which
-// keeps one server failure to one reconnect.
-func (c *Client) currentSession(ctx context.Context) (transportSession, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	for {
-		c.mu.Lock()
-		// A terminal authentication failure is not recoverable: fail fast
-		// instead of dialling the same rejected credentials again.
-		if c.authFailure != nil {
-			err := c.authFailure
-			c.mu.Unlock()
-			return nil, err
-		}
-		if c.session != nil && !c.recovering {
-			session := c.session
-			c.mu.Unlock()
-			return session, nil
-		}
-		if c.session == nil {
-			// The transport may have been lost; re-establish it lazily when the
-			// operator credential context is still known.
-			if c.dialAddr == "" {
-				c.mu.Unlock()
-				return nil, ErrNotConnected
-			}
-			if !c.lastFailedRecovery.IsZero() && time.Since(c.lastFailedRecovery) < reconnectCooldown {
-				c.mu.Unlock()
-				return nil, fmt.Errorf("%w: reconnect cooldown active", ErrNotConnected)
-			}
-			c.mu.Unlock()
-			if err := c.recover(ctx, nil); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		done := c.recoverDone
-		wait := c.reconnectWaitLimit
-		if wait <= 0 {
-			wait = defaultReconnectWaitLimit
-		}
-		c.mu.Unlock()
-		timer := time.NewTimer(wait)
-		select {
-		case <-done:
-			timer.Stop()
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
-			// The leader did not finish inside the wait bound. Waiting workers
-			// are always released rather than blocked on a wedged reconnect.
-			return nil, ErrReconnectTimeout
-		}
-	}
-}
-
-// recover reconnects the transport with the same operator credential context.
-// It is coordinated: the first observer performs the reconnect, every other
-// worker either waits for it or reuses the session it established.
-func (c *Client) recover(ctx context.Context, used transportSession) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	c.mu.Lock()
-	if c.dialAddr == "" {
-		c.mu.Unlock()
-		return ErrNotConnected
-	}
-	if c.authFailure != nil {
-		err := c.authFailure
-		c.mu.Unlock()
-		return err
-	}
-	if c.session != nil && used != nil && c.session != used {
-		// Another worker already replaced the dead session.
-		c.mu.Unlock()
-		return nil
-	}
-	if c.recovering {
-		done := c.recoverDone
-		wait := c.reconnectWaitLimit
-		if wait <= 0 {
-			wait = defaultReconnectWaitLimit
-		}
-		c.mu.Unlock()
-		timer := time.NewTimer(wait)
-		select {
-		case <-done:
-			timer.Stop()
-			// Reuse the recovered session, or report why the leader failed.
-			c.mu.Lock()
-			authFailure := c.authFailure
-			session := c.session
-			recoveryErr := c.lastRecoveryErr
-			c.mu.Unlock()
-			switch {
-			case authFailure != nil:
-				return authFailure
-			case session != nil:
-				return nil
-			case recoveryErr != nil:
-				return recoveryErr
-			default:
-				return ErrNotConnected
-			}
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-			// Never leave a waiter blocked on a leader that cannot finish.
-			return ErrReconnectTimeout
-		}
-	}
-	if c.session == nil && !c.lastFailedRecovery.IsZero() && time.Since(c.lastFailedRecovery) < reconnectCooldown {
-		c.mu.Unlock()
-		return fmt.Errorf("%w: reconnect cooldown active", ErrNotConnected)
-	}
-	c.recovering = true
-	c.recoverDone = make(chan struct{})
-	done := c.recoverDone
-	stale := c.session
-	auth := c.auth
-	dialAddr := c.dialAddr
-	serverName := c.serverName
-	c.stats.ReconnectsAttempted++
-	c.mu.Unlock()
-
-	if stale != nil {
-		closeSessionAsync(stale)
-	}
-
-	session, err := c.dialBounded(ctx, dialAddr, auth)
-
-	c.mu.Lock()
-	c.recovering = false
-	if err != nil {
-		c.stats.ReconnectsFailed++
-		c.session = nil
-		c.lastRecoveryErr = err
-		if IsAuthFailure(err) {
-			c.authFailure = fmt.Errorf("%w: %v", ErrAuthFailure, err)
-			c.stats.AuthFailures++
-		}
-		c.lastFailedRecovery = time.Now()
-		handler := c.onEvent
-		close(done)
-		c.mu.Unlock()
-		emitTransportEvent(handler, TransportEvent{Kind: TransportEventRecoveryFailed, Server: serverName, Operation: "reconnect", Err: err})
-		// A server that cannot be reconnected to is terminal for the target:
-		// do not let every remaining share and file re-dial it in turn.
-		if !IsAuthFailure(err) {
-			if c.noteDialFailure() {
-				c.reportAbandonment("", true, err)
-			}
-			if c.targetUnhealthy() {
-				return fmt.Errorf("%w: reconnect to %s failed: %v", ErrTargetUnhealthy, serverName, err)
-			}
-		}
-		return err
-	}
-	c.session = session
-	c.lastRecoveryErr = nil
-	c.stats.ReconnectsSucceeded++
-	handler := c.onEvent
-	close(done)
-	c.mu.Unlock()
-	emitTransportEvent(handler, TransportEvent{Kind: TransportEventRestored, Server: serverName, Operation: "reconnect"})
-	return nil
-}
-
-func emitTransportEvent(handler func(TransportEvent), event TransportEvent) {
-	if handler != nil {
-		handler(event)
-	}
-}
-
-// recordAuthFailure marks the credential context as rejected so no further dial
-// is attempted until the operator supplies a new context.
-func (c *Client) recordAuthFailure(err error) {
-	if err == nil {
-		return
-	}
+func (c *Client) connectedSession() (*smb2.Session, string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.authFailure == nil {
-		c.stats.AuthFailures++
+
+	if c.session == nil {
+		return nil, "", ErrNotConnected
 	}
-	c.authFailure = fmt.Errorf("%w: %v", ErrAuthFailure, err)
+	return c.session, c.serverName, nil
 }
 
-// runOperation executes one SMB operation with bounded transport recovery. The
-// operation is retried from the beginning after a reconnect, so a file that hit
-// the reset is re-read rather than skipped.
-//
-// share scopes the operation for the circuit breaker (empty for a target-level
-// operation). The recovery budget is handed to fn as an absolute deadline, so a
-// phase that keeps making tiny progress can no longer outlive the operation
-// bound the way an indefinitely refreshed read timeout could.
-//
-// progress marks an operation whose success is real inspection progress and may
-// therefore clear the target recovery clock.
-func (c *Client) runOperation(ctx context.Context, operation, share string, progress bool, fn func(session transportSession, deadline time.Time) error) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	state := operationState{}
-	budgetDeadline := time.Now().Add(c.budgetLimit())
-	for attempt := 0; attempt < totalOperationAttempts; attempt++ {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		// Work for a withheld share waits for the bounded probe protocol rather
-		// than failing, so a transient transport problem cannot permanently
-		// sacrifice the readable files that follow it. Abandoned shares and
-		// targets still fail immediately.
-		lease, waited, blocked := c.acquireShareProbe(ctx, share)
-		if blocked != nil {
-			// Containment short-circuited this operation before any network
-			// work: record it so coverage never looks complete.
-			c.mu.Lock()
-			c.stats.OperationsFastFailed++
-			c.mu.Unlock()
-			return blocked
-		}
-		result, err := c.runOperationAttempt(ctx, lease, attempt, waited, budgetDeadline, operation, share, progress, &state, fn)
-		switch result {
-		case operationAttemptRetry:
-			continue
-		case operationAttemptExhausted:
-			// The recovery budget for this operation is exhausted: record the
-			// final failure and let the scan continue with the next object.
-			c.mu.Lock()
-			c.stats.RetryExhausted++
-			handler := c.onEvent
-			serverName := c.serverName
-			c.mu.Unlock()
-			emitTransportEvent(handler, TransportEvent{
-				Kind: TransportEventRetryExhausted, Server: serverName, Operation: operation,
-				Attempt: totalOperationAttempts, MaxAttempts: totalOperationAttempts, Err: err,
-			})
-			c.reportOperationFailure(operation, err, totalOperationAttempts, state.reconnectAttempted)
-			return fmt.Errorf("%s: %w", operation, err)
-		default:
-			return err
-		}
-	}
-	return nil
-}
-
-// operationResult tells runOperation how one attempt ended.
-type operationResult int
-
-const (
-	// operationAttemptFinal ends the operation with the returned error.
-	operationAttemptFinal operationResult = iota
-	// operationAttemptRetry continues the loop after a retryable failure.
-	operationAttemptRetry
-	// operationAttemptExhausted is the last attempt of a retryable failure; the
-	// caller emits the retry-exhausted record.
-	operationAttemptExhausted
-)
-
-// operationState is the retry state shared by the attempts of one operation.
-type operationState struct {
-	lastErr            error
-	reconnectAttempted bool
-}
-
-// runOperationAttempt runs one bounded attempt. When a probe lease was granted,
-// it is resolved exactly once on every return path: explicitly with the
-// attempt's real outcome, and otherwise by the deferred safety net. That
-// structural guarantee is what stops a worker that returns early — through
-// budget exhaustion, a session failure or even a panic — from stranding the
-// share's only probe and freezing every other worker behind it.
-func (c *Client) runOperationAttempt(
-	ctx context.Context,
-	lease *probeLease,
-	attempt int,
-	waited bool,
-	budgetDeadline time.Time,
-	operation, share string,
-	progress bool,
-	state *operationState,
-	fn func(session transportSession, deadline time.Time) error,
-) (operationResult, error) {
-	if lease != nil {
-		// The default outcome claims nothing about the share: a path that does
-		// not complete the probe releases it without a health verdict.
-		defer func() { lease.Resolve(probeOutcomeCancelled) }()
-	}
-	if time.Now().After(budgetDeadline) {
-		c.mu.Lock()
-		c.stats.RetryExhausted++
-		handler := c.onEvent
-		serverName := c.serverName
-		c.mu.Unlock()
-		emitTransportEvent(handler, TransportEvent{
-			Kind: TransportEventRetryExhausted, Server: serverName, Operation: operation,
-			Attempt: attempt + 1, MaxAttempts: totalOperationAttempts, Err: state.lastErr,
-		})
-		c.reportOperationFailure(operation, state.lastErr, attempt+1, state.reconnectAttempted)
-		lease.Resolve(probeOutcomeBudgetExhausted)
-		return operationAttemptFinal, fmt.Errorf("%s: %w", operation, state.lastErr)
-	}
-	session, err := c.currentSession(ctx)
-	if err != nil {
-		if IsAuthFailure(err) {
-			c.reportOperationFailure(operation, err, attempt+1, state.reconnectAttempted)
-		}
-		lease.Resolve(probeOutcomeSessionUnavailable)
-		return operationAttemptFinal, err
-	}
-	c.mu.Lock()
-	c.stats.OperationAttempts++
-	c.mu.Unlock()
-
-	err = fn(session, budgetDeadline)
-	lease.Resolve(probeOutcomeFor(ctx, err))
-	if err == nil {
-		c.mu.Lock()
-		c.stats.OperationSuccesses++
-		if attempt > 0 {
-			c.stats.FilesRecovered += 1
-		}
-		if waited {
-			c.stats.OperationsResumed++
-		}
-		c.mu.Unlock()
-		c.noteSuccess(share, progress)
-		return operationAttemptFinal, nil
-	}
-	if errors.Is(err, ErrShareUnhealthy) || errors.Is(err, ErrTargetUnhealthy) {
-		// The share went terminal while this phase was in flight, so the phase
-		// was abandoned rather than failed. That is containment, not a per-object
-		// failure: count it like the fast-fail gate and keep coverage free of
-		// thousands of duplicate records for work the share's quarantine covers.
-		c.mu.Lock()
-		c.stats.OperationsFastFailed++
-		c.mu.Unlock()
-		return operationAttemptFinal, fmt.Errorf("%s: %w", operation, ErrShareUnhealthy)
-	}
-	c.mu.Lock()
-	c.stats.OperationFailures++
-	c.mu.Unlock()
-	if IsAuthFailure(err) {
-		// Authentication is terminal: no reconnect, no retry, no storm.
-		c.recordAuthFailure(err)
-		c.reportOperationFailure(operation, err, attempt+1, state.reconnectAttempted)
-		return operationAttemptFinal, err
-	}
-	if !isRetryableOperation(err) || ctx.Err() != nil {
-		// Non-retryable failures (access denied, not found, ...) are final
-		// immediately and are reported once.
-		c.reportOperationFailure(operation, err, attempt+1, state.reconnectAttempted)
-		return operationAttemptFinal, err
-	}
-	state.lastErr = err
-	// Circuit-breaker accounting. Only hard phase timeouts and recovery
-	// failures are evidence that a share is unhealthy: an ordinary reset
-	// that heals on the next attempt must not condemn a share, and a
-	// cascade caused by another worker invalidating the shared session is
-	// not independent evidence either.
-	if isHardHealthFailure(err) {
-		// Withholding the share pauses its queued work; the representative
-		// coverage failure is emitted only if the share is truly abandoned.
-		c.noteHardTimeout(share, operation)
-	}
-	if IsReconnectable(err) {
-		if c.noteTransportFailure(share) {
-			c.reportAbandonment(share, true, err)
-		}
-	}
-	// Whatever this worker's own failure meant, stop as soon as the share or
-	// the target has been abandoned — including when another worker was the
-	// one that detected it, so no doomed object keeps retrying.
-	if blocked := c.healthBlocked(share); blocked != nil {
-		return operationAttemptFinal, fmt.Errorf("%s: %w", operation, blocked)
-	}
-	if attempt+1 >= totalOperationAttempts {
-		return operationAttemptExhausted, err
-	}
-	c.mu.Lock()
-	c.stats.OperationsRetried++
-	if IsReconnectable(err) {
-		c.stats.TransportFailures++
-	}
-	handler := c.onEvent
-	serverName := c.serverName
-	c.mu.Unlock()
-
-	if IsReconnectable(err) {
-		state.reconnectAttempted = true
-		emitTransportEvent(handler, TransportEvent{
-			Kind: TransportEventRetrying, Server: serverName, Operation: operation,
-			Attempt: attempt + 1, MaxAttempts: maxReconnectAttempts, Err: err,
-		})
-		if rerr := c.recover(ctx, session); rerr != nil {
-			if errors.Is(rerr, ErrTargetUnhealthy) {
-				return operationAttemptFinal, fmt.Errorf("%s: %w", operation, ErrTargetUnhealthy)
-			}
-			c.reportOperationFailure(operation, state.lastErr, attempt+1, state.reconnectAttempted)
-			return operationAttemptFinal, fmt.Errorf("%s: %w", operation, state.lastErr)
-		}
-	}
-	if err := sleepContext(ctx, reconnectBackoff); err != nil {
-		return operationAttemptFinal, err
-	}
-	return operationAttemptRetry, nil
-}
-
-// probeOutcomeFor maps the result of a probe's own operation onto the terminal
-// transition its lease must perform. Caller cancellation releases the lease
-// without a health verdict: the scan is going away, so the probe proved nothing
-// about the share and must not be recorded as either healthy or dead.
-func probeOutcomeFor(ctx context.Context, err error) probeOutcome {
-	switch {
-	case err == nil:
-		return probeOutcomeSuccess
-	case ctx != nil && ctx.Err() != nil:
-		return probeOutcomeCancelled
-	case errors.Is(err, ErrOperationTimeout),
-		errors.Is(err, ErrReconnectTimeout),
-		IsReconnectable(err):
-		return probeOutcomeTransportFailure
-	default:
-		return probeOutcomeProbeFailed
-	}
-}
-
-// isHardHealthFailure reports whether an error is strong, share-specific
-// evidence that the transport or session is unhealthy: the operation consumed
-// its whole hard bound rather than returning an ordinary SMB status.
-func isHardHealthFailure(err error) bool {
-	return errors.Is(err, ErrOperationTimeout) || errors.Is(err, ErrReconnectTimeout)
-}
-
-// reportAbandonment emits exactly one failure record when a share or target is
-// abandoned, so coverage is marked incomplete without writing one entry per
-// doomed object.
-func (c *Client) reportAbandonment(share string, target bool, err error) {
-	c.mu.Lock()
-	handler := c.onFailure
-	serverName := c.serverName
-	c.mu.Unlock()
-	if handler == nil {
-		return
-	}
-	kind := "share abandoned"
-	if target {
-		kind = "target abandoned"
-	}
-	handler(OperationFailure{
-		Operation:          kind,
-		Share:              share,
-		Server:             serverName,
-		Category:           CategoryTransport,
-		Attempts:           1,
-		ReconnectAttempted: true,
-		Err:                err,
-	})
-}
-
-func (c *Client) run(ctx context.Context, operation, share string, progress bool, fn func(session transportSession, deadline time.Time) error) error {
-	return c.runOperation(ctx, operation, share, progress, fn)
-}
-
-// reportOperationFailure emits one structured failure record for an operation
-// that could not be completed.
-func (c *Client) reportOperationFailure(operation string, err error, attempts int, reconnectAttempted bool) {
-	if err == nil {
-		return
-	}
-	c.mu.Lock()
-	handler := c.onFailure
-	serverName := c.serverName
-	c.mu.Unlock()
-	if handler == nil {
-		return
-	}
-	handler(OperationFailure{
-		Operation:          operation,
-		Category:           CategorizeError(err),
-		Attempts:           attempts,
-		ReconnectAttempted: reconnectAttempted,
-		Err:                err,
-		Server:             serverName,
-	})
-}
-
-func sleepContext(ctx context.Context, duration time.Duration) error {
-	if duration <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(duration)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-// mountTreeWithSession mounts a share over the given session within the bounded
-// operation timeout, so a tree connect that never answers cannot block a worker.
-func (c *Client) mountTreeWithSession(ctx context.Context, session transportSession, share string) (transportTree, error) {
-	return c.mountTreeWithSessionLimit(ctx, session, share, c.operationLimit())
-}
-
-// mountTreeWithSessionLimit mounts a share within an explicit bound, so a
-// caller that already holds an absolute deadline cannot overshoot it.
-func (c *Client) mountTreeWithSessionLimit(ctx context.Context, session transportSession, share string, limit time.Duration) (transportTree, error) {
-	if session == nil {
-		return nil, ErrNotConnected
-	}
-	if strings.TrimSpace(share) == "" {
-		return nil, fmt.Errorf("share cannot be empty")
-	}
-	c.mu.Lock()
-	serverName := c.serverName
-	c.mu.Unlock()
-
-	mountPath := fmt.Sprintf(`\\%s\%s`, serverName, share)
-	tree, err := runPhase(c, ctx, "tree connect", share, limit, func() (transportTree, error) {
-		return session.Mount(mountPath)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("mount %s: %w", mountPath, err)
-	}
-	return tree, nil
-}
-
-// mountShare mounts a share, recovering the transport when the tree connect
-// fails because the session died.
-func (c *Client) mountShare(share string) (transportTree, error) {
-	return c.mountShareContext(context.Background(), share)
-}
-
-// mountShareContext mounts a share under the caller's context so a containment
-// wait or a tree connect cannot outlive an interrupted scan.
-func (c *Client) mountShareContext(ctx context.Context, share string) (transportTree, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	var tree transportTree
-	err := c.run(ctx, "mount "+share, share, false, func(session transportSession, deadline time.Time) error {
-		mounted, err := c.mountTreeWithSessionLimit(ctx, session, share, c.limitUntil(deadline))
-		if err != nil {
-			return err
-		}
-		tree = mounted
-		return nil
-	})
+func (c *Client) mountShare(share string) (*smb2.Share, error) {
+	session, serverName, err := c.connectedSession()
 	if err != nil {
 		return nil, err
 	}
-	return tree, nil
-}
 
-// server reports the current server name for logging.
-func (c *Client) server() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.serverName
+	if strings.TrimSpace(share) == "" {
+		return nil, fmt.Errorf("share cannot be empty")
+	}
+
+	mountPath := fmt.Sprintf(`\\%s\%s`, serverName, share)
+	fs, err := session.Mount(mountPath)
+	if err != nil {
+		return nil, fmt.Errorf("mount %s: %w", mountPath, err)
+	}
+	return fs, nil
 }
 
 func splitHost(host string) (serverName, dialAddr string, err error) {

@@ -2,13 +2,11 @@ package smb
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"slices"
 	"sort"
 	"strings"
-	"time"
 )
 
 var defaultSkippedShares = []string{"IPC$", "PRINT$"}
@@ -54,17 +52,13 @@ func (c *Client) ListAccessibleShares(ctx context.Context) ([]ShareInfo, error) 
 }
 
 func (c *Client) listShares(ctx context.Context, strict bool) ([]ShareInfo, error) {
-	var shares []string
-	if err := c.run(ctx, "list shares", "", false, func(session transportSession, deadline time.Time) error {
-		names, err := runPhase(c, ctx, "list shares", "", c.limitUntil(deadline), func() ([]string, error) {
-			return session.ListSharenames()
-		})
-		if err != nil {
-			return err
-		}
-		shares = names
-		return nil
-	}); err != nil {
+	session, _, err := c.connectedSession()
+	if err != nil {
+		return nil, err
+	}
+
+	shares, err := session.ListSharenames()
+	if err != nil {
 		return nil, fmt.Errorf("list shares: %w", err)
 	}
 
@@ -82,11 +76,6 @@ func filterAccessibleShareNames(ctx context.Context, shares []string, check func
 	})
 	accessible := make([]ShareInfo, 0, len(shares))
 	seen := make(map[string]struct{}, len(shares))
-	// healthFailures counts candidates that could not be validated because of a
-	// transport/session problem rather than an ordinary permission denial. If
-	// every candidate fails that way, the target is unreachable or unhealthy and
-	// an empty share list must not be reported as a successful, complete scan.
-	healthFailures := 0
 	for _, share := range shares {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -107,9 +96,6 @@ func filterAccessibleShareNames(ctx context.Context, shares []string, check func
 			if isPermissionError(err) {
 				continue
 			}
-			if isHealthFailure(err) {
-				healthFailures++
-			}
 			if strict {
 				return nil, fmt.Errorf("validate share %s: %w", share, err)
 			}
@@ -123,30 +109,7 @@ func filterAccessibleShareNames(ctx context.Context, shares []string, check func
 		})
 	}
 
-	if len(accessible) == 0 && healthFailures > 0 {
-		return nil, fmt.Errorf("no share could be validated: %d candidate(s) failed with transport or session errors", healthFailures)
-	}
 	return accessible, nil
-}
-
-// isHealthFailure reports whether verifying share access failed for a
-// transport/session reason rather than an ordinary SMB status. It keeps an
-// inaccessible-but-healthy server (every share permission-denied) from being
-// mistaken for an unreachable one.
-func isHealthFailure(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, ErrShareUnhealthy) || errors.Is(err, ErrTargetUnhealthy) {
-		return true
-	}
-	if IsAuthFailure(err) {
-		return false
-	}
-	if errors.Is(err, ErrOperationTimeout) || errors.Is(err, ErrReconnectTimeout) {
-		return true
-	}
-	return IsReconnectable(err)
 }
 
 func (c *Client) checkShareAccess(share string) error {
@@ -161,30 +124,9 @@ func (c *Client) checkShareAccessContext(ctx context.Context, share string) erro
 	if err != nil {
 		return err
 	}
-	defer func() {
-		// Tree disconnect is a network call as well: a wedged server must not be
-		// able to hold the target open in an unbounded umount.
-		_ = c.bounded(ctx, "tree disconnect", share, c.operationLimit(), fs.Umount)
-	}()
+	defer fs.Umount()
 
-	// The share-root listing previously ran outside the watchdog entirely, so a
-	// server that accepted the tree connect and then stopped answering could
-	// freeze share enumeration forever with no cancellation path.
-	_, err = runPhase(c, ctx, "share root enumeration", share, c.operationLimit(), func() (struct{}, error) {
-		_, listErr := fs.ReadDir("")
-		return struct{}{}, listErr
-	})
-	if errors.Is(err, ErrOperationTimeout) {
-		// One wedged root listing is evidence about this share, and any timeout
-		// is evidence about the target streak.
-		c.noteHardTimeout(share, "share root enumeration "+share)
-		if c.noteTransportFailure(share) {
-			c.reportAbandonment(share, true, err)
-		}
-		if blocked := c.healthBlocked(share); blocked != nil {
-			return fmt.Errorf("%w: share %s", blocked, share)
-		}
-	}
+	_, err = fs.ReadDir("")
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}

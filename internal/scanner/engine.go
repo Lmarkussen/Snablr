@@ -593,6 +593,7 @@ func (e *Engine) evaluateWIM(ctx context.Context, meta FileMetadata, content []b
 			// credentialanalysis path as a loose document.
 			memberEvaluation := e.evaluateArchive(memberMeta, member.Content)
 			findings = append(findings, memberEvaluation.Findings...)
+			evaluation.InspectionFailures = append(evaluation.InspectionFailures, memberEvaluation.InspectionFailures...)
 			continue
 		}
 		if isLegacyOfficeDocumentExtension(member.Extension) && member.ContentRead && len(member.Content) > 0 {
@@ -600,13 +601,7 @@ func (e *Engine) evaluateWIM(ctx context.Context, meta FileMetadata, content []b
 			// harvester, so the ordinary path (which invokes it) is correct.
 			memberEvaluation := e.evaluateStandard(memberMeta, member.Content, true)
 			findings = append(findings, memberEvaluation.Findings...)
-			continue
-		}
-		if isLegacyOfficeDocumentExtension(member.Extension) && member.ContentRead && len(member.Content) > 0 {
-			// Legacy OLE/CFB Office members are reconstructed inside the shared
-			// harvester, so the ordinary path (which invokes it) is correct.
-			memberEvaluation := e.evaluateStandard(memberMeta, member.Content, true)
-			findings = append(findings, memberEvaluation.Findings...)
+			evaluation.InspectionFailures = append(evaluation.InspectionFailures, memberEvaluation.InspectionFailures...)
 			continue
 		}
 		memberEvaluation := e.evaluateStandard(memberMeta, member.Content, member.ContentRead)

@@ -303,6 +303,18 @@ type TransportStats struct {
 	OperationTimeouts int64 `json:"operation_timeouts"`
 	// AuthFailures counts terminal authentication failures. These never retry.
 	AuthFailures int64 `json:"auth_failures"`
+	// SharesWithheld counts shares temporarily held back from work after
+	// repeated transport failures, and SharesAbandoned counts those whose
+	// recovery budget was spent.
+	SharesWithheld  int64 `json:"shares_withheld"`
+	SharesAbandoned int64 `json:"shares_abandoned"`
+	// OperationsFastFailed counts operations that failed without touching the
+	// network because their share or target was already abandoned.
+	OperationsFastFailed int64 `json:"operations_fast_failed"`
+	// OperationsResumed counts operations that succeeded after being held back
+	// by transport containment, i.e. content inspection that was delayed by a
+	// transient fault rather than lost.
+	OperationsResumed int64 `json:"operations_resumed"`
 }
 
 // TransportEventKind classifies a transport lifecycle event.

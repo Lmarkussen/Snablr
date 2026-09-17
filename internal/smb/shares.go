@@ -183,10 +183,8 @@ func (c *Client) checkShareAccessContext(ctx context.Context, share string) erro
 	if errors.Is(err, ErrOperationTimeout) {
 		// One wedged root listing is evidence about this share, and any timeout
 		// is evidence about the target streak.
-		if c.noteHardTimeout(share, "share root enumeration "+share) {
-			c.reportAbandonment(share, false, err)
-		}
-		if c.noteTransportFailure() {
+		c.noteHardTimeout(share, "share root enumeration "+share)
+		if c.noteTransportFailure(share) {
 			c.reportAbandonment(share, true, err)
 		}
 		if blocked := c.healthBlocked(share); blocked != nil {

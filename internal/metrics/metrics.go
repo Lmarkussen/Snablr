@@ -38,6 +38,10 @@ type Counters struct {
 	SMBEnumerationFailures      int64 `json:"smb_enumeration_failures,omitempty"`
 	SMBOperationTimeouts        int64 `json:"smb_operation_timeouts,omitempty"`
 	SMBAuthFailures             int64 `json:"smb_auth_failures,omitempty"`
+	SMBShareFailuresContained   int64 `json:"smb_share_failures_contained,omitempty"`
+	SMBShareFailuresAbandoned   int64 `json:"smb_share_failures_abandoned,omitempty"`
+	SMBOperationsFastFailed     int64 `json:"smb_operations_fast_failed,omitempty"`
+	SMBOperationsResumed        int64 `json:"smb_operations_resumed,omitempty"`
 	FinalFailureCount           int64 `json:"final_failure_count,omitempty"`
 }
 
@@ -57,6 +61,16 @@ type TransportCounters struct {
 	OperationTimeouts int64
 	// AuthFailures counts terminal authentication failures (never retried).
 	AuthFailures int64
+	// SharesWithheld counts shares temporarily held back from work and
+	// SharesAbandoned counts shares whose recovery budget was spent.
+	SharesWithheld  int64
+	SharesAbandoned int64
+	// OperationsFastFailed counts operations that failed without touching the
+	// network because containment had already given up on their share/target.
+	OperationsFastFailed int64
+	// OperationsResumed counts operations that succeeded after being held back
+	// by containment.
+	OperationsResumed int64
 }
 
 type Snapshot struct {
@@ -144,6 +158,10 @@ func (c *Collector) AddTransportCounters(counters TransportCounters) {
 		existing.SMBEnumerationFailures += counters.EnumerationFailures
 		existing.SMBOperationTimeouts += counters.OperationTimeouts
 		existing.SMBAuthFailures += counters.AuthFailures
+		existing.SMBShareFailuresContained += counters.SharesWithheld
+		existing.SMBShareFailuresAbandoned += counters.SharesAbandoned
+		existing.SMBOperationsFastFailed += counters.OperationsFastFailed
+		existing.SMBOperationsResumed += counters.OperationsResumed
 	})
 }
 

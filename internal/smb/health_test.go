@@ -28,6 +28,8 @@ func healthTestTimeouts(client *Client) {
 	client.SetReconnectWaitLimit(45 * time.Second / healthTestScale)
 	client.SetRecoveryBudget(2 * time.Minute / healthTestScale)
 	client.SetTargetRecoveryBudget(2 * time.Minute / healthTestScale)
+	client.SetShareRecoveryBudget(90 * time.Second / healthTestScale)
+	client.SetShareProbeCooldown(5 * time.Second / healthTestScale)
 }
 
 func healthTestIdle(client *Client) time.Duration {

@@ -460,16 +460,20 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		}
 		stats := provider.TransportStats()
 		recorder.AddTransportCounters(metrics.TransportCounters{
-			TransportFailures:   stats.TransportFailures,
-			ReconnectsAttempted: stats.ReconnectsAttempted,
-			ReconnectsSucceeded: stats.ReconnectsSucceeded,
-			ReconnectsFailed:    stats.ReconnectsFailed,
-			OperationsRetried:   stats.OperationsRetried,
-			FilesRecovered:      stats.FilesRecovered,
-			RetryExhausted:      stats.RetryExhausted,
-			EnumerationFailures: stats.EnumerationFailures,
-			OperationTimeouts:   stats.OperationTimeouts,
-			AuthFailures:        stats.AuthFailures,
+			TransportFailures:    stats.TransportFailures,
+			ReconnectsAttempted:  stats.ReconnectsAttempted,
+			ReconnectsSucceeded:  stats.ReconnectsSucceeded,
+			ReconnectsFailed:     stats.ReconnectsFailed,
+			OperationsRetried:    stats.OperationsRetried,
+			FilesRecovered:       stats.FilesRecovered,
+			RetryExhausted:       stats.RetryExhausted,
+			EnumerationFailures:  stats.EnumerationFailures,
+			OperationTimeouts:    stats.OperationTimeouts,
+			AuthFailures:         stats.AuthFailures,
+			SharesWithheld:       stats.SharesWithheld,
+			SharesAbandoned:      stats.SharesAbandoned,
+			OperationsFastFailed: stats.OperationsFastFailed,
+			OperationsResumed:    stats.OperationsResumed,
 		})
 		// The failure artifact reports the same transport accounting.
 		if failures != nil {

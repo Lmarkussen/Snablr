@@ -79,7 +79,9 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 				}
 				if c.noteTransportFailure() {
 					c.reportAbandonment(share, true, err)
-					return nil, fmt.Errorf("read dir %s on %s: %w", path, share, ErrTargetUnhealthy)
+				}
+				if blocked := c.healthBlocked(share); blocked != nil {
+					return nil, fmt.Errorf("read dir %s on %s: %w", path, share, blocked)
 				}
 				c.reportEnumerationFailure(share, path, lastErr, attempt+1)
 				return nil, fmt.Errorf("read dir %s on %s: %w", path, share, lastErr)

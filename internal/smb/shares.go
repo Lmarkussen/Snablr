@@ -187,7 +187,10 @@ func (c *Client) checkShareAccessContext(ctx context.Context, share string) erro
 			c.reportAbandonment(share, false, err)
 		}
 		if c.noteTransportFailure() {
-			return fmt.Errorf("%w: share %s", ErrTargetUnhealthy, share)
+			c.reportAbandonment(share, true, err)
+		}
+		if blocked := c.healthBlocked(share); blocked != nil {
+			return fmt.Errorf("%w: share %s", blocked, share)
 		}
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {

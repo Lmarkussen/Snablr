@@ -743,8 +743,7 @@ func (c *Client) runOperation(ctx context.Context, operation, share string, prog
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var lastErr error
-	reconnectAttempted := false
+	state := operationState{}
 	budgetDeadline := time.Now().Add(c.budgetLimit())
 	for attempt := 0; attempt < totalOperationAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -754,7 +753,7 @@ func (c *Client) runOperation(ctx context.Context, operation, share string, prog
 		// than failing, so a transient transport problem cannot permanently
 		// sacrifice the readable files that follow it. Abandoned shares and
 		// targets still fail immediately.
-		probe, waited, blocked := c.awaitShare(ctx, share)
+		lease, waited, blocked := c.acquireShareProbe(ctx, share)
 		if blocked != nil {
 			// Containment short-circuited this operation before any network
 			// work: record it so coverage never looks complete.
@@ -763,7 +762,11 @@ func (c *Client) runOperation(ctx context.Context, operation, share string, prog
 			c.mu.Unlock()
 			return blocked
 		}
-		if time.Now().After(budgetDeadline) {
+		result, err := c.runOperationAttempt(ctx, lease, attempt, waited, budgetDeadline, operation, share, progress, &state, fn)
+		switch result {
+		case operationAttemptRetry:
+			continue
+		case operationAttemptExhausted:
 			// The recovery budget for this operation is exhausted: record the
 			// final failure and let the scan continue with the next object.
 			c.mu.Lock()
@@ -773,118 +776,185 @@ func (c *Client) runOperation(ctx context.Context, operation, share string, prog
 			c.mu.Unlock()
 			emitTransportEvent(handler, TransportEvent{
 				Kind: TransportEventRetryExhausted, Server: serverName, Operation: operation,
-				Attempt: attempt + 1, MaxAttempts: totalOperationAttempts, Err: lastErr,
+				Attempt: totalOperationAttempts, MaxAttempts: totalOperationAttempts, Err: err,
 			})
-			c.reportOperationFailure(operation, lastErr, attempt+1, reconnectAttempted)
-			return fmt.Errorf("%s: %w", operation, lastErr)
-		}
-		session, err := c.currentSession(ctx)
-		if err != nil {
-			if IsAuthFailure(err) {
-				c.reportOperationFailure(operation, err, attempt+1, reconnectAttempted)
-			}
-			return err
-		}
-		c.mu.Lock()
-		c.stats.OperationAttempts++
-		c.mu.Unlock()
-
-		err = fn(session, budgetDeadline)
-		if probe {
-			// The granted probe decides whether the share comes back.
-			c.resolveShareProbe(share, err == nil)
-		}
-		if err == nil {
-			c.mu.Lock()
-			c.stats.OperationSuccesses++
-			if attempt > 0 {
-				c.stats.FilesRecovered += 1
-			}
-			if waited {
-				c.stats.OperationsResumed++
-			}
-			c.mu.Unlock()
-			c.noteSuccess(share, progress)
-			return nil
-		}
-		c.mu.Lock()
-		c.stats.OperationFailures++
-		c.mu.Unlock()
-		if IsAuthFailure(err) {
-			// Authentication is terminal: no reconnect, no retry, no storm.
-			c.recordAuthFailure(err)
-			c.reportOperationFailure(operation, err, attempt+1, reconnectAttempted)
-			return err
-		}
-		if !isRetryableOperation(err) || ctx.Err() != nil {
-			// Non-retryable failures (access denied, not found, ...) are final
-			// immediately and are reported once.
-			c.reportOperationFailure(operation, err, attempt+1, reconnectAttempted)
-			return err
-		}
-		lastErr = err
-		// Circuit-breaker accounting. Only hard phase timeouts and recovery
-		// failures are evidence that a share is unhealthy: an ordinary reset
-		// that heals on the next attempt must not condemn a share, and a
-		// cascade caused by another worker invalidating the shared session is
-		// not independent evidence either.
-		if isHardHealthFailure(err) {
-			// Withholding the share pauses its queued work; the representative
-			// coverage failure is emitted only if the share is truly abandoned.
-			c.noteHardTimeout(share, operation)
-		}
-		if IsReconnectable(err) {
-			if c.noteTransportFailure(share) {
-				c.reportAbandonment(share, true, err)
-			}
-		}
-		// Whatever this worker's own failure meant, stop as soon as the share or
-		// the target has been abandoned — including when another worker was the
-		// one that detected it, so no doomed object keeps retrying.
-		if blocked := c.healthBlocked(share); blocked != nil {
-			return fmt.Errorf("%s: %w", operation, blocked)
-		}
-		if attempt+1 >= totalOperationAttempts {
-			break
-		}
-		c.mu.Lock()
-		c.stats.OperationsRetried++
-		if IsReconnectable(err) {
-			c.stats.TransportFailures++
-		}
-		handler := c.onEvent
-		serverName := c.serverName
-		c.mu.Unlock()
-
-		if IsReconnectable(err) {
-			reconnectAttempted = true
-			emitTransportEvent(handler, TransportEvent{
-				Kind: TransportEventRetrying, Server: serverName, Operation: operation,
-				Attempt: attempt + 1, MaxAttempts: maxReconnectAttempts, Err: err,
-			})
-			if rerr := c.recover(ctx, session); rerr != nil {
-				if errors.Is(rerr, ErrTargetUnhealthy) {
-					return fmt.Errorf("%s: %w", operation, ErrTargetUnhealthy)
-				}
-				c.reportOperationFailure(operation, lastErr, attempt+1, reconnectAttempted)
-				return fmt.Errorf("%s: %w", operation, lastErr)
-			}
-		}
-		if err := sleepContext(ctx, reconnectBackoff); err != nil {
+			c.reportOperationFailure(operation, err, totalOperationAttempts, state.reconnectAttempted)
+			return fmt.Errorf("%s: %w", operation, err)
+		default:
 			return err
 		}
 	}
+	return nil
+}
+
+// operationResult tells runOperation how one attempt ended.
+type operationResult int
+
+const (
+	// operationAttemptFinal ends the operation with the returned error.
+	operationAttemptFinal operationResult = iota
+	// operationAttemptRetry continues the loop after a retryable failure.
+	operationAttemptRetry
+	// operationAttemptExhausted is the last attempt of a retryable failure; the
+	// caller emits the retry-exhausted record.
+	operationAttemptExhausted
+)
+
+// operationState is the retry state shared by the attempts of one operation.
+type operationState struct {
+	lastErr            error
+	reconnectAttempted bool
+}
+
+// runOperationAttempt runs one bounded attempt. When a probe lease was granted,
+// it is resolved exactly once on every return path: explicitly with the
+// attempt's real outcome, and otherwise by the deferred safety net. That
+// structural guarantee is what stops a worker that returns early — through
+// budget exhaustion, a session failure or even a panic — from stranding the
+// share's only probe and freezing every other worker behind it.
+func (c *Client) runOperationAttempt(
+	ctx context.Context,
+	lease *probeLease,
+	attempt int,
+	waited bool,
+	budgetDeadline time.Time,
+	operation, share string,
+	progress bool,
+	state *operationState,
+	fn func(session transportSession, deadline time.Time) error,
+) (operationResult, error) {
+	if lease != nil {
+		// The default outcome claims nothing about the share: a path that does
+		// not complete the probe releases it without a health verdict.
+		defer func() { lease.Resolve(probeOutcomeCancelled) }()
+	}
+	if time.Now().After(budgetDeadline) {
+		c.mu.Lock()
+		c.stats.RetryExhausted++
+		handler := c.onEvent
+		serverName := c.serverName
+		c.mu.Unlock()
+		emitTransportEvent(handler, TransportEvent{
+			Kind: TransportEventRetryExhausted, Server: serverName, Operation: operation,
+			Attempt: attempt + 1, MaxAttempts: totalOperationAttempts, Err: state.lastErr,
+		})
+		c.reportOperationFailure(operation, state.lastErr, attempt+1, state.reconnectAttempted)
+		lease.Resolve(probeOutcomeBudgetExhausted)
+		return operationAttemptFinal, fmt.Errorf("%s: %w", operation, state.lastErr)
+	}
+	session, err := c.currentSession(ctx)
+	if err != nil {
+		if IsAuthFailure(err) {
+			c.reportOperationFailure(operation, err, attempt+1, state.reconnectAttempted)
+		}
+		lease.Resolve(probeOutcomeSessionUnavailable)
+		return operationAttemptFinal, err
+	}
 	c.mu.Lock()
-	c.stats.RetryExhausted++
+	c.stats.OperationAttempts++
+	c.mu.Unlock()
+
+	err = fn(session, budgetDeadline)
+	lease.Resolve(probeOutcomeFor(ctx, err))
+	if err == nil {
+		c.mu.Lock()
+		c.stats.OperationSuccesses++
+		if attempt > 0 {
+			c.stats.FilesRecovered += 1
+		}
+		if waited {
+			c.stats.OperationsResumed++
+		}
+		c.mu.Unlock()
+		c.noteSuccess(share, progress)
+		return operationAttemptFinal, nil
+	}
+	c.mu.Lock()
+	c.stats.OperationFailures++
+	c.mu.Unlock()
+	if IsAuthFailure(err) {
+		// Authentication is terminal: no reconnect, no retry, no storm.
+		c.recordAuthFailure(err)
+		c.reportOperationFailure(operation, err, attempt+1, state.reconnectAttempted)
+		return operationAttemptFinal, err
+	}
+	if !isRetryableOperation(err) || ctx.Err() != nil {
+		// Non-retryable failures (access denied, not found, ...) are final
+		// immediately and are reported once.
+		c.reportOperationFailure(operation, err, attempt+1, state.reconnectAttempted)
+		return operationAttemptFinal, err
+	}
+	state.lastErr = err
+	// Circuit-breaker accounting. Only hard phase timeouts and recovery
+	// failures are evidence that a share is unhealthy: an ordinary reset
+	// that heals on the next attempt must not condemn a share, and a
+	// cascade caused by another worker invalidating the shared session is
+	// not independent evidence either.
+	if isHardHealthFailure(err) {
+		// Withholding the share pauses its queued work; the representative
+		// coverage failure is emitted only if the share is truly abandoned.
+		c.noteHardTimeout(share, operation)
+	}
+	if IsReconnectable(err) {
+		if c.noteTransportFailure(share) {
+			c.reportAbandonment(share, true, err)
+		}
+	}
+	// Whatever this worker's own failure meant, stop as soon as the share or
+	// the target has been abandoned — including when another worker was the
+	// one that detected it, so no doomed object keeps retrying.
+	if blocked := c.healthBlocked(share); blocked != nil {
+		return operationAttemptFinal, fmt.Errorf("%s: %w", operation, blocked)
+	}
+	if attempt+1 >= totalOperationAttempts {
+		return operationAttemptExhausted, err
+	}
+	c.mu.Lock()
+	c.stats.OperationsRetried++
+	if IsReconnectable(err) {
+		c.stats.TransportFailures++
+	}
 	handler := c.onEvent
 	serverName := c.serverName
 	c.mu.Unlock()
-	emitTransportEvent(handler, TransportEvent{
-		Kind: TransportEventRetryExhausted, Server: serverName, Operation: operation,
-		Attempt: totalOperationAttempts, MaxAttempts: totalOperationAttempts, Err: lastErr,
-	})
-	c.reportOperationFailure(operation, lastErr, totalOperationAttempts, reconnectAttempted)
-	return fmt.Errorf("%s: %w", operation, lastErr)
+
+	if IsReconnectable(err) {
+		state.reconnectAttempted = true
+		emitTransportEvent(handler, TransportEvent{
+			Kind: TransportEventRetrying, Server: serverName, Operation: operation,
+			Attempt: attempt + 1, MaxAttempts: maxReconnectAttempts, Err: err,
+		})
+		if rerr := c.recover(ctx, session); rerr != nil {
+			if errors.Is(rerr, ErrTargetUnhealthy) {
+				return operationAttemptFinal, fmt.Errorf("%s: %w", operation, ErrTargetUnhealthy)
+			}
+			c.reportOperationFailure(operation, state.lastErr, attempt+1, state.reconnectAttempted)
+			return operationAttemptFinal, fmt.Errorf("%s: %w", operation, state.lastErr)
+		}
+	}
+	if err := sleepContext(ctx, reconnectBackoff); err != nil {
+		return operationAttemptFinal, err
+	}
+	return operationAttemptRetry, nil
+}
+
+// probeOutcomeFor maps the result of a probe's own operation onto the terminal
+// transition its lease must perform. Caller cancellation releases the lease
+// without a health verdict: the scan is going away, so the probe proved nothing
+// about the share and must not be recorded as either healthy or dead.
+func probeOutcomeFor(ctx context.Context, err error) probeOutcome {
+	switch {
+	case err == nil:
+		return probeOutcomeSuccess
+	case ctx != nil && ctx.Err() != nil:
+		return probeOutcomeCancelled
+	case errors.Is(err, ErrOperationTimeout),
+		errors.Is(err, ErrReconnectTimeout),
+		IsReconnectable(err):
+		return probeOutcomeTransportFailure
+	default:
+		return probeOutcomeProbeFailed
+	}
 }
 
 // isHardHealthFailure reports whether an error is strong, share-specific
@@ -999,9 +1069,18 @@ func (c *Client) mountTreeWithSessionLimit(ctx context.Context, session transpor
 // mountShare mounts a share, recovering the transport when the tree connect
 // fails because the session died.
 func (c *Client) mountShare(share string) (transportTree, error) {
+	return c.mountShareContext(context.Background(), share)
+}
+
+// mountShareContext mounts a share under the caller's context so a containment
+// wait or a tree connect cannot outlive an interrupted scan.
+func (c *Client) mountShareContext(ctx context.Context, share string) (transportTree, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var tree transportTree
-	err := c.run(context.Background(), "mount "+share, share, false, func(session transportSession, deadline time.Time) error {
-		mounted, err := c.mountTreeWithSessionLimit(context.Background(), session, share, c.limitUntil(deadline))
+	err := c.run(ctx, "mount "+share, share, false, func(session transportSession, deadline time.Time) error {
+		mounted, err := c.mountTreeWithSessionLimit(ctx, session, share, c.limitUntil(deadline))
 		if err != nil {
 			return err
 		}

@@ -22,11 +22,23 @@ func (c *Client) WalkShare(share string, fn func(RemoteFile) error) error {
 }
 
 func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(RemoteFile) error) error {
+	return c.WalkShareWithOptionsContext(context.Background(), share, opts, fn)
+}
+
+// WalkShareWithOptionsContext walks one share with the caller's context. Every
+// containment wait, reconnect wait and bounded phase in the walk uses it, so
+// Ctrl-C, --max-scan-time and target cancellation release a walker that is
+// parked on a withheld share instead of leaving it blocked for the rest of the
+// recovery budget.
+func (c *Client) WalkShareWithOptionsContext(ctx context.Context, share string, opts WalkOptions, fn func(RemoteFile) error) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if fn == nil {
 		return fmt.Errorf("walk callback cannot be nil")
 	}
 
-	tree, err := c.mountShare(share)
+	tree, err := c.mountShareContext(ctx, share)
 	if err != nil {
 		return err
 	}
@@ -34,7 +46,7 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 		if tree != nil {
 			// Tree disconnect is a network call; bound it so a wedged server
 			// cannot hang the target at the end of a walk.
-			_ = c.bounded(context.Background(), "tree disconnect", c.operationLimit(), tree.Umount)
+			_ = c.bounded(ctx, "tree disconnect", c.operationLimit(), tree.Umount)
 		}
 	}()
 
@@ -45,18 +57,18 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 		var entries []fs.FileInfo
 		var lastErr error
 		for attempt := 0; attempt < totalOperationAttempts; attempt++ {
-			current, err := c.currentSession(context.Background())
+			current, err := c.currentSession(ctx)
 			if err != nil {
 				return nil, err
 			}
 			if tree == nil {
-				tree, err = c.mountTreeWithSession(context.Background(), current, share)
+				tree, err = c.mountTreeWithSession(ctx, current, share)
 				if err != nil {
 					return nil, err
 				}
 			}
 			var listed []fs.FileInfo
-			listErr := c.bounded(context.Background(), "directory enumeration", c.operationLimit(), func() error {
+			listErr := c.bounded(ctx, "directory enumeration", c.operationLimit(), func() error {
 				listed, err = tree.ReadDir(path)
 				return err
 			})
@@ -93,7 +105,7 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 			// Drop the stale tree and re-establish the transport before
 			// restarting this directory.
 			if tree != nil {
-				_ = c.bounded(context.Background(), "tree disconnect", c.operationLimit(), tree.Umount)
+				_ = c.bounded(ctx, "tree disconnect", c.operationLimit(), tree.Umount)
 				tree = nil
 			}
 			if IsReconnectable(err) {
@@ -106,12 +118,12 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 					Kind: TransportEventRetrying, Server: serverName, Share: share, Operation: "read dir " + path,
 					Attempt: attempt + 1, MaxAttempts: maxReconnectAttempts, Err: err,
 				})
-				if rerr := c.recover(context.Background(), current); rerr != nil {
+				if rerr := c.recover(ctx, current); rerr != nil {
 					c.reportEnumerationFailure(share, path, lastErr, attempt+1)
 					return nil, fmt.Errorf("read dir %s on %s: %w", path, share, lastErr)
 				}
 			}
-			if err := sleepContext(context.Background(), reconnectBackoff); err != nil {
+			if err := sleepContext(ctx, reconnectBackoff); err != nil {
 				return nil, err
 			}
 		}
@@ -137,7 +149,7 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 		// the bounded probe protocol to restore it or abandon it. Aborting here
 		// on a transient problem would silently drop every later file of an
 		// otherwise healthy share.
-		if err := c.waitShareReady(context.Background(), share); err != nil {
+		if err := c.waitShareReady(ctx, share); err != nil {
 			return err
 		}
 		item := stack[len(stack)-1]
@@ -152,7 +164,7 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 		}
 
 		for _, entry := range entries {
-			if err := c.waitShareReady(context.Background(), share); err != nil {
+			if err := c.waitShareReady(ctx, share); err != nil {
 				return err
 			}
 			remotePath := joinRemotePath(item.path, entry.Name())

@@ -3,6 +3,7 @@ package smb
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 )
 
@@ -93,6 +94,59 @@ type shareHealth struct {
 	abandoned bool
 }
 
+// probeOutcome is the terminal verdict of one granted share probe. Every
+// outcome releases the lease and wakes the waiters; only a clean success
+// restores the share, and only the failure outcomes re-arm the cooldown.
+type probeOutcome int
+
+const (
+	// probeOutcomeCancelled releases the lease without a health verdict: the
+	// caller's context ended, so the probe proved nothing about the share and
+	// must not be read as either healthy or dead.
+	probeOutcomeCancelled probeOutcome = iota
+	// probeOutcomeSuccess is a probe that completed real work against the
+	// share, which restores it and resumes the withheld queue.
+	probeOutcomeSuccess
+	// probeOutcomeTransportFailure is a probe whose operation failed with
+	// transport evidence (hard phase bound or reconnectable error).
+	probeOutcomeTransportFailure
+	// probeOutcomeSessionUnavailable is a probe that never reached the network
+	// because no session could be obtained.
+	probeOutcomeSessionUnavailable
+	// probeOutcomeBudgetExhausted is a probe whose owner ran out of its
+	// per-operation recovery budget before it could attempt the network work.
+	probeOutcomeBudgetExhausted
+	// probeOutcomeProbeFailed is a probe that ran but did not demonstrate a
+	// healthy share (for example an ordinary SMB status). Like every other
+	// non-success outcome it keeps the share withheld and re-arms the cooldown.
+	probeOutcomeProbeFailed
+)
+
+// probeLease is the exclusive right to run one share-recovery probe. It is
+// created together with probing=true, and it is the only way to reach the
+// terminal transition that clears probing and wakes the waiters.
+//
+// The lease is self-cleaning: resolution is idempotent and safe to call from a
+// deferred function, so every ordinary return path after the grant — including
+// budget exhaustion, session failure and a panic — still releases it. A lease
+// that is never explicitly resolved by its owner is released by the deferred
+// safety net as a cancellation, never as a health verdict.
+type probeLease struct {
+	client *Client
+	share  string
+	once   sync.Once
+}
+
+// Resolve performs the one terminal transition for this lease. It is
+// idempotent: the first call wins and later calls (including the deferred
+// safety net) are no-ops.
+func (l *probeLease) Resolve(outcome probeOutcome) {
+	if l == nil {
+		return
+	}
+	l.once.Do(func() { l.client.resolveShareProbe(l.share, outcome) })
+}
+
 // healthState is the transport-health evidence for one target client.
 type healthState struct {
 	shares map[string]*shareHealth
@@ -144,21 +198,65 @@ func (c *Client) shareRecoveryLimitLocked() time.Duration {
 // shareBudgetSpentLocked reports whether this share has used up its cumulative
 // quarantine budget and must be abandoned.
 func (c *Client) shareBudgetSpentLocked(st *shareHealth, now time.Time) bool {
+	return c.shareSpentLocked(st, now) >= c.shareRecoveryLimitLocked()
+}
+
+// shareSpentLocked is the cumulative quarantine time charged to one share,
+// including the interval that is still running.
+func (c *Client) shareSpentLocked(st *shareHealth, now time.Time) time.Duration {
 	spent := st.spent
 	if !st.chargeFrom.IsZero() {
 		spent += now.Sub(st.chargeFrom)
 	}
-	return spent >= c.shareRecoveryLimitLocked()
+	return spent
 }
 
-// awaitShare holds queued work while a share is withheld and grants exactly one
-// probe per cooldown. It returns probe=true when the caller has been granted the
-// probe and must report the outcome with resolveShareProbe.
+// withholdDeadlineLocked is the absolute time at which the share's remaining
+// recovery budget is exhausted. It is the hard watchdog for the withheld and
+// probing state: no waiter may block past it, whatever the probe owner does.
+func (c *Client) withholdDeadlineLocked(st *shareHealth, now time.Time) time.Time {
+	remaining := c.shareRecoveryLimitLocked() - c.shareSpentLocked(st, now)
+	if remaining <= 0 {
+		return now
+	}
+	base := st.chargeFrom
+	if base.IsZero() {
+		base = now
+	}
+	return base.Add(remaining)
+}
+
+// shareWaitLocked decides how long a waiter blocks before it re-examines the
+// share. Nothing here may produce a zero-duration wait while the share is still
+// withheld: a zero wait would spin the waiter on a timer instead of parking it.
+//
+//   - While a probe is in flight, nextProbeAt is irrelevant. Waiters park on the
+//     probe completion channel, cancellation, or the withheld hard deadline.
+//   - While no probe is in flight, the earlier of the probe cooldown and the
+//     hard deadline applies.
+func (c *Client) shareWaitLocked(st *shareHealth, now time.Time) (done <-chan struct{}, wait time.Duration) {
+	done = st.probeDone
+	wait = c.withholdDeadlineLocked(st, now).Sub(now)
+	if !st.probing {
+		if probeWait := st.nextProbeAt.Sub(now); probeWait < wait {
+			wait = probeWait
+		}
+	}
+	if wait < 0 {
+		wait = 0
+	}
+	return done, wait
+}
+
+// acquireShareProbe holds queued work while a share is withheld and grants at
+// most one probe per cooldown. A non-nil lease means the caller owns the probe
+// and must resolve it with probeLease.Resolve; the caller must also be able to
+// release it on every return path (a deferred Resolve does that structurally).
 //
 // Waiting rather than failing is what preserves recall: a file that is only
 // delayed by a transient transport problem is still read once the probe
 // restores the share.
-func (c *Client) awaitShare(ctx context.Context, share string) (probe bool, waited bool, err error) {
+func (c *Client) acquireShareProbe(ctx context.Context, share string) (lease *probeLease, waited bool, err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -166,40 +264,37 @@ func (c *Client) awaitShare(ctx context.Context, share string) (probe bool, wait
 		c.mu.Lock()
 		if c.health.targetUnhealthy {
 			c.mu.Unlock()
-			return false, waited, ErrTargetUnhealthy
+			return nil, waited, ErrTargetUnhealthy
 		}
 		if share == "" {
 			c.mu.Unlock()
-			return false, waited, nil
+			return nil, waited, nil
 		}
 		c.initHealthLocked()
 		st := c.health.shares[share]
 		if st == nil || (!st.withheld && !st.abandoned) {
 			c.mu.Unlock()
-			return false, waited, nil
+			return nil, waited, nil
 		}
 		now := time.Now()
 		if st.abandoned || c.shareBudgetSpentLocked(st, now) {
 			report := c.abandonShareLocked(share, ErrShareUnhealthy)
 			c.mu.Unlock()
 			report()
-			return false, waited, ErrShareUnhealthy
+			return nil, waited, ErrShareUnhealthy
 		}
 		waited = true
 		if !st.probing && !now.Before(st.nextProbeAt) {
 			st.probing = true
 			st.probeDone = make(chan struct{})
+			lease := &probeLease{client: c, share: share}
 			c.mu.Unlock()
-			return true, waited, nil
+			return lease, waited, nil
 		}
-		done := st.probeDone
-		wait := st.nextProbeAt.Sub(now)
+		done, wait := c.shareWaitLocked(st, now)
 		c.mu.Unlock()
-		if wait < 0 {
-			wait = 0
-		}
 		if err := waitUntil(ctx, wait, done); err != nil {
-			return false, waited, err
+			return nil, waited, err
 		}
 	}
 }
@@ -233,17 +328,8 @@ func (c *Client) waitShareReady(ctx context.Context, share string) error {
 			report()
 			return ErrShareUnhealthy
 		}
-		done := st.probeDone
-		wait := st.nextProbeAt.Sub(now)
-		if done == nil && wait <= 0 {
-			// No probe is in flight; wait briefly for one of the queued
-			// workers to claim it instead of spinning.
-			wait = 10 * time.Millisecond
-		}
+		done, wait := c.shareWaitLocked(st, now)
 		c.mu.Unlock()
-		if wait < 0 {
-			wait = 0
-		}
 		if err := waitUntil(ctx, wait, done); err != nil {
 			return err
 		}
@@ -261,6 +347,11 @@ func (c *Client) abandonShareLocked(share string, err error) func() {
 	}
 	st.abandoned = true
 	st.withheld = false
+	// Abandonment is a terminal transition for the withheld state, so any probe
+	// owner still running is released and every waiter parked on the probe is
+	// woken. The owner's own Resolve then finds probing already cleared and
+	// becomes a no-op.
+	releaseProbeLocked(st)
 	c.stats.SharesAbandoned++
 	handler := c.onFailure
 	serverName := c.serverName
@@ -302,13 +393,27 @@ func waitUntil(ctx context.Context, wait time.Duration, done <-chan struct{}) er
 	}
 }
 
-// resolveShareProbe records the outcome of a granted probe. A success restores
-// the share so the remaining queue continues; a failure re-arms the cooldown.
-func (c *Client) resolveShareProbe(share string, ok bool) {
+// releaseProbeLocked clears the probed-in-flight state and wakes every waiter
+// parked on the probe completion channel. Callers hold c.mu. It must only be
+// used together with a terminal transition of the withheld state.
+func releaseProbeLocked(st *shareHealth) {
+	st.probing = false
+	if done := st.probeDone; done != nil {
+		st.probeDone = nil
+		close(done)
+	}
+}
+
+// resolveShareProbe records the outcome of a granted probe. Every outcome
+// clears probing and wakes the waiters; a success also restores the share so the
+// remaining queue continues, and a failure re-arms the cooldown.
+func (c *Client) resolveShareProbe(share string, outcome probeOutcome) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	st := c.health.shares[share]
 	if st == nil || !st.probing {
+		// Already released by an earlier terminal transition (for example the
+		// withheld watchdog abandoning the share while the probe was running).
 		return
 	}
 	now := time.Now()
@@ -316,19 +421,16 @@ func (c *Client) resolveShareProbe(share string, ok bool) {
 		st.spent += now.Sub(st.chargeFrom)
 	}
 	st.chargeFrom = now
-	st.probing = false
-	done := st.probeDone
-	st.probeDone = nil
-	if ok {
+	switch outcome {
+	case probeOutcomeSuccess:
+		releaseProbeLocked(st)
 		st.withheld = false
 		st.failedOps = nil
 		st.chargeFrom = time.Time{}
 		st.nextProbeAt = time.Time{}
-	} else {
+	default:
+		releaseProbeLocked(st)
 		st.nextProbeAt = now.Add(c.probeCooldownLocked())
-	}
-	if done != nil {
-		close(done)
 	}
 }
 
@@ -371,6 +473,11 @@ func (c *Client) noteSuccess(share string, progress bool) {
 		st.withheld = false
 		st.chargeFrom = time.Time{}
 		st.nextProbeAt = time.Time{}
+		// A substantive success is proof the share is healthy even while a probe
+		// is outstanding, so the probe's waiters are released instead of being
+		// parked until the watchdog. The owner's own Resolve then becomes a
+		// no-op, because probing has already been cleared.
+		releaseProbeLocked(st)
 	}
 }
 

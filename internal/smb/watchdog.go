@@ -69,6 +69,36 @@ func (c *Client) invalidate() {
 	}
 }
 
+// limitUntil caps one request phase by the remaining time before an absolute
+// deadline. It lets a caller that owns a whole-operation budget reuse the
+// per-phase watchdog without ever overshooting that budget.
+func (c *Client) limitUntil(deadline time.Time) time.Duration {
+	return c.limitBaseUntil(c.operationLimit(), deadline)
+}
+
+// limitBaseUntil caps an explicit per-phase bound by the remaining time before
+// an absolute deadline. Read phases use the read idle timeout as their base, so
+// a healthy slow transfer is not cut short by the shorter request-phase bound.
+func (c *Client) limitBaseUntil(base time.Duration, deadline time.Time) time.Duration {
+	limit := base
+	if limit <= 0 {
+		limit = c.operationLimit()
+	}
+	if deadline.IsZero() {
+		return limit
+	}
+	remaining := time.Until(deadline)
+	if remaining < limit {
+		limit = remaining
+	}
+	if limit <= 0 {
+		// The deadline is gone; a non-positive limit would restore the default,
+		// so return the smallest bound that still expires immediately.
+		return time.Nanosecond
+	}
+	return limit
+}
+
 // dialBounded establishes a session under a hard bound covering the TCP connect
 // and the SMB handshake. The dialer receives a context that it must honour; the
 // select below is a backstop that returns even if a dialer ignores it.

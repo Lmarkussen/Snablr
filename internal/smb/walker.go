@@ -32,7 +32,9 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 	}
 	defer func() {
 		if tree != nil {
-			_ = tree.Umount()
+			// Tree disconnect is a network call; bound it so a wedged server
+			// cannot hang the target at the end of a walk.
+			_ = c.bounded(context.Background(), "tree disconnect", c.operationLimit(), tree.Umount)
 		}
 	}()
 
@@ -72,6 +74,13 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 			// one bounded retry, then fail the walk so the target moves on
 			// instead of spending the whole recovery budget on one directory.
 			if errors.Is(err, ErrOperationTimeout) && attempt >= 1 {
+				if c.noteHardTimeout(share, "read dir "+path+" on "+share) {
+					c.reportAbandonment(share, false, err)
+				}
+				if c.noteTransportFailure() {
+					c.reportAbandonment(share, true, err)
+					return nil, fmt.Errorf("read dir %s on %s: %w", path, share, ErrTargetUnhealthy)
+				}
 				c.reportEnumerationFailure(share, path, lastErr, attempt+1)
 				return nil, fmt.Errorf("read dir %s on %s: %w", path, share, lastErr)
 			}
@@ -84,7 +93,7 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 			// Drop the stale tree and re-establish the transport before
 			// restarting this directory.
 			if tree != nil {
-				_ = tree.Umount()
+				_ = c.bounded(context.Background(), "tree disconnect", c.operationLimit(), tree.Umount)
 				tree = nil
 			}
 			if IsReconnectable(err) {
@@ -124,6 +133,12 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 		maxDepth = c.maxDepth
 	}
 	for len(stack) > 0 {
+		// Stop producing work for a share the circuit breaker has abandoned:
+		// the remaining queued objects fail fast, so continuing to walk would
+		// only delay the next share.
+		if err := c.healthBlocked(share); err != nil {
+			return err
+		}
 		item := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 
@@ -136,6 +151,9 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 		}
 
 		for _, entry := range entries {
+			if err := c.healthBlocked(share); err != nil {
+				return err
+			}
 			remotePath := joinRemotePath(item.path, entry.Name())
 			normalizedPath := normalizeRemotePath(remotePath)
 

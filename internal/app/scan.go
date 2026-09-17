@@ -993,6 +993,11 @@ func failureReportEntry(host string, failure smb.OperationFailure) failurereport
 	category := failurereport.CategoryForSMBCategory(failure.Category)
 	coverageImpact := ""
 	switch {
+	case strings.Contains(strings.ToLower(failure.Operation), "abandon"):
+		// One record represents every remaining object that could not be
+		// inspected because the share or target was abandoned as unhealthy.
+		operation = failurereport.OperationEnumeration
+		coverageImpact = "share abandoned after repeated transport failures; remaining objects not inspected and remain retryable"
 	case strings.Contains(strings.ToLower(failure.Operation), "enumeration"):
 		operation = failurereport.OperationEnumeration
 		category = failurereport.CategoryEnumeration

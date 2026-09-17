@@ -333,6 +333,15 @@ func runBreakerAmplification(t *testing.T, mode string) {
 	client := newHealthClient(t, srv)
 	isolateShareBreaker(client)
 
+	var abandonments, perObjectFailures int64
+	client.SetOperationFailureHandler(func(failure OperationFailure) {
+		if strings.Contains(strings.ToLower(failure.Operation), "abandon") {
+			atomic.AddInt64(&abandonments, 1)
+			return
+		}
+		atomic.AddInt64(&perObjectFailures, 1)
+	})
+
 	elapsed, attempts := drainShare(t, client, "share", workers)
 	stats := client.TransportStats()
 	idle := healthTestIdle(client)
@@ -354,6 +363,14 @@ func runBreakerAmplification(t *testing.T, mode string) {
 	}
 	if attempts >= files {
 		t.Fatalf("walker kept producing doomed work for an abandoned share: %d/%d attempts", attempts, files)
+	}
+	// Coverage must be recorded as one representative failure for the whole
+	// share, never one entry per doomed object.
+	if abandonments != 1 {
+		t.Fatalf("expected exactly one abandonment record for the share, got %d", abandonments)
+	}
+	if perObjectFailures > 4*workers {
+		t.Fatalf("doomed objects produced per-object failure records instead of one share record: %d", perObjectFailures)
 	}
 }
 
@@ -566,6 +583,13 @@ func TestManyUnhealthySharesAbandonTarget(t *testing.T) {
 	srv.readStall = true
 	client := newHealthClient(t, srv)
 
+	var targetAbandonments int64
+	client.SetOperationFailureHandler(func(failure OperationFailure) {
+		if strings.Contains(strings.ToLower(failure.Operation), "target abandoned") {
+			atomic.AddInt64(&targetAbandonments, 1)
+		}
+	})
+
 	names := make([]string, 0, shares)
 	for i := 0; i < shares; i++ {
 		names = append(names, fmt.Sprintf("share%02d", i))
@@ -603,6 +627,9 @@ func TestManyUnhealthySharesAbandonTarget(t *testing.T) {
 
 	if !client.targetUnhealthy() {
 		t.Fatal("a target where every share is wedged was never abandoned")
+	}
+	if targetAbandonments != 1 {
+		t.Fatalf("expected exactly one target abandonment record, got %d", targetAbandonments)
 	}
 	if completedShares == shares {
 		t.Fatal("target was abandoned only after every share paid its own recovery cost")

@@ -118,8 +118,9 @@ func (c *Client) noteSuccess(share string, progress bool) {
 }
 
 // noteHardTimeout records a distinct operation that consumed its full hard
-// bound. It returns true when this event abandoned the share.
-func (c *Client) noteHardTimeout(share, operation string) (shareAbandoned bool) {
+// bound. It returns true only for the call that abandons the share, so the
+// caller emits exactly one representative failure record.
+func (c *Client) noteHardTimeout(share, operation string) (justAbandoned bool) {
 	if share == "" {
 		return false
 	}
@@ -127,7 +128,7 @@ func (c *Client) noteHardTimeout(share, operation string) (shareAbandoned bool) 
 	defer c.mu.Unlock()
 	c.initHealthLocked()
 	if c.health.unhealthy[share] {
-		return true
+		return false
 	}
 	set := c.health.failedOps[share]
 	if set == nil {
@@ -143,14 +144,14 @@ func (c *Client) noteHardTimeout(share, operation string) (shareAbandoned bool) 
 }
 
 // noteTransportFailure records one transport-class failure for the target
-// streak and returns true when the target recovery budget is exhausted.
-func (c *Client) noteTransportFailure() (targetAbandoned bool) {
+// streak and returns true only for the call that abandons the target.
+func (c *Client) noteTransportFailure() (justAbandoned bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := time.Now()
 	c.health.transportFailures++
 	if c.health.targetUnhealthy {
-		return true
+		return false
 	}
 	budget := c.targetRecoveryBudget
 	if budget <= 0 {
@@ -164,11 +165,14 @@ func (c *Client) noteTransportFailure() (targetAbandoned bool) {
 	return false
 }
 
-// noteDialFailure records a failed reconnect and returns true when the target
-// is unreachable and must be abandoned.
-func (c *Client) noteDialFailure() (targetAbandoned bool) {
+// noteDialFailure records a failed reconnect and returns true only for the call
+// that abandons the target.
+func (c *Client) noteDialFailure() (justAbandoned bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.health.targetUnhealthy {
+		return false
+	}
 	c.health.dialFailures++
 	if c.health.dialFailures >= targetDialFailureLimit {
 		c.health.targetUnhealthy = true

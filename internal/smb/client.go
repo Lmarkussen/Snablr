@@ -658,8 +658,13 @@ func (c *Client) recover(ctx context.Context, used transportSession) error {
 		emitTransportEvent(handler, TransportEvent{Kind: TransportEventRecoveryFailed, Server: serverName, Operation: "reconnect", Err: err})
 		// A server that cannot be reconnected to is terminal for the target:
 		// do not let every remaining share and file re-dial it in turn.
-		if !IsAuthFailure(err) && c.noteDialFailure() {
-			return fmt.Errorf("%w: reconnect to %s failed: %v", ErrTargetUnhealthy, serverName, err)
+		if !IsAuthFailure(err) {
+			if c.noteDialFailure() {
+				c.reportAbandonment("", true, err)
+			}
+			if c.targetUnhealthy() {
+				return fmt.Errorf("%w: reconnect to %s failed: %v", ErrTargetUnhealthy, serverName, err)
+			}
 		}
 		return err
 	}
@@ -779,16 +784,20 @@ func (c *Client) runOperation(ctx context.Context, operation, share string, prog
 		// cascade caused by another worker invalidating the shared session is
 		// not independent evidence either.
 		if isHardHealthFailure(err) {
-			if abandoned := c.noteHardTimeout(share, operation); abandoned {
+			if c.noteHardTimeout(share, operation) {
 				c.reportAbandonment(share, false, err)
-				return fmt.Errorf("%s: %w", operation, ErrShareUnhealthy)
 			}
 		}
 		if IsReconnectable(err) {
-			if abandoned := c.noteTransportFailure(); abandoned {
+			if c.noteTransportFailure() {
 				c.reportAbandonment(share, true, err)
-				return fmt.Errorf("%s: %w", operation, ErrTargetUnhealthy)
 			}
+		}
+		// Whatever this worker's own failure meant, stop as soon as the share or
+		// the target has been abandoned — including when another worker was the
+		// one that detected it, so no doomed object keeps retrying.
+		if blocked := c.healthBlocked(share); blocked != nil {
+			return fmt.Errorf("%s: %w", operation, blocked)
 		}
 		if attempt+1 >= totalOperationAttempts {
 			break
@@ -810,7 +819,6 @@ func (c *Client) runOperation(ctx context.Context, operation, share string, prog
 			})
 			if rerr := c.recover(ctx, session); rerr != nil {
 				if errors.Is(rerr, ErrTargetUnhealthy) {
-					c.reportAbandonment(share, true, lastErr)
 					return fmt.Errorf("%s: %w", operation, ErrTargetUnhealthy)
 				}
 				c.reportOperationFailure(operation, lastErr, attempt+1, reconnectAttempted)

@@ -35,6 +35,13 @@ func healthTestIdle(client *Client) time.Duration {
 	return idle
 }
 
+// isolateShareBreaker gives the client a target recovery budget that will not
+// fire during the test, so a test that is about one share's breaker is not
+// affected by the (deliberately much larger) target-level rule.
+func isolateShareBreaker(client *Client) {
+	client.SetTargetRecoveryBudget(time.Hour)
+}
+
 // healthServer is a scripted share server whose selected operations wedge until
 // the owning session is closed, which is exactly what a real socket close does.
 type healthServer struct {
@@ -324,6 +331,7 @@ func runBreakerAmplification(t *testing.T, mode string) {
 		t.Fatalf("unknown stall mode %q", mode)
 	}
 	client := newHealthClient(t, srv)
+	isolateShareBreaker(client)
 
 	elapsed, attempts := drainShare(t, client, "share", workers)
 	stats := client.TransportStats()
@@ -356,6 +364,7 @@ func TestUnhealthyShareDoesNotBlockHealthyShare(t *testing.T) {
 	srv.addDir("", srv.addFiles("bad", 100)...)
 	srv.readStall = true
 	client := newHealthClient(t, srv)
+	isolateShareBreaker(client)
 
 	badElapsed, _ := drainShare(t, client, "bad", 15)
 
@@ -489,6 +498,7 @@ func TestReadTotalBudgetBoundsTinyProgress(t *testing.T) {
 	srv.tinyProgress = true
 	srv.tinyPeriod = 180 * time.Millisecond // < scaled read idle (300ms)
 	client := newHealthClient(t, srv)
+	isolateShareBreaker(client)
 	client.SetMaxReadSize(1 << 20)
 
 	done := make(chan error, 1)
@@ -613,6 +623,7 @@ func TestNoGoroutineLeakAfterShareAbandonment(t *testing.T) {
 		srv.addDir("", srv.addFiles("file", 40)...)
 		srv.readStall = true
 		client := newHealthClient(t, srv)
+		isolateShareBreaker(client)
 		drainShare(t, client, "share", 15)
 		if _, targetUnhealthy, _ := client.healthSnapshot(); targetUnhealthy {
 			t.Fatal("a single unhealthy share must not abandon the target")

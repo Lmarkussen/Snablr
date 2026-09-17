@@ -178,9 +178,17 @@ func (p *WorkerPool) processJob(ctx context.Context, job Job) (result Result) {
 		} else {
 			content, err = job.LoadContent(ctx, meta)
 			if err != nil {
-				if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				if len(content) == 0 && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 					p.logError("read failed for %s: %v", meta.FilePath, err)
 					p.recordReadError(meta, err)
+				} else if len(content) > 0 {
+					// The SMB layer delivered the file's bytes and then reported a
+					// trailing status (for example at end-of-file). The delivered
+					// content is real and must still be analyzed; only count the
+					// read when bytes were produced.
+					if p.recorder != nil && !meta.BundleDependency {
+						p.recorder.IncFilesRead()
+					}
 				}
 			} else if p.recorder != nil && !meta.BundleDependency {
 				p.recorder.IncFilesRead()

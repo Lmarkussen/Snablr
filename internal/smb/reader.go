@@ -31,13 +31,8 @@ func (c *Client) ReadFile(share, path string) ([]byte, error) {
 	}
 	defer file.Close()
 
-	reader := io.Reader(file)
-	if c.maxReadSize > 0 {
-		reader = io.LimitReader(file, c.maxReadSize+1)
-	}
-
-	data, err := io.ReadAll(reader)
-	if err != nil && !errors.Is(err, io.EOF) {
+	data, err := readFileContent(file, c.maxReadSize)
+	if err != nil {
 		if os.IsPermission(err) {
 			return nil, fmt.Errorf("read %s on %s: permission denied", path, share)
 		}
@@ -49,4 +44,38 @@ func (c *Client) ReadFile(share, path string) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+// readFileContent reads a remote file to completion. It collects bytes as they
+// arrive and only surfaces an error when a read fails before producing any
+// data. SMB servers commonly return the last chunk of a file together with a
+// non-EOF status on the following read; that status must not discard the
+// already-delivered content, or the file is silently lost to content analysis.
+func readFileContent(file io.Reader, maxReadSize int64) ([]byte, error) {
+	var data []byte
+	buffer := make([]byte, 64*1024)
+	for {
+		n, err := file.Read(buffer)
+		if n > 0 {
+			data = append(data, buffer[:n]...)
+			if maxReadSize > 0 && int64(len(data)) > maxReadSize {
+				return data, ErrFileTooLarge
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return data, nil
+			}
+			// A non-EOF status after any content was delivered marks
+			// end-of-stream: keep the content. A status before any content is a
+			// genuine failure that must be reported.
+			if len(data) > 0 {
+				return data, nil
+			}
+			return nil, err
+		}
+		if n == 0 {
+			return data, nil
+		}
+	}
 }

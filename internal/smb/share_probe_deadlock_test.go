@@ -104,7 +104,7 @@ func (f *probeTestFile) Read(p []byte) (int, error) {
 
 func (f *probeTestFile) Close() error { return nil }
 
-// withheldProbeTestClient returns a client whose share-a is withheld exactly as
+// withheldProbeTestClient returns a client whose share-a is degraded exactly as
 // the production containment rule withholds it (three distinct hard-bound
 // operations), with the probe cooldown already elapsed.
 func withheldProbeTestClient(t *testing.T, cooldown, shareBudget time.Duration) *Client {
@@ -126,32 +126,34 @@ func withheldProbeTestClient(t *testing.T, cooldown, shareBudget time.Duration) 
 		}
 	}
 	if withheldBy != 1 {
-		t.Fatalf("share was withheld %d times, want exactly one transition", withheldBy)
+		t.Fatalf("share was degraded %d times, want exactly one transition", withheldBy)
 	}
 	c.mu.Lock()
 	st := c.health.shares["share-a"]
-	if st == nil || !st.withheld {
+	if st == nil || st.phase != shareDegraded {
 		c.mu.Unlock()
-		t.Fatalf("share was not withheld after %d distinct failures", shareFailureStreakLimit)
+		t.Fatalf("share was not degraded after %d distinct failures", shareFailureStreakLimit)
 	}
 	st.nextProbeAt = time.Now().Add(-time.Second)
 	c.mu.Unlock()
 	return c
 }
 
-func probeStateOf(c *Client, share string) (withheld, probing, abandoned bool, nextProbeAt time.Time) {
+// probeStateOf exposes the explicit containment state in the shape the probe
+// tests assert on: degraded is the old "withheld" state.
+func probeStateOf(c *Client, share string) (degraded, probing, abandoned bool, nextProbeAt time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	st := c.health.shares[share]
 	if st == nil {
 		return false, false, false, time.Time{}
 	}
-	return st.withheld, st.probing, st.abandoned, st.nextProbeAt
+	return st.phase == shareDegraded, st.probing, st.phase == shareAbandoned, st.nextProbeAt
 }
 
-// probeChannelState reports whether a probe completion channel is still open.
-// An open channel with no owner means every waiter parked on it is stuck until
-// the withheld watchdog fires.
+// probeChannelState reports whether a probe is still in flight. Every terminal
+// transition of the degraded state, including the recovery deadline expiring,
+// clears probing and wakes the waiters, so a probe left set is a stranded lease.
 func probeChannelState(c *Client, share string) (probing bool, openChannel bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -159,15 +161,7 @@ func probeChannelState(c *Client, share string) (probing bool, openChannel bool)
 	if st == nil {
 		return false, false
 	}
-	if st.probeDone == nil {
-		return st.probing, false
-	}
-	select {
-	case <-st.probeDone:
-		return st.probing, false
-	default:
-		return st.probing, true
-	}
+	return st.probing, st.probing
 }
 
 // runOperationForTest runs one read-shaped operation on the share and returns
@@ -379,7 +373,7 @@ func TestNoBusySpinWhileProbeIsInFlight(t *testing.T) {
 }
 
 // TestWithheldWatchdogReleasesWaiters is the secondary safety net: if the probe
-// owner never resolves for any reason, the withheld state itself must expire and
+// owner never resolves for any reason, the degraded state itself must expire and
 // release every waiter instead of holding them forever.
 func TestWithheldWatchdogReleasesWaiters(t *testing.T) {
 	const (
@@ -390,12 +384,11 @@ func TestWithheldWatchdogReleasesWaiters(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	// A probe owner that never resolves: the lease is held and nothing closes
-	// the completion channel.
+	// A probe owner that never resolves: the lease is held, and the state
+	// machine itself must still expire the degraded state.
 	c.mu.Lock()
 	st := c.health.shares["share-a"]
 	st.probing = true
-	st.probeDone = make(chan struct{})
 	c.mu.Unlock()
 
 	waiters := make([]chan error, 15)

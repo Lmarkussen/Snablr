@@ -56,14 +56,8 @@ func (c *Client) ListAccessibleShares(ctx context.Context) ([]ShareInfo, error) 
 func (c *Client) listShares(ctx context.Context, strict bool) ([]ShareInfo, error) {
 	var shares []string
 	if err := c.run(ctx, "list shares", "", false, func(session transportSession, deadline time.Time) error {
-		var names []string
-		err := c.bounded(ctx, "list shares", c.limitUntil(deadline), func() error {
-			listed, listErr := session.ListSharenames()
-			if listErr != nil {
-				return listErr
-			}
-			names = listed
-			return nil
+		names, err := runPhase(c, ctx, "list shares", "", c.limitUntil(deadline), func() ([]string, error) {
+			return session.ListSharenames()
 		})
 		if err != nil {
 			return err
@@ -170,15 +164,15 @@ func (c *Client) checkShareAccessContext(ctx context.Context, share string) erro
 	defer func() {
 		// Tree disconnect is a network call as well: a wedged server must not be
 		// able to hold the target open in an unbounded umount.
-		_ = c.bounded(ctx, "tree disconnect", c.operationLimit(), fs.Umount)
+		_ = c.bounded(ctx, "tree disconnect", share, c.operationLimit(), fs.Umount)
 	}()
 
 	// The share-root listing previously ran outside the watchdog entirely, so a
 	// server that accepted the tree connect and then stopped answering could
 	// freeze share enumeration forever with no cancellation path.
-	err = c.bounded(ctx, "share root enumeration", c.operationLimit(), func() error {
+	_, err = runPhase(c, ctx, "share root enumeration", share, c.operationLimit(), func() (struct{}, error) {
 		_, listErr := fs.ReadDir("")
-		return listErr
+		return struct{}{}, listErr
 	})
 	if errors.Is(err, ErrOperationTimeout) {
 		// One wedged root listing is evidence about this share, and any timeout

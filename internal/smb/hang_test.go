@@ -59,13 +59,66 @@ func (s *stallingServer) dialCount() int {
 	return s.dials
 }
 
+// stallConfig snapshots the wedged-operation switches under the server lock.
+// The client may now have a phase still in flight on its own goroutine when a
+// caller gives up on it, so the fake must be safe for concurrent access.
+func (s *stallingServer) stallConfig() map[string]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return map[string]bool{
+		"mount": s.mountStall,
+		"dir":   s.dirStall,
+		"stat":  s.statStall,
+		"open":  s.openStall,
+		"read":  s.readStall,
+	}
+}
+
+func (s *stallingServer) config(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch key {
+	case "mount":
+		return s.mountStall
+	case "dir":
+		return s.dirStall
+	case "stat":
+		return s.statStall
+	case "open":
+		return s.openStall
+	case "read":
+		return s.readStall
+	default:
+		return false
+	}
+}
+
+func (s *stallingServer) entries() []fs.FileInfo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]fs.FileInfo(nil), s.dirEntries...)
+}
+
+func (s *stallingServer) file(name string) ([]byte, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	content, ok := s.files[name]
+	return content, ok
+}
+
+func (s *stallingServer) partial() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]byte(nil), s.readPartial...)
+}
+
 type stallingSession struct {
 	server *stallingServer
 	gate   *stallGate
 }
 
 func (s *stallingSession) Mount(string) (transportTree, error) {
-	if s.server.mountStall {
+	if s.server.config("mount") {
 		return nil, s.gate.wait()
 	}
 	return &stallingTree{session: s}, nil
@@ -81,17 +134,17 @@ func (s *stallingSession) Close() error {
 type stallingTree struct{ session *stallingSession }
 
 func (t *stallingTree) ReadDir(string) ([]fs.FileInfo, error) {
-	if t.session.server.dirStall {
+	if t.session.server.config("dir") {
 		return nil, t.session.gate.wait()
 	}
-	return append([]fs.FileInfo(nil), t.session.server.dirEntries...), nil
+	return t.session.server.entries(), nil
 }
 
 func (t *stallingTree) Stat(name string) (fs.FileInfo, error) {
-	if t.session.server.statStall {
+	if t.session.server.config("stat") {
 		return nil, t.session.gate.wait()
 	}
-	content, ok := t.session.server.files[name]
+	content, ok := t.session.server.file(name)
 	if !ok {
 		return nil, errors.New("not found")
 	}
@@ -99,10 +152,10 @@ func (t *stallingTree) Stat(name string) (fs.FileInfo, error) {
 }
 
 func (t *stallingTree) Open(name string) (transportFile, error) {
-	if t.session.server.openStall {
+	if t.session.server.config("open") {
 		return nil, t.session.gate.wait()
 	}
-	content, ok := t.session.server.files[name]
+	content, ok := t.session.server.file(name)
 	if !ok {
 		return nil, errors.New("not found")
 	}
@@ -122,12 +175,13 @@ type stallingFile struct {
 }
 
 func (f *stallingFile) Read(p []byte) (int, error) {
-	if f.sent < len(f.server.readPartial) {
-		n := copy(p, f.server.readPartial[f.sent:])
+	partial := f.server.partial()
+	if f.sent < len(partial) {
+		n := copy(p, partial[f.sent:])
 		f.sent += n
 		return n, nil
 	}
-	if f.server.readStall {
+	if f.server.config("read") {
 		return 0, f.gate.wait()
 	}
 	if f.sent >= len(f.data) {

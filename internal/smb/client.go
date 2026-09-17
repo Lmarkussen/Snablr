@@ -478,7 +478,7 @@ func (c *Client) ConnectWithAuth(host string, auth Auth) error {
 	c.mu.Unlock()
 
 	if previous != nil {
-		_ = previous.Close()
+		closeSessionAsync(previous)
 	}
 
 	session, err := c.dialBounded(context.Background(), dialAddr, resolved)
@@ -506,12 +506,10 @@ func (c *Client) Close() error {
 	c.auth = resolvedAuth{}
 	c.mu.Unlock()
 
-	if session == nil {
-		return nil
-	}
-	if err := session.Close(); err != nil && !isIgnorableCloseError(err) {
-		return err
-	}
+	// Closing the session is a network call (logoff) that can contend with a
+	// wedged in-flight request, so it is detached: target completion must never
+	// wait for a peer that stopped answering.
+	closeSessionAsync(session)
 	return nil
 }
 
@@ -666,7 +664,7 @@ func (c *Client) recover(ctx context.Context, used transportSession) error {
 	c.mu.Unlock()
 
 	if stale != nil {
-		_ = stale.Close()
+		closeSessionAsync(stale)
 	}
 
 	session, err := c.dialBounded(ctx, dialAddr, auth)
@@ -869,6 +867,16 @@ func (c *Client) runOperationAttempt(
 		c.noteSuccess(share, progress)
 		return operationAttemptFinal, nil
 	}
+	if errors.Is(err, ErrShareUnhealthy) || errors.Is(err, ErrTargetUnhealthy) {
+		// The share went terminal while this phase was in flight, so the phase
+		// was abandoned rather than failed. That is containment, not a per-object
+		// failure: count it like the fast-fail gate and keep coverage free of
+		// thousands of duplicate records for work the share's quarantine covers.
+		c.mu.Lock()
+		c.stats.OperationsFastFailed++
+		c.mu.Unlock()
+		return operationAttemptFinal, fmt.Errorf("%s: %w", operation, ErrShareUnhealthy)
+	}
 	c.mu.Lock()
 	c.stats.OperationFailures++
 	c.mu.Unlock()
@@ -1051,14 +1059,8 @@ func (c *Client) mountTreeWithSessionLimit(ctx context.Context, session transpor
 	c.mu.Unlock()
 
 	mountPath := fmt.Sprintf(`\\%s\%s`, serverName, share)
-	var tree transportTree
-	err := c.bounded(ctx, "tree connect", limit, func() error {
-		mounted, mountErr := session.Mount(mountPath)
-		if mountErr != nil {
-			return mountErr
-		}
-		tree = mounted
-		return nil
+	tree, err := runPhase(c, ctx, "tree connect", share, limit, func() (transportTree, error) {
+		return session.Mount(mountPath)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("mount %s: %w", mountPath, err)

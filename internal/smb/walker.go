@@ -74,10 +74,8 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 			// one bounded retry, then fail the walk so the target moves on
 			// instead of spending the whole recovery budget on one directory.
 			if errors.Is(err, ErrOperationTimeout) && attempt >= 1 {
-				if c.noteHardTimeout(share, "read dir "+path+" on "+share) {
-					c.reportAbandonment(share, false, err)
-				}
-				if c.noteTransportFailure() {
+				c.noteHardTimeout(share, "read dir "+path+" on "+share)
+				if c.noteTransportFailure(share) {
 					c.reportAbandonment(share, true, err)
 				}
 				if blocked := c.healthBlocked(share); blocked != nil {
@@ -135,10 +133,11 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 		maxDepth = c.maxDepth
 	}
 	for len(stack) > 0 {
-		// Stop producing work for a share the circuit breaker has abandoned:
-		// the remaining queued objects fail fast, so continuing to walk would
-		// only delay the next share.
-		if err := c.healthBlocked(share); err != nil {
+		// Work is withheld from an unwell share, but only temporarily: wait for
+		// the bounded probe protocol to restore it or abandon it. Aborting here
+		// on a transient problem would silently drop every later file of an
+		// otherwise healthy share.
+		if err := c.waitShareReady(context.Background(), share); err != nil {
 			return err
 		}
 		item := stack[len(stack)-1]
@@ -153,7 +152,7 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 		}
 
 		for _, entry := range entries {
-			if err := c.healthBlocked(share); err != nil {
+			if err := c.waitShareReady(context.Background(), share); err != nil {
 				return err
 			}
 			remotePath := joinRemotePath(item.path, entry.Name())

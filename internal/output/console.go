@@ -354,7 +354,7 @@ func (c *ConsoleWriter) Close() error {
 		incomplete = "yes"
 	}
 	if _, err := fmt.Fprintf(c.w,
-		"Coverage incomplete: %s final_failures=%d content_read_failures=%d files_skipped=%d smb_transport_failures=%d smb_reconnects_attempted=%d smb_reconnects_succeeded=%d smb_reconnects_failed=%d smb_operations_retried=%d smb_files_recovered=%d smb_retry_exhausted=%d smb_enumeration_failures=%d smb_operation_timeouts=%d smb_auth_failures=%d\n",
+		"Coverage incomplete: %s final_failures=%d content_read_failures=%d files_skipped=%d smb_transport_failures=%d smb_reconnects_attempted=%d smb_reconnects_succeeded=%d smb_reconnects_failed=%d smb_operations_retried=%d smb_files_recovered=%d smb_retry_exhausted=%d smb_enumeration_failures=%d smb_operation_timeouts=%d smb_auth_failures=%d smb_shares_withheld=%d smb_shares_abandoned=%d smb_operations_fast_failed=%d smb_operations_resumed=%d\n",
 		incomplete,
 		counters.FinalFailureCount,
 		snapshot.ReadErrors,
@@ -369,6 +369,10 @@ func (c *ConsoleWriter) Close() error {
 		counters.SMBEnumerationFailures,
 		counters.SMBOperationTimeouts,
 		counters.SMBAuthFailures,
+		counters.SMBShareFailuresContained,
+		counters.SMBShareFailuresAbandoned,
+		counters.SMBOperationsFastFailed,
+		counters.SMBOperationsResumed,
 	); err != nil {
 		return err
 	}

@@ -86,6 +86,16 @@ type Counters struct {
 	OperationTimeouts int64
 	// AuthFailures counts terminal authentication failures (never retried).
 	AuthFailures int64
+	// SharesWithheld counts shares temporarily held back from work and
+	// SharesAbandoned counts shares whose recovery budget was spent.
+	SharesWithheld  int64
+	SharesAbandoned int64
+	// OperationsFastFailed counts operations that failed without a network
+	// attempt because containment had already given up on their share/target.
+	OperationsFastFailed int64
+	// OperationsResumed counts operations that succeeded after being held back
+	// by containment.
+	OperationsResumed int64
 }
 
 // Snapshot is an immutable view of the collected failures.
@@ -158,6 +168,10 @@ func (c *Collector) RecordTransportCounters(counters Counters) {
 	c.counters.RetryExhausted += counters.RetryExhausted
 	c.counters.OperationTimeouts += counters.OperationTimeouts
 	c.counters.AuthFailures += counters.AuthFailures
+	c.counters.SharesWithheld += counters.SharesWithheld
+	c.counters.SharesAbandoned += counters.SharesAbandoned
+	c.counters.OperationsFastFailed += counters.OperationsFastFailed
+	c.counters.OperationsResumed += counters.OperationsResumed
 }
 
 func (c *Collector) Snapshot() Snapshot {
@@ -211,6 +225,10 @@ func Render(snapshot Snapshot) string {
 	fmt.Fprintf(&builder, "Retry budget exhausted: %d\n", snapshot.Counters.RetryExhausted)
 	fmt.Fprintf(&builder, "Operations abandoned by timeout: %d\n", snapshot.Counters.OperationTimeouts)
 	fmt.Fprintf(&builder, "Authentication failures: %d\n", snapshot.Counters.AuthFailures)
+	fmt.Fprintf(&builder, "Shares withheld from work: %d\n", snapshot.Counters.SharesWithheld)
+	fmt.Fprintf(&builder, "Shares abandoned (coverage lost): %d\n", snapshot.Counters.SharesAbandoned)
+	fmt.Fprintf(&builder, "Operations failed without a network attempt: %d\n", snapshot.Counters.OperationsFastFailed)
+	fmt.Fprintf(&builder, "Operations resumed after containment: %d\n", snapshot.Counters.OperationsResumed)
 	fmt.Fprintf(&builder, "Coverage incomplete: %s\n\n", yesNo(snapshot.CoverageIncomplete()))
 
 	builder.WriteString("FINAL FAILED OBJECTS\n")

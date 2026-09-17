@@ -125,8 +125,12 @@ type Client struct {
 	recoveryBudget time.Duration
 	// targetRecoveryBudget bounds continuous transport failure on one target.
 	targetRecoveryBudget time.Duration
-	maxDepth             int
-	maxReadSize          int64
+	// shareRecoveryBudget is the cumulative time one share may be withheld.
+	shareRecoveryBudget time.Duration
+	// shareProbeCooldown is the pause before one probe is allowed through.
+	shareProbeCooldown time.Duration
+	maxDepth           int
+	maxReadSize        int64
 
 	dialer transportDialer
 
@@ -199,6 +203,8 @@ func NewClient() *Client {
 		reconnectWaitLimit:   defaultReconnectWaitLimit,
 		recoveryBudget:       defaultRecoveryBudget,
 		targetRecoveryBudget: defaultTargetRecoveryBudget,
+		shareRecoveryBudget:  defaultShareRecoveryBudget,
+		shareProbeCooldown:   defaultShareProbeCooldown,
 		maxDepth:             defaultMaxDepth,
 		maxReadSize:          defaultMaxReadSize,
 		dialer:               smb2Dialer{},
@@ -299,6 +305,30 @@ func (c *Client) SetTargetRecoveryBudget(limit time.Duration) {
 		return
 	}
 	c.targetRecoveryBudget = limit
+}
+
+// SetShareRecoveryBudget overrides the cumulative time one share may be
+// withheld before it is abandoned. Non-positive values restore the default.
+func (c *Client) SetShareRecoveryBudget(limit time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if limit <= 0 {
+		c.shareRecoveryBudget = defaultShareRecoveryBudget
+		return
+	}
+	c.shareRecoveryBudget = limit
+}
+
+// SetShareProbeCooldown overrides the pause before one probe is allowed through
+// a withheld share. Non-positive values restore the default.
+func (c *Client) SetShareProbeCooldown(limit time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if limit <= 0 {
+		c.shareProbeCooldown = defaultShareProbeCooldown
+		return
+	}
+	c.shareProbeCooldown = limit
 }
 
 // Timeouts returns the effective bounded-timing configuration.
@@ -720,9 +750,17 @@ func (c *Client) runOperation(ctx context.Context, operation, share string, prog
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		// Queued work for a share (or target) that has already been abandoned
-		// fails immediately instead of consuming another recovery budget.
-		if blocked := c.healthBlocked(share); blocked != nil {
+		// Work for a withheld share waits for the bounded probe protocol rather
+		// than failing, so a transient transport problem cannot permanently
+		// sacrifice the readable files that follow it. Abandoned shares and
+		// targets still fail immediately.
+		probe, waited, blocked := c.awaitShare(ctx, share)
+		if blocked != nil {
+			// Containment short-circuited this operation before any network
+			// work: record it so coverage never looks complete.
+			c.mu.Lock()
+			c.stats.OperationsFastFailed++
+			c.mu.Unlock()
 			return blocked
 		}
 		if time.Now().After(budgetDeadline) {
@@ -752,11 +790,18 @@ func (c *Client) runOperation(ctx context.Context, operation, share string, prog
 		c.mu.Unlock()
 
 		err = fn(session, budgetDeadline)
+		if probe {
+			// The granted probe decides whether the share comes back.
+			c.resolveShareProbe(share, err == nil)
+		}
 		if err == nil {
 			c.mu.Lock()
 			c.stats.OperationSuccesses++
 			if attempt > 0 {
 				c.stats.FilesRecovered += 1
+			}
+			if waited {
+				c.stats.OperationsResumed++
 			}
 			c.mu.Unlock()
 			c.noteSuccess(share, progress)
@@ -784,12 +829,12 @@ func (c *Client) runOperation(ctx context.Context, operation, share string, prog
 		// cascade caused by another worker invalidating the shared session is
 		// not independent evidence either.
 		if isHardHealthFailure(err) {
-			if c.noteHardTimeout(share, operation) {
-				c.reportAbandonment(share, false, err)
-			}
+			// Withholding the share pauses its queued work; the representative
+			// coverage failure is emitted only if the share is truly abandoned.
+			c.noteHardTimeout(share, operation)
 		}
 		if IsReconnectable(err) {
-			if c.noteTransportFailure() {
+			if c.noteTransportFailure(share) {
 				c.reportAbandonment(share, true, err)
 			}
 		}

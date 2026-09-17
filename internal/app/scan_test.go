@@ -234,7 +234,7 @@ func TestScanHostTransportDependencyFailureDoesNotReuseBundle(t *testing.T) {
 		cfg.Scan.Username = "user"
 		cfg.Scan.Password = "password"
 		cfg.Scan.WorkerCount = 1
-		err := scanHost(context.Background(), "host", "test", nil, nil, inventory, "ctx-test", "semantics", false, recorder, cfg, engine, sink, nil, logx.New("error"))
+		err := scanHost(context.Background(), "host", "test", nil, nil, inventory, "ctx-test", "semantics", false, recorder, cfg, engine, sink, logx.New("error"))
 		return recorder.Snapshot(), err
 	}
 	firstSink := &appCaptureSink{}

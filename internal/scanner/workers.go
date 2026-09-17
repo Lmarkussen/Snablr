@@ -179,9 +179,7 @@ func (p *WorkerPool) processJob(ctx context.Context, job Job) (result Result) {
 			content, err = job.LoadContent(ctx, meta)
 			if err != nil {
 				if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-					// Per-file detail lives in readErrors.log and debug output;
-					// normal mode keeps the lifecycle messages and the counts.
-					p.logDebug("read failed for %s: %v", meta.FilePath, err)
+					p.logError("read failed for %s: %v", meta.FilePath, err)
 					p.recordReadError(meta, err)
 				}
 			} else if p.recorder != nil && !meta.BundleDependency {
@@ -276,13 +274,6 @@ func evaluatorValidationMode(processor Evaluator) bool {
 	}
 	provider, ok := processor.(validationModeProvider)
 	return ok && provider.ValidationMode()
-}
-
-func (p *WorkerPool) logDebug(format string, args ...any) {
-	if p.logger == nil {
-		return
-	}
-	p.logger.Debugf(format, args...)
 }
 
 func (p *WorkerPool) logError(format string, args ...any) {

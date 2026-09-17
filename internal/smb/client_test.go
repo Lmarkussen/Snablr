@@ -5,8 +5,6 @@ import (
 	"net"
 	"strings"
 	"testing"
-
-	"github.com/hirochachacha/go-smb2"
 )
 
 func TestParseNTHash(t *testing.T) {
@@ -54,28 +52,12 @@ func TestNewAuthModesKeepSecretsSeparate(t *testing.T) {
 	if hashAuth.Mode != AuthModeNTHash || hashAuth.Password != "" || hashAuth.NTHash == [16]byte{} {
 		t.Fatalf("unexpected NT hash auth shape")
 	}
-	passwordResolved := resolvedAuth{mode: AuthModePassword, username: "user", domain: "DOMAIN", password: "secret"}
-	passwordInitiator, err := passwordResolved.initiator()
-	if err != nil {
-		t.Fatalf("password initiator returned error: %v", err)
-	}
-	passwordNTLM, ok := passwordInitiator.(*smb2.NTLMInitiator)
-	if !ok {
-		t.Fatalf("password mode did not produce an NTLM initiator")
-	}
-	if passwordNTLM.Password != "secret" || passwordNTLM.Hash != nil {
+	passwordInitiator := newNTLMInitiator(password, "user", "DOMAIN")
+	if passwordInitiator.Password != "secret" || passwordInitiator.Hash != nil {
 		t.Fatalf("password mode selected the wrong NTLM credential field")
 	}
-	hashResolved := resolvedAuth{mode: AuthModeNTHash, username: "user", domain: "DOMAIN", ntHash: hashAuth.NTHash}
-	hashInitiator, err := hashResolved.initiator()
-	if err != nil {
-		t.Fatalf("hash initiator returned error: %v", err)
-	}
-	hashNTLM, ok := hashInitiator.(*smb2.NTLMInitiator)
-	if !ok {
-		t.Fatalf("NT hash mode did not produce an NTLM initiator")
-	}
-	if hashNTLM.Password != "" || len(hashNTLM.Hash) != 16 {
+	hashInitiator := newNTLMInitiator(hashAuth, "user", "DOMAIN")
+	if hashInitiator.Password != "" || len(hashInitiator.Hash) != 16 {
 		t.Fatalf("NT hash mode selected the wrong NTLM credential field")
 	}
 }

@@ -52,9 +52,26 @@ const (
 	// defaultReadIdleTimeout bounds the time between read progress. A read that
 	// keeps delivering data is allowed to continue; a stalled read is abandoned.
 	defaultReadIdleTimeout = 60 * time.Second
+	// defaultReadTotalTimeout is the absolute wall-clock bound on reading one
+	// object, independent of progress. The idle timeout alone is not sufficient:
+	// a peer that delivers a little data just before each idle deadline
+	// refreshes it forever, so the read must also have a hard end.
+	//
+	// Rationale for five minutes: the default maximum object is 10 MiB and the
+	// read granularity is 512 KiB, so five minutes still admits a sustained
+	// throughput of roughly 35 KiB/s for a maximum-size object. That is
+	// generous for a LAN or WAN share while keeping any single object's read
+	// finite. Operators reading much larger objects can raise it.
+	defaultReadTotalTimeout = 5 * time.Minute
 	// defaultReconnectWaitLimit is the hard cap on waiting for a coordinated
 	// reconnect, so waiters are released even if the leader cannot be interrupted.
 	defaultReconnectWaitLimit = 45 * time.Second
+	// defaultSessionCloseTimeout bounds the logoff that precedes a socket close.
+	// Logoff is a network request: without a bound a server that accepts requests
+	// and never answers could block recovery or target cleanup forever, because
+	// the operation deadline is cleared after the handshake and every close path
+	// (reconnect leader, client close) runs outside the per-phase watchdog.
+	defaultSessionCloseTimeout = 2 * time.Second
 	// defaultRecoveryBudget is the hard cap on one operation including every
 	// reconnect, backoff and retry. When it is exhausted the operation becomes a
 	// final failure and the scan continues.
@@ -510,6 +527,13 @@ func (s *smb2Session) Close() error {
 	defer s.mu.Unlock()
 	var errs []error
 	if s.session != nil {
+		// Bound the logoff so a server that stops answering after the session was
+		// established cannot hold a reconnect leader or target cleanup open. The
+		// socket is still closed unconditionally below, which is what actually
+		// releases any blocked call.
+		if s.conn != nil {
+			_ = s.conn.SetDeadline(time.Now().Add(defaultSessionCloseTimeout))
+		}
 		if err := s.session.Logoff(); err != nil && !isIgnorableCloseError(err) {
 			errs = append(errs, err)
 		}

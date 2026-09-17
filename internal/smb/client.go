@@ -117,12 +117,16 @@ type Client struct {
 	operationTimeout time.Duration
 	// readIdleTimeout bounds the time between read progress.
 	readIdleTimeout time.Duration
+	// readTotalTimeout is the absolute bound on reading one object.
+	readTotalTimeout time.Duration
 	// reconnectWaitLimit is the hard cap on waiting for a coordinated reconnect.
 	reconnectWaitLimit time.Duration
 	// recoveryBudget is the hard cap on one operation including retries.
 	recoveryBudget time.Duration
-	maxDepth       int
-	maxReadSize    int64
+	// targetRecoveryBudget bounds continuous transport failure on one target.
+	targetRecoveryBudget time.Duration
+	maxDepth             int
+	maxReadSize          int64
 
 	dialer transportDialer
 
@@ -140,6 +144,8 @@ type Client struct {
 	onEvent   func(TransportEvent)
 	onFailure func(OperationFailure)
 	stats     TransportStats
+	// health holds the circuit-breaker evidence for this target.
+	health healthState
 }
 
 // resolvedAuth is the operator credential context resolved once at connect time
@@ -185,15 +191,18 @@ func (c *Client) GoString() string { return "smb.Client<redacted>" }
 
 func NewClient() *Client {
 	return &Client{
-		dialTimeout:        defaultDialTimeout,
-		handshakeTimeout:   defaultHandshakeTimeout,
-		operationTimeout:   defaultOperationTimeout,
-		readIdleTimeout:    defaultReadIdleTimeout,
-		reconnectWaitLimit: defaultReconnectWaitLimit,
-		recoveryBudget:     defaultRecoveryBudget,
-		maxDepth:           defaultMaxDepth,
-		maxReadSize:        defaultMaxReadSize,
-		dialer:             smb2Dialer{},
+		dialTimeout:          defaultDialTimeout,
+		handshakeTimeout:     defaultHandshakeTimeout,
+		operationTimeout:     defaultOperationTimeout,
+		readIdleTimeout:      defaultReadIdleTimeout,
+		readTotalTimeout:     defaultReadTotalTimeout,
+		reconnectWaitLimit:   defaultReconnectWaitLimit,
+		recoveryBudget:       defaultRecoveryBudget,
+		targetRecoveryBudget: defaultTargetRecoveryBudget,
+		maxDepth:             defaultMaxDepth,
+		maxReadSize:          defaultMaxReadSize,
+		dialer:               smb2Dialer{},
+		health:               healthState{lastSuccess: time.Now()},
 	}
 }
 
@@ -219,6 +228,28 @@ func (c *Client) SetReadIdleTimeout(limit time.Duration) {
 		return
 	}
 	c.readIdleTimeout = limit
+}
+
+// SetReadTotalTimeout overrides the absolute bound on reading one object.
+// Non-positive values restore the default.
+func (c *Client) SetReadTotalTimeout(limit time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if limit <= 0 {
+		c.readTotalTimeout = defaultReadTotalTimeout
+		return
+	}
+	c.readTotalTimeout = limit
+}
+
+// readTotalLimit reports the absolute bound on reading one object.
+func (c *Client) readTotalLimit() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.readTotalTimeout <= 0 {
+		return defaultReadTotalTimeout
+	}
+	return c.readTotalTimeout
 }
 
 // SetHandshakeTimeout overrides the bound on SMB negotiate plus session setup.
@@ -255,6 +286,19 @@ func (c *Client) SetRecoveryBudget(limit time.Duration) {
 		return
 	}
 	c.recoveryBudget = limit
+}
+
+// SetTargetRecoveryBudget overrides the wall-clock bound on continuous
+// transport failure on one target with no successful operation. Non-positive
+// values restore the default.
+func (c *Client) SetTargetRecoveryBudget(limit time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if limit <= 0 {
+		c.targetRecoveryBudget = defaultTargetRecoveryBudget
+		return
+	}
+	c.targetRecoveryBudget = limit
 }
 
 // Timeouts returns the effective bounded-timing configuration.
@@ -398,6 +442,9 @@ func (c *Client) ConnectWithAuth(host string, auth Auth) error {
 	c.lastFailedRecovery = time.Time{}
 	c.authFailure = nil
 	c.lastRecoveryErr = nil
+	// A connect establishes a fresh target context: clear any breaker evidence
+	// from an earlier connection so a new target is not pre-condemned.
+	c.health = healthState{lastSuccess: time.Now()}
 	c.mu.Unlock()
 
 	if previous != nil {
@@ -443,6 +490,13 @@ func isIgnorableCloseError(err error) bool {
 		return false
 	}
 	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	// A logoff that hit its bound means the server stopped answering; the
+	// socket is closed regardless, so the failed handshake is not an error
+	// worth surfacing during shutdown.
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
 	}
 
@@ -602,6 +656,11 @@ func (c *Client) recover(ctx context.Context, used transportSession) error {
 		close(done)
 		c.mu.Unlock()
 		emitTransportEvent(handler, TransportEvent{Kind: TransportEventRecoveryFailed, Server: serverName, Operation: "reconnect", Err: err})
+		// A server that cannot be reconnected to is terminal for the target:
+		// do not let every remaining share and file re-dial it in turn.
+		if !IsAuthFailure(err) && c.noteDialFailure() {
+			return fmt.Errorf("%w: reconnect to %s failed: %v", ErrTargetUnhealthy, serverName, err)
+		}
 		return err
 	}
 	c.session = session
@@ -637,7 +696,15 @@ func (c *Client) recordAuthFailure(err error) {
 // runOperation executes one SMB operation with bounded transport recovery. The
 // operation is retried from the beginning after a reconnect, so a file that hit
 // the reset is re-read rather than skipped.
-func (c *Client) runOperation(ctx context.Context, operation string, fileOperation bool, fn func(session transportSession) error) error {
+//
+// share scopes the operation for the circuit breaker (empty for a target-level
+// operation). The recovery budget is handed to fn as an absolute deadline, so a
+// phase that keeps making tiny progress can no longer outlive the operation
+// bound the way an indefinitely refreshed read timeout could.
+//
+// progress marks an operation whose success is real inspection progress and may
+// therefore clear the target recovery clock.
+func (c *Client) runOperation(ctx context.Context, operation, share string, progress bool, fn func(session transportSession, deadline time.Time) error) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -647,6 +714,11 @@ func (c *Client) runOperation(ctx context.Context, operation string, fileOperati
 	for attempt := 0; attempt < totalOperationAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		// Queued work for a share (or target) that has already been abandoned
+		// fails immediately instead of consuming another recovery budget.
+		if blocked := c.healthBlocked(share); blocked != nil {
+			return blocked
 		}
 		if time.Now().After(budgetDeadline) {
 			// The recovery budget for this operation is exhausted: record the
@@ -674,7 +746,7 @@ func (c *Client) runOperation(ctx context.Context, operation string, fileOperati
 		c.stats.OperationAttempts++
 		c.mu.Unlock()
 
-		err = fn(session)
+		err = fn(session, budgetDeadline)
 		if err == nil {
 			c.mu.Lock()
 			c.stats.OperationSuccesses++
@@ -682,6 +754,7 @@ func (c *Client) runOperation(ctx context.Context, operation string, fileOperati
 				c.stats.FilesRecovered += 1
 			}
 			c.mu.Unlock()
+			c.noteSuccess(share, progress)
 			return nil
 		}
 		c.mu.Lock()
@@ -700,6 +773,23 @@ func (c *Client) runOperation(ctx context.Context, operation string, fileOperati
 			return err
 		}
 		lastErr = err
+		// Circuit-breaker accounting. Only hard phase timeouts and recovery
+		// failures are evidence that a share is unhealthy: an ordinary reset
+		// that heals on the next attempt must not condemn a share, and a
+		// cascade caused by another worker invalidating the shared session is
+		// not independent evidence either.
+		if isHardHealthFailure(err) {
+			if abandoned := c.noteHardTimeout(share, operation); abandoned {
+				c.reportAbandonment(share, false, err)
+				return fmt.Errorf("%s: %w", operation, ErrShareUnhealthy)
+			}
+		}
+		if IsReconnectable(err) {
+			if abandoned := c.noteTransportFailure(); abandoned {
+				c.reportAbandonment(share, true, err)
+				return fmt.Errorf("%s: %w", operation, ErrTargetUnhealthy)
+			}
+		}
 		if attempt+1 >= totalOperationAttempts {
 			break
 		}
@@ -719,6 +809,10 @@ func (c *Client) runOperation(ctx context.Context, operation string, fileOperati
 				Attempt: attempt + 1, MaxAttempts: maxReconnectAttempts, Err: err,
 			})
 			if rerr := c.recover(ctx, session); rerr != nil {
+				if errors.Is(rerr, ErrTargetUnhealthy) {
+					c.reportAbandonment(share, true, lastErr)
+					return fmt.Errorf("%s: %w", operation, ErrTargetUnhealthy)
+				}
 				c.reportOperationFailure(operation, lastErr, attempt+1, reconnectAttempted)
 				return fmt.Errorf("%s: %w", operation, lastErr)
 			}
@@ -740,8 +834,41 @@ func (c *Client) runOperation(ctx context.Context, operation string, fileOperati
 	return fmt.Errorf("%s: %w", operation, lastErr)
 }
 
-func (c *Client) run(ctx context.Context, operation string, fn func(session transportSession) error) error {
-	return c.runOperation(ctx, operation, false, fn)
+// isHardHealthFailure reports whether an error is strong, share-specific
+// evidence that the transport or session is unhealthy: the operation consumed
+// its whole hard bound rather than returning an ordinary SMB status.
+func isHardHealthFailure(err error) bool {
+	return errors.Is(err, ErrOperationTimeout) || errors.Is(err, ErrReconnectTimeout)
+}
+
+// reportAbandonment emits exactly one failure record when a share or target is
+// abandoned, so coverage is marked incomplete without writing one entry per
+// doomed object.
+func (c *Client) reportAbandonment(share string, target bool, err error) {
+	c.mu.Lock()
+	handler := c.onFailure
+	serverName := c.serverName
+	c.mu.Unlock()
+	if handler == nil {
+		return
+	}
+	kind := "share abandoned"
+	if target {
+		kind = "target abandoned"
+	}
+	handler(OperationFailure{
+		Operation:          kind,
+		Share:              share,
+		Server:             serverName,
+		Category:           CategoryTransport,
+		Attempts:           1,
+		ReconnectAttempted: true,
+		Err:                err,
+	})
+}
+
+func (c *Client) run(ctx context.Context, operation, share string, progress bool, fn func(session transportSession, deadline time.Time) error) error {
+	return c.runOperation(ctx, operation, share, progress, fn)
 }
 
 // reportOperationFailure emits one structured failure record for an operation
@@ -784,6 +911,12 @@ func sleepContext(ctx context.Context, duration time.Duration) error {
 // mountTreeWithSession mounts a share over the given session within the bounded
 // operation timeout, so a tree connect that never answers cannot block a worker.
 func (c *Client) mountTreeWithSession(ctx context.Context, session transportSession, share string) (transportTree, error) {
+	return c.mountTreeWithSessionLimit(ctx, session, share, c.operationLimit())
+}
+
+// mountTreeWithSessionLimit mounts a share within an explicit bound, so a
+// caller that already holds an absolute deadline cannot overshoot it.
+func (c *Client) mountTreeWithSessionLimit(ctx context.Context, session transportSession, share string, limit time.Duration) (transportTree, error) {
 	if session == nil {
 		return nil, ErrNotConnected
 	}
@@ -796,7 +929,7 @@ func (c *Client) mountTreeWithSession(ctx context.Context, session transportSess
 
 	mountPath := fmt.Sprintf(`\\%s\%s`, serverName, share)
 	var tree transportTree
-	err := c.bounded(ctx, "tree connect", c.operationLimit(), func() error {
+	err := c.bounded(ctx, "tree connect", limit, func() error {
 		mounted, mountErr := session.Mount(mountPath)
 		if mountErr != nil {
 			return mountErr
@@ -814,8 +947,8 @@ func (c *Client) mountTreeWithSession(ctx context.Context, session transportSess
 // fails because the session died.
 func (c *Client) mountShare(share string) (transportTree, error) {
 	var tree transportTree
-	err := c.run(context.Background(), "mount "+share, func(session transportSession) error {
-		mounted, err := c.mountTreeWithSession(context.Background(), session, share)
+	err := c.run(context.Background(), "mount "+share, share, false, func(session transportSession, deadline time.Time) error {
+		mounted, err := c.mountTreeWithSessionLimit(context.Background(), session, share, c.limitUntil(deadline))
 		if err != nil {
 			return err
 		}

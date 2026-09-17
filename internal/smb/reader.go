@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"time"
 )
 
 // readChunkSize is the read granularity. Progress is measured per chunk, so a
@@ -29,19 +30,27 @@ func (c *Client) ReadFileContext(ctx context.Context, share, path string) ([]byt
 	// The whole operation (mount, stat, open, read) is retried from the
 	// beginning after a transport recovery, so partial bytes from a broken read
 	// are always discarded rather than handed to a parser as a complete file.
-	err := c.runOperation(ctx, fmt.Sprintf("read %s on %s", path, share), true, func(session transportSession) error {
-		tree, err := c.mountTreeWithSession(ctx, session, share)
+	//
+	// readDeadline is fixed at the first attempt so retries share one absolute
+	// read budget: a peer cannot extend the total by forcing retries, and no
+	// single object can be read for longer than readTotalLimit.
+	var readDeadline time.Time
+	err := c.runOperation(ctx, fmt.Sprintf("read %s on %s", path, share), share, true, func(session transportSession, deadline time.Time) error {
+		if readDeadline.IsZero() {
+			readDeadline = time.Now().Add(c.readTotalLimit())
+		}
+		tree, err := c.mountTreeWithSessionLimit(ctx, session, share, c.limitUntil(deadline))
 		if err != nil {
 			return err
 		}
-		defer func() { _ = c.bounded(ctx, "tree disconnect", c.operationLimit(), tree.Umount) }()
+		defer func() { _ = c.bounded(ctx, "tree disconnect", c.limitUntil(deadline), tree.Umount) }()
 
 		c.mu.Lock()
 		maxReadSize := c.maxReadSize
 		c.mu.Unlock()
 
 		var info fs.FileInfo
-		err = c.bounded(ctx, "stat", c.operationLimit(), func() error {
+		err = c.bounded(ctx, "stat", c.limitUntil(deadline), func() error {
 			statInfo, statErr := tree.Stat(path)
 			if statErr != nil {
 				return statErr
@@ -60,7 +69,7 @@ func (c *Client) ReadFileContext(ctx context.Context, share, path string) ([]byt
 		}
 
 		var file transportFile
-		err = c.bounded(ctx, "open", c.operationLimit(), func() error {
+		err = c.bounded(ctx, "open", c.limitUntil(deadline), func() error {
 			opened, openErr := tree.Open(path)
 			if openErr != nil {
 				return openErr
@@ -73,7 +82,7 @@ func (c *Client) ReadFileContext(ctx context.Context, share, path string) ([]byt
 		}
 		defer func() { _ = file.Close() }()
 
-		read, err := c.readAll(ctx, file, maxReadSize, info.Size())
+		read, err := c.readAll(ctx, file, maxReadSize, info.Size(), readDeadline)
 		if err != nil {
 			if os.IsPermission(err) {
 				return fmt.Errorf("read %s on %s: permission denied", path, share)
@@ -95,11 +104,20 @@ func (c *Client) ReadFileContext(ctx context.Context, share, path string) ([]byt
 // readAll reads the remote file in bounded chunks. Each chunk is bounded by the
 // read idle timeout, so a server that stops sending mid-file is abandoned and
 // the partial bytes are discarded by the caller's retry.
-func (c *Client) readAll(ctx context.Context, file transportFile, maxReadSize, expectedSize int64) ([]byte, error) {
-	limit := c.readLimit()
+//
+// deadline is the absolute end of the whole operation budget. The idle timeout
+// alone is not sufficient: a peer that delivers a little data just before the
+// idle deadline refreshes it on every chunk, and the read could otherwise stay
+// alive indefinitely. The absolute bound is what makes the operation budget
+// real.
+func (c *Client) readAll(ctx context.Context, file transportFile, maxReadSize, expectedSize int64, deadline time.Time) ([]byte, error) {
 	buffer := make([]byte, readBufferSize(expectedSize))
 	var collected []byte
 	for {
+		if !deadline.IsZero() && !time.Now().Before(deadline) {
+			return nil, &operationTimeoutError{Operation: "read total budget", Limit: c.readTotalLimit()}
+		}
+		limit := c.limitBaseUntil(c.readLimit(), deadline)
 		var read int
 		err := c.bounded(ctx, "read", limit, func() error {
 			n, readErr := file.Read(buffer)

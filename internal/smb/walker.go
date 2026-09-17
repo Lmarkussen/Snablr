@@ -46,7 +46,7 @@ func (c *Client) WalkShareWithOptionsContext(ctx context.Context, share string, 
 		if tree != nil {
 			// Tree disconnect is a network call; bound it so a wedged server
 			// cannot hang the target at the end of a walk.
-			_ = c.bounded(ctx, "tree disconnect", c.operationLimit(), tree.Umount)
+			_ = c.bounded(ctx, "tree disconnect", share, c.operationLimit(), tree.Umount)
 		}
 	}()
 
@@ -67,10 +67,12 @@ func (c *Client) WalkShareWithOptionsContext(ctx context.Context, share string, 
 					return nil, err
 				}
 			}
-			var listed []fs.FileInfo
-			listErr := c.bounded(ctx, "directory enumeration", c.operationLimit(), func() error {
-				listed, err = tree.ReadDir(path)
-				return err
+			// The tree handle is captured by value: a phase abandoned by its
+			// bound keeps running on its own goroutine, so the closure must not
+			// read the walker's mutable tree variable concurrently.
+			listing := tree
+			listed, listErr := runPhase(c, ctx, "directory enumeration", share, c.operationLimit(), func() ([]fs.FileInfo, error) {
+				return listing.ReadDir(path)
 			})
 			err = listErr
 			if err == nil {
@@ -105,7 +107,7 @@ func (c *Client) WalkShareWithOptionsContext(ctx context.Context, share string, 
 			// Drop the stale tree and re-establish the transport before
 			// restarting this directory.
 			if tree != nil {
-				_ = c.bounded(ctx, "tree disconnect", c.operationLimit(), tree.Umount)
+				_ = c.bounded(ctx, "tree disconnect", share, c.operationLimit(), tree.Umount)
 				tree = nil
 			}
 			if IsReconnectable(err) {

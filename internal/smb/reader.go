@@ -43,20 +43,14 @@ func (c *Client) ReadFileContext(ctx context.Context, share, path string) ([]byt
 		if err != nil {
 			return err
 		}
-		defer func() { _ = c.bounded(ctx, "tree disconnect", c.limitUntil(deadline), tree.Umount) }()
+		defer func() { _ = c.bounded(ctx, "tree disconnect", share, c.limitUntil(deadline), tree.Umount) }()
 
 		c.mu.Lock()
 		maxReadSize := c.maxReadSize
 		c.mu.Unlock()
 
-		var info fs.FileInfo
-		err = c.bounded(ctx, "stat", c.limitUntil(deadline), func() error {
-			statInfo, statErr := tree.Stat(path)
-			if statErr != nil {
-				return statErr
-			}
-			info = statInfo
-			return nil
+		info, err := runPhase(c, ctx, "stat", share, c.limitUntil(deadline), func() (fs.FileInfo, error) {
+			return tree.Stat(path)
 		})
 		if err != nil {
 			return fmt.Errorf("stat %s on %s: %w", path, share, err)
@@ -68,21 +62,15 @@ func (c *Client) ReadFileContext(ctx context.Context, share, path string) ([]byt
 			return fmt.Errorf("%w: %s on %s is %d bytes, limit is %d", ErrFileTooLarge, path, share, info.Size(), maxReadSize)
 		}
 
-		var file transportFile
-		err = c.bounded(ctx, "open", c.limitUntil(deadline), func() error {
-			opened, openErr := tree.Open(path)
-			if openErr != nil {
-				return openErr
-			}
-			file = opened
-			return nil
+		file, err := runPhase(c, ctx, "open", share, c.limitUntil(deadline), func() (transportFile, error) {
+			return tree.Open(path)
 		})
 		if err != nil {
 			return fmt.Errorf("open %s on %s: %w", path, share, err)
 		}
 		defer func() { _ = file.Close() }()
 
-		read, err := c.readAll(ctx, file, maxReadSize, info.Size(), readDeadline)
+		read, err := c.readAll(ctx, share, file, maxReadSize, info.Size(), readDeadline)
 		if err != nil {
 			if os.IsPermission(err) {
 				return fmt.Errorf("read %s on %s: permission denied", path, share)
@@ -110,7 +98,7 @@ func (c *Client) ReadFileContext(ctx context.Context, share, path string) ([]byt
 // idle deadline refreshes it on every chunk, and the read could otherwise stay
 // alive indefinitely. The absolute bound is what makes the operation budget
 // real.
-func (c *Client) readAll(ctx context.Context, file transportFile, maxReadSize, expectedSize int64, deadline time.Time) ([]byte, error) {
+func (c *Client) readAll(ctx context.Context, share string, file transportFile, maxReadSize, expectedSize int64, deadline time.Time) ([]byte, error) {
 	buffer := make([]byte, readBufferSize(expectedSize))
 	var collected []byte
 	for {
@@ -118,14 +106,12 @@ func (c *Client) readAll(ctx context.Context, file transportFile, maxReadSize, e
 			return nil, &operationTimeoutError{Operation: "read total budget", Limit: c.readTotalLimit()}
 		}
 		limit := c.limitBaseUntil(c.readLimit(), deadline)
-		var read int
-		err := c.bounded(ctx, "read", limit, func() error {
+		read, err := runPhase(c, ctx, "read", share, limit, func() (int, error) {
 			n, readErr := file.Read(buffer)
-			read = n
 			if readErr != nil && !errors.Is(readErr, io.EOF) {
-				return readErr
+				return n, readErr
 			}
-			return nil
+			return n, nil
 		})
 		if err != nil {
 			return nil, err

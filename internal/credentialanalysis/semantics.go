@@ -20,6 +20,18 @@ var passwordTokenAliases = map[string]struct{}{
 	"pwd":       {},
 	"passord":   {}, // Norwegian
 	"passordet": {}, // Norwegian definite form ("the password")
+	"pass":      {},
+}
+
+// passwordSubjectAliases are leading service/account credential nouns that
+// make the otherwise ambiguous terminal token "pass" credential-semantic.
+// For example "SvcPass" decomposes to svc + pass; "Bypass" and "Compass"
+// remain single non-credential tokens and are never classified as passwords.
+var passwordSubjectAliases = map[string]struct{}{
+	"service": {},
+	"svc":     {},
+	"account": {},
+	"user":    {},
 }
 
 // identityTokenAliases holds terminal tokens that denote an account identity.
@@ -83,6 +95,14 @@ func ClassifyFieldName(key string) FieldRole {
 	}
 	last := tokens[len(tokens)-1]
 	if _, ok := passwordTokenAliases[last]; ok {
+		if last == "pass" {
+			if len(tokens) < 2 {
+				return FieldRoleNone
+			}
+			if _, ok := passwordSubjectAliases[tokens[len(tokens)-2]]; !ok {
+				return FieldRoleNone
+			}
+		}
 		return FieldRolePassword
 	}
 	if _, ok := domainTokenAliases[last]; ok {

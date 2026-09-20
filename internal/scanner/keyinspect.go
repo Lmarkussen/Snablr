@@ -3,6 +3,7 @@ package scanner
 import (
 	"strings"
 
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/keyinspect"
 	"snablr/internal/rules"
 )
@@ -31,6 +32,37 @@ func findingsFromKeyMatches(meta FileMetadata, matches []keyinspect.Match) []Fin
 		}))
 	}
 	return findings
+}
+
+func (e *Engine) recordKeyMaterialCandidates(meta FileMetadata, content []byte, matches []keyinspect.Match) {
+	if e == nil || e.candidateSink == nil || len(matches) == 0 || len(content) == 0 {
+		return
+	}
+	for _, match := range matches {
+		if match.ID != "keyinspect.content.private_key_header" {
+			continue
+		}
+		candidate := credentialanalysis.Candidate{
+			Verification:    credentialanalysis.Confirmed,
+			CredentialType:  "private_key",
+			Value:           string(content),
+			Source:          meta.Source,
+			Host:            meta.Host,
+			Share:           meta.Share,
+			Path:            meta.FilePath,
+			Container:       meta.ArchivePath,
+			ValidationBasis: "validated_private_key_header",
+			Evidence: []credentialanalysis.Evidence{{
+				RuleID:   match.ID,
+				Source:   meta.Source,
+				Path:     meta.FilePath,
+				Location: strings.TrimSpace(match.Match),
+			}},
+		}
+		if err := e.candidateSink.RecordCredentialCandidate(candidate); err != nil && e.log != nil {
+			e.log.Errorf("private-key credential candidate recording failed for %s: %v", meta.FilePath, err)
+		}
+	}
 }
 
 func ruleFromKeyMatch(match keyinspect.Match) rules.Rule {

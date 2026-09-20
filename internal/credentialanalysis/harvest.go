@@ -27,12 +27,13 @@ const (
 // HarvestInput describes already-read content. Harvest is deliberately
 // independent of scanner findings and their priority or confidence.
 type HarvestInput struct {
-	Content   []byte
-	Source    string
-	Host      string
-	Share     string
-	Path      string
-	Container string
+	Content         []byte
+	Source          string
+	Host            string
+	Share           string
+	Path            string
+	Container       string
+	SkipPrivateKeys bool
 }
 
 // NeedsContent identifies bounded, text-like inputs that should be made
@@ -122,7 +123,9 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 	if strings.TrimSpace(textContent) == "" {
 		return out
 	}
-	addPrivateKeyCandidates(textContent, add)
+	if !input.SkipPrivateKeys {
+		addPrivateKeyCandidates(textContent, add)
+	}
 	normalizedContent := []byte(textContent)
 	structured := false
 	if strings.HasPrefix(strings.TrimSpace(textContent), "{") || strings.HasPrefix(strings.TrimSpace(textContent), "[") {

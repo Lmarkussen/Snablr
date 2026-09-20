@@ -296,7 +296,8 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 	if e.opts.MaxReadBytes > 0 && int64(len(content)) > e.opts.MaxReadBytes {
 		content = content[:e.opts.MaxReadBytes]
 	}
-	evaluation.InspectionFailures = append(evaluation.InspectionFailures, e.harvestCredentialCandidates(meta, content)...)
+	keyMatchesBeforeHarvest := e.keyInspector.InspectContent(keyCandidate(meta), content)
+	evaluation.InspectionFailures = append(evaluation.InspectionFailures, e.harvestCredentialCandidatesWithOptions(meta, content, len(keyMatchesBeforeHarvest) > 0)...)
 
 	// Content rules operate on human-readable text. Legacy OLE/CFB Office files
 	// are binary containers, so the recovered text is what the rules must see.
@@ -328,9 +329,15 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 	}
 	evaluation.Findings = append(evaluation.Findings, e.contentScanner.Scan(e.contentRules, meta, ruleContent)...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromAWSMatches(meta, e.awsInspector.InspectContent(awsCandidate(meta), content))...)
-	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, e.dbInspector.InspectContent(dbCandidate(meta), content))...)
-	evaluation.Findings = append(evaluation.Findings, findingsFromKeyMatches(meta, e.keyInspector.InspectContent(keyCandidate(meta), content))...)
-	evaluation.Findings = append(evaluation.Findings, findingsFromSQLiteMatches(meta, e.sqliteInspector.InspectContent(sqliteCandidate(meta), content))...)
+	dbMatches := e.dbInspector.InspectContent(dbCandidate(meta), content)
+	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, dbMatches)...)
+	e.recordDBConnectionCandidates(meta, dbMatches)
+	keyMatches := keyMatchesBeforeHarvest
+	evaluation.Findings = append(evaluation.Findings, findingsFromKeyMatches(meta, keyMatches)...)
+	e.recordKeyMaterialCandidates(meta, content, keyMatches)
+	sqliteMatches := e.sqliteInspector.InspectContent(sqliteCandidate(meta), content)
+	evaluation.Findings = append(evaluation.Findings, findingsFromSQLiteMatches(meta, sqliteMatches)...)
+	e.recordSQLiteCredentialCandidates(meta, sqliteMatches)
 	evaluation.Findings = correlateFindings(meta, evaluation.Findings)
 	evaluation.Findings = adjustAWSArtifactVisibility(evaluation.Findings)
 	evaluation.Findings = adjustBrowserArtifactVisibility(evaluation.Findings)
@@ -339,19 +346,24 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 }
 
 func (e *Engine) harvestCredentialCandidates(meta FileMetadata, content []byte) []InspectionFailure {
-	return e.harvestCredentialCandidatesWithNotes(meta, content)
+	return e.harvestCredentialCandidatesWithOptions(meta, content, false)
 }
 
 // harvestCredentialCandidatesWithNotes runs the shared harvester and returns any
 // content-inspection limitations it reported, so the engine can distinguish a
 // file that could not be read from one that was read but not fully parsed.
 func (e *Engine) harvestCredentialCandidatesWithNotes(meta FileMetadata, content []byte) []InspectionFailure {
+	return e.harvestCredentialCandidatesWithOptions(meta, content, false)
+}
+
+func (e *Engine) harvestCredentialCandidatesWithOptions(meta FileMetadata, content []byte, skipPrivateKeys bool) []InspectionFailure {
 	if e == nil || len(content) == 0 {
 		return nil
 	}
 	candidates, notes := credentialanalysis.HarvestWithReport(credentialanalysis.HarvestInput{
 		Content: content, Source: meta.Source, Host: meta.Host, Share: meta.Share,
 		Path: meta.FilePath, Container: meta.ArchivePath,
+		SkipPrivateKeys: skipPrivateKeys,
 	})
 	if e.candidateSink != nil {
 		for _, candidate := range candidates {

@@ -618,6 +618,7 @@ func harvestLines(text string, add func(Candidate)) {
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") || strings.HasPrefix(line, ";") {
 			continue
 		}
+		line = normalizeAssignmentLine(line)
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			section = strings.ToLower(strings.TrimSpace(line[1 : len(line)-1]))
 			if sections[section] == nil {
@@ -668,6 +669,25 @@ func harvestLines(text string, add func(Candidate)) {
 	}
 	for _, fields := range prefixes {
 		harvestFields(fields, add, "structured environment record")
+	}
+}
+
+// normalizeAssignmentLine strips bounded shell/PowerShell assignment prefixes
+// before the shared assignment parser runs. It deliberately only removes
+// syntax, not semantic vocabulary: export/set prefixes and a leading "$" are
+// common in script files already selected for content inspection.
+func normalizeAssignmentLine(line string) string {
+	line = strings.TrimSpace(line)
+	lower := strings.ToLower(line)
+	switch {
+	case strings.HasPrefix(lower, "export "):
+		return strings.TrimSpace(line[len("export "):])
+	case strings.HasPrefix(lower, "set "):
+		return strings.TrimSpace(line[len("set "):])
+	case strings.HasPrefix(line, "$"):
+		return strings.TrimSpace(line[1:])
+	default:
+		return line
 	}
 }
 

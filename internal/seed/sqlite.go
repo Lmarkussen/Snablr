@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -52,6 +53,70 @@ func renderSQLiteSeed(style string, ctx renderContext) []byte {
 		return text("SYNTHETIC SQLITE PLACEHOLDER")
 	}
 	return content
+}
+
+func isSQLiteSeedStyle(style string) bool {
+	switch style {
+	case "sqlite-credential-db", "sqlite-token-db", "sqlite-benign-db", "sqlite-correlation-db":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateSQLiteSeed(content []byte, style string, ctx renderContext) error {
+	if len(content) < 16 || string(content[:16]) != "SQLite format 3\x00" {
+		return fmt.Errorf("sqlite seed %q was not generated as a real SQLite database (missing SQLite header); check CGO and gcc availability", style)
+	}
+
+	tmpFile, err := os.CreateTemp("", "snablr-seed-validate-*.db")
+	if err != nil {
+		return fmt.Errorf("create sqlite validation temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmpFile.Write(content); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("write sqlite validation temp file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close sqlite validation temp file: %w", err)
+	}
+
+	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?mode=ro&_query_only=1", tmpPath))
+	if err != nil {
+		return fmt.Errorf("open generated sqlite seed %q: %w", style, err)
+	}
+	defer db.Close()
+	if err := db.Ping(); err != nil {
+		return fmt.Errorf("ping generated sqlite seed %q: %w", style, err)
+	}
+
+	tables := sqliteTablesForStyle(style, ctx)
+	if len(tables) == 0 {
+		return fmt.Errorf("sqlite seed %q has no expected tables", style)
+	}
+	for _, table := range tables {
+		var exists int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table.Name).Scan(&exists); err != nil {
+			return fmt.Errorf("inspect sqlite seed table %q: %w", table.Name, err)
+		}
+		if exists != 1 {
+			return fmt.Errorf("sqlite seed %q is missing expected table %q", style, table.Name)
+		}
+		var rows int
+		if err := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteSQLiteIdent(table.Name))).Scan(&rows); err != nil {
+			return fmt.Errorf("read sqlite seed table %q: %w", table.Name, err)
+		}
+		if rows < 1 {
+			return fmt.Errorf("sqlite seed %q table %q has no rows", style, table.Name)
+		}
+	}
+	return nil
+}
+
+func quoteSQLiteIdent(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
 }
 
 func sqliteTablesForStyle(style string, ctx renderContext) []sqliteSeedTable {

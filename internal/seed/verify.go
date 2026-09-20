@@ -3,6 +3,7 @@ package seed
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -451,8 +452,17 @@ func normalizeVerifyPath(value string) string {
 	if value == "" {
 		return ""
 	}
-	return strings.ToLower(filepath.Clean(value))
+	// SQLite manifest paths and findings use "database::table.column". For
+	// object-level verification the owning physical database is the object.
+	if idx := strings.Index(value, "::"); idx >= 0 {
+		value = value[:idx]
+	}
+	value = strings.ToLower(filepath.Clean(value))
+	value = verifyWIMIndexRegex.ReplaceAllString(value, "$1")
+	return value
 }
+
+var verifyWIMIndexRegex = regexp.MustCompile(`(?i)(\.wim)\[index=\d+\]`)
 
 func normalizedCategory(value string) string {
 	value = strings.TrimSpace(value)

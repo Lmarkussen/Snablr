@@ -175,7 +175,7 @@ func defaultTemplates() []templateSpec {
 		newSpec("sqlite-correlation", []string{
 			"Apps/PayrollPortal",
 		}, []templateVariant{
-			archiveInnerPath(classify(triage(likely("payroll-cache.sqlite3", "sqlite-correlation-db", "high", []string{"content", "validated", "correlation"}, []string{"database", "sqlite", "credentials"}, []string{"sqlite-inspection"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true), "::accounts.password"),
+			archiveInnerPath(classify(triage(likely("payroll-store.sqlite3", "sqlite-correlation-db", "high", []string{"content", "validated", "correlation"}, []string{"database", "sqlite", "credentials"}, []string{"sqlite-inspection"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true), "::accounts.password"),
 			classify(triage(likely(".env", "db-env", "high", []string{"content", "filename", "extension"}, []string{"configuration", "database", "credentials"}, []string{"database-connection-strings", "hardcoded-secret-indicators"}), seedTriageActionable), seedClassActionable, "high", false),
 			noise("readme.txt", "readme-noise", "low", []string{"noise"}, []string{"noise-review"}),
 		}, renderVariant),
@@ -208,8 +208,8 @@ func defaultTemplates() []templateSpec {
 		newSpec("ad-correlation", []string{
 			"Recovery/AD",
 		}, []templateVariant{
-			classify(triage(likely("NTDS.DIT", "secret-store-marker", "high", []string{"filename", "correlation", "path"}, []string{"credentials", "secret-store", "active-directory"}, []string{"secret-store-artifact-review"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true),
-			classify(triage(likely("SYSTEM", "secret-store-marker", "high", []string{"filename"}, []string{"credentials", "secret-store", "windows"}, []string{"secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			classify(triage(likely("NTDS.DIT", "secret-store-marker", "high", []string{"filename", "path"}, []string{"credentials", "secret-store", "active-directory"}, []string{"secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false),
+			noise("SYSTEM", "secret-store-marker", "low", []string{"noise"}, []string{"noise-review"}),
 			noise("readme.txt", "readme-noise", "low", []string{"noise"}, []string{"noise-review"}),
 		}, renderVariant),
 		newSpec("backup-exposure", []string{
@@ -383,7 +383,7 @@ func officeTemplateVariants() []templateVariant {
 
 func tarTemplateVariants() []templateVariant {
 	return []templateVariant{
-		archiveInnerPath(classify(triage(likely("linux-backup.tar", "tar-shadow-backup", "high", []string{"content", "filename", "extension"}, []string{"archives", "linux", "credentials"}, []string{"archive-review", "secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false), "etc/shadow.bak"),
+		archiveInnerPath(classify(triage(likely("linux-backup.tar", "tar-shadow-backup", "high", []string{"content", "filename", "extension"}, []string{"archives", "linux", "credentials"}, []string{"archive-review", "secret-store-artifact-review"}), seedTriageActionable), seedClassActionable, "high", false), "etc/shadow"),
 		archiveInnerPath(classify(triage(likely("deploy-configs.tar.gz", "tar-env-configs", "high", []string{"content", "filename", "extension"}, []string{"archives", "configuration", "database", "credentials"}, []string{"archive-review", "database-connection-strings"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true), "app/.env"),
 		archiveInnerPath(classify(triage(likely("ops-recovery.tgz", "tar-private-key-bundle", "high", []string{"content", "filename", "extension", "correlation"}, []string{"archives", "crypto", "keys", "remote-access"}, []string{"archive-review", "private-key-header-validation"}), seedTriageActionable), seedClassCorrelatedHighConfidence, "high", true), "keys/id_rsa"),
 		classify(triage(noise("binary-drop.tar", "tar-binary-only", "low", []string{"archives", "noise"}, []string{"archive-review"}), seedTriageConfigOnly), seedClassConfigOnly, "low", false),
@@ -1088,7 +1088,7 @@ func tarMembersForVariant(ctx renderContext, variant templateVariant) []archiveM
 	switch variant.ContentStyle {
 	case "tar-shadow-backup":
 		return []archiveMemberTemplate{
-			{Path: "etc/shadow.bak", Content: []byte("root:$6$synthetic$abcdefghijklmnopqrstuvwx:19000:0:99999:7:::\n")},
+			{Path: "etc/shadow", Content: []byte("root:$6$synthetic$abcdefghijklmnopqrstuvwx:19000:0:99999:7:::\n")},
 			{Path: "etc/passwd", Content: []byte("root:x:0:0:root:/root:/bin/bash\n")},
 			{Path: "docs/readme.txt", ContentStyle: "readme-noise"},
 		}
@@ -1435,19 +1435,23 @@ func personaValue(ctx renderContext) string {
 }
 
 func passwordValue(ctx renderContext) string {
-	return "EXAMPLE_PASSWORD_" + strings.ReplaceAll(ctx.Token, "_", "")
+	token := strings.ReplaceAll(ctx.Token, "_", "")
+	return "SnablrLab!Pw" + token + "X9"
 }
 
 func secretValue(ctx renderContext) string {
-	return "NOT_A_REAL_SECRET_" + strings.ReplaceAll(ctx.Token, "_", "")
+	token := strings.ReplaceAll(ctx.Token, "_", "")
+	return "SnablrLab!Secret" + token + "Z8"
 }
 
 func tokenValue(ctx renderContext) string {
-	return "TEST_ONLY_TOKEN_" + strings.ReplaceAll(ctx.Token, "_", "")
+	token := strings.ReplaceAll(ctx.Token, "_", "")
+	return "SnablrLab!Tok" + token + "Y7"
 }
 
 func apiKeyValue(ctx renderContext) string {
-	return "FAKE_API_KEY_" + strings.ReplaceAll(ctx.Token, "_", "")
+	token := strings.ReplaceAll(ctx.Token, "_", "")
+	return "SnablrLab!ApiKey" + token + "W6"
 }
 
 func awsAccessKeyIDValue(ctx renderContext) string {

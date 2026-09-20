@@ -7,6 +7,37 @@ import (
 	"strings"
 )
 
+var exactArtifactSeedNames = map[string]struct{}{
+	"id_rsa":           {},
+	"id_ed25519":       {},
+	"id_ecdsa":         {},
+	"id_dsa":           {},
+	"identity":         {},
+	"authorized_keys":  {},
+	"known_hosts":      {},
+	"system":           {},
+	"security":         {},
+	"sam":              {},
+	"shadow":           {},
+	"ntds.dit":         {},
+	"ntds.dit.bak":     {},
+	"system.bak":       {},
+	"security.old":     {},
+	"logins.json":      {},
+	"key4.db":          {},
+	"login data":       {},
+	"cookies":          {},
+	"policy.vpol":      {},
+	"preferred":        {},
+	"masterkey":        {},
+	"a1b2c3d4":         {},
+	"c0ffeec0":         {},
+	"corp-admin.pfx":   {},
+	"branch-admin.p12": {},
+	"config":           {},
+	"credentials":      {},
+}
+
 func Generate(opts GenerateOptions) ([]SeedFile, error) {
 	if opts.CountPerCategory <= 0 {
 		opts.CountPerCategory = 6
@@ -93,8 +124,30 @@ func Generate(opts GenerateOptions) ([]SeedFile, error) {
 				ContentStyle:   variant.ContentStyle,
 			}, variant)
 
+			if isSQLiteSeedStyle(variant.ContentStyle) {
+				if err := validateSQLiteSeed(content, variant.ContentStyle, renderContext{
+					Index:          i,
+					Format:         variant.Format,
+					Filename:       variant.Filename,
+					Token:          token,
+					Category:       spec.Category,
+					Directory:      fullDir,
+					Persona:        persona,
+					PersonaDisplay: displayName(persona),
+					ServiceAccount: serviceAccount,
+					Label:          label,
+					IntendedAs:     variant.IntendedAs,
+					ContentStyle:   variant.ContentStyle,
+				}); err != nil {
+					return nil, err
+				}
+			}
+
 			relativePath := joinSeedPath(opts.SeedPrefix, fullDir)
 			filename := uniqueSeedFilename(relativePath, variant.Filename, seenPaths)
+			if filename != variant.Filename && isExactArtifactSeedVariant(variant) {
+				variant = demoteSuffixedSeedVariant(variant)
+			}
 
 			out = append(out, SeedFile{
 				Category:            spec.Category,
@@ -117,6 +170,24 @@ func Generate(opts GenerateOptions) ([]SeedFile, error) {
 	}
 
 	return out, nil
+}
+
+func isExactArtifactSeedVariant(variant templateVariant) bool {
+	_, ok := exactArtifactSeedNames[strings.ToLower(strings.TrimSpace(variant.Filename))]
+	return ok
+}
+
+func demoteSuffixedSeedVariant(variant templateVariant) templateVariant {
+	variant.IntendedAs = "filler/noise"
+	variant.ExpectedClass = ""
+	variant.ExpectedTriageClass = ""
+	variant.ExpectedConfidence = ""
+	variant.ExpectedCorrelated = false
+	variant.ExpectedSignalTypes = []string{}
+	variant.ExpectedTags = []string{"noise"}
+	variant.ExpectedRuleThemes = []string{"noise-review"}
+	variant.ExpectedSeverity = "low"
+	return variant
 }
 
 func expectedSeedPath(relativePath, filename, innerPath string) string {

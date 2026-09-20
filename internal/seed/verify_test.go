@@ -263,6 +263,26 @@ func TestVerifySummarizesExpectedSeedClasses(t *testing.T) {
 	}
 }
 
+func TestNormalizeVerifyPathHandlesWIMAndSQLiteVirtualPaths(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"SnablrLab/Deploy/image.wim!Windows/Panther/unattend.xml", "snablrlab/deploy/image.wim!windows/panther/unattend.xml"},
+		{"SnablrLab/Deploy/image.wim[index=1]!Windows/Panther/unattend.xml", "snablrlab/deploy/image.wim!windows/panther/unattend.xml"},
+		{"SnablrLab/Apps/customers-prod.sqlite::users.password", "snablrlab/apps/customers-prod.sqlite"},
+		{"SnablrLab/Apps/customers-prod.sqlite", "snablrlab/apps/customers-prod.sqlite"},
+	}
+
+	for _, test := range tests {
+		if got := normalizeVerifyPath(test.in); got != test.want {
+			t.Fatalf("normalizeVerifyPath(%q) = %q, want %q", test.in, got, test.want)
+		}
+	}
+}
+
 func TestVerifyMatchesArchiveFindingPaths(t *testing.T) {
 	t.Parallel()
 

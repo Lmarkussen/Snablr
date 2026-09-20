@@ -33,7 +33,7 @@ rules:
     tags: [skip, temp, cache]
     category: exclusions
     enabled: true
-    include_paths: [temp, tmp, cache, appdata/local/temp, firefox/profiles, chrome/user data/default/cache, edge/user data/default/cache, library/caches, deriveddata, programdata/package cache]
+    include_paths: [temp, tmp, cache, appdata/local/temp, chrome/user data/default/cache, edge/user data/default/cache, library/caches, deriveddata, programdata/package cache]
     exclude_paths: []
     file_extensions: []
     max_file_size: 0

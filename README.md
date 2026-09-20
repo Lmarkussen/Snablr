@@ -166,10 +166,15 @@ Checkpoint/resume (`--checkpoint-file` and `--resume`) is for continuing an inte
 
 - Go `1.24+`
 - `make` if you want to use the convenience build targets
+- a working C compiler and CGO toolchain for SQLite inspection; on Debian/Kali this is typically `gcc` and `libc6-dev`
 - Network access to target SMB hosts on TCP `445`
 - Valid SMB credentials for target shares
 - LDAP connectivity and credentials if you want automatic domain discovery
 - `wimlib-imagex` for WIM inspection; install the `wimlib` package using your operating system's package manager. Without it, WIM files remain retryable but are not parsed.
+
+SQLite inspection requires the CGO-enabled Snablr binary. `make build` on
+Linux now produces that binary. Non-Linux release archives are still built
+without CGO and therefore do not include SQLite content inspection.
 
 ### Download A Release Binary
 

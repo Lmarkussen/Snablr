@@ -25,6 +25,12 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Install Linux SQLite cross toolchain
+        if: matrix.goos == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+
       - name: Vet
         run: go vet ./...
 
@@ -91,14 +97,36 @@ jobs:
 
           mkdir -p "$stage_dir"
 
-          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-            go build \
-              -ldflags "-s -w \
-                -X 'snablr/internal/version.Version=${VERSION}' \
-                -X 'snablr/internal/version.Commit=${COMMIT}' \
-                -X 'snablr/internal/version.BuildDate=${BUILD_DATE}'" \
-              -o "${stage_dir}/${binary_name}" \
-              ./cmd/snablr
+          if [ "${{ matrix.goos }}" = "linux" ]; then
+            if [ "${{ matrix.goarch }}" = "arm64" ]; then
+              CC=aarch64-linux-gnu-gcc CGO_ENABLED=1 GOOS=linux GOARCH=arm64 \
+                go build \
+                  -ldflags "-s -w \
+                    -X 'snablr/internal/version.Version=${VERSION}' \
+                    -X 'snablr/internal/version.Commit=${COMMIT}' \
+                    -X 'snablr/internal/version.BuildDate=${BUILD_DATE}'" \
+                  -o "${stage_dir}/${binary_name}" \
+                  ./cmd/snablr
+            else
+              CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+                go build \
+                  -ldflags "-s -w \
+                    -X 'snablr/internal/version.Version=${VERSION}' \
+                    -X 'snablr/internal/version.Commit=${COMMIT}' \
+                    -X 'snablr/internal/version.BuildDate=${BUILD_DATE}'" \
+                  -o "${stage_dir}/${binary_name}" \
+                  ./cmd/snablr
+            fi
+          else
+            CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+              go build \
+                -ldflags "-s -w \
+                  -X 'snablr/internal/version.Version=${VERSION}' \
+                  -X 'snablr/internal/version.Commit=${COMMIT}' \
+                  -X 'snablr/internal/version.BuildDate=${BUILD_DATE}'" \
+                -o "${stage_dir}/${binary_name}" \
+                ./cmd/snablr
+          fi
 
           cp README.md LICENSE "$stage_dir/"
 

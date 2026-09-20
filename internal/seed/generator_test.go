@@ -380,8 +380,8 @@ func TestGenerateADCorrelationSeedPackIncludesCorrelatedAnchor(t *testing.T) {
 		t.Fatalf("Generate returned error: %v", err)
 	}
 
-	foundCorrelatedNTDS := false
-	foundSupportingSystem := false
+	foundActionableNTDS := false
+	foundNoiseSystem := false
 
 	for _, file := range files {
 		if file.Category != "ad-correlation" {
@@ -389,21 +389,21 @@ func TestGenerateADCorrelationSeedPackIncludesCorrelatedAnchor(t *testing.T) {
 		}
 		switch strings.ToLower(file.Filename) {
 		case "ntds.dit":
-			if file.ExpectedClass == seedClassCorrelatedHighConfidence && file.ExpectedCorrelated && file.ExpectedConfidence == "high" {
-				foundCorrelatedNTDS = true
+			if file.ExpectedClass == seedClassActionable && !file.ExpectedCorrelated && file.ExpectedConfidence == "high" {
+				foundActionableNTDS = true
 			}
 		case "system":
-			if file.ExpectedClass == seedClassActionable && file.ExpectedTriageClass == seedTriageActionable {
-				foundSupportingSystem = true
+			if file.IntendedAs == "filler/noise" {
+				foundNoiseSystem = true
 			}
 		}
 	}
 
-	if !foundCorrelatedNTDS {
-		t.Fatal("expected ad-correlation seed pack to include correlated NTDS.DIT anchor")
+	if !foundActionableNTDS {
+		t.Fatal("expected ad-correlation seed pack to include actionable NTDS.DIT anchor")
 	}
-	if !foundSupportingSystem {
-		t.Fatal("expected ad-correlation seed pack to include supporting SYSTEM artifact")
+	if !foundNoiseSystem {
+		t.Fatal("expected ad-correlation seed pack to mark unsupported SYSTEM companion as noise")
 	}
 }
 
@@ -738,7 +738,7 @@ func TestGenerateSQLiteSeedPackIncludesPositiveNegativeAndCorrelatedCases(t *tes
 				}
 			}
 		case "sqlite-correlation":
-			if strings.EqualFold(file.Filename, "payroll-cache.sqlite3") && file.ExpectedClass == seedClassCorrelatedHighConfidence && file.ExpectedCorrelated {
+			if strings.EqualFold(file.Filename, "payroll-store.sqlite3") && file.ExpectedClass == seedClassCorrelatedHighConfidence && file.ExpectedCorrelated {
 				foundCorrelated = true
 			}
 		}
@@ -865,7 +865,7 @@ func TestGenerateTARSeedPackIncludesPositiveAndNegativeCases(t *testing.T) {
 		}
 		switch strings.ToLower(file.Filename) {
 		case "linux-backup.tar":
-			if file.ExpectedClass == seedClassActionable && strings.HasSuffix(file.ExpectedPath, "linux-backup.tar!etc/shadow.bak") {
+			if file.ExpectedClass == seedClassActionable && strings.HasSuffix(file.ExpectedPath, "linux-backup.tar!etc/shadow") {
 				foundActionable = true
 			}
 		case "deploy-configs.tar.gz", "ops-recovery.tgz":

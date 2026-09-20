@@ -147,3 +147,41 @@ func TestDefaultRulesMatchExactSecretStoreArtifacts(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultRulesIncludeFirefoxProfileAndExcludeCaches(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, issues, err := LoadManager([]string{root}, false, ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+	if len(issues) != 0 {
+		t.Fatalf("expected default rules to validate cleanly, got %#v", issues)
+	}
+
+	profileFiles := []string{
+		"Users/Alice/AppData/Roaming/Mozilla/Firefox/Profiles/abcd.default-release/logins.json",
+		"Users/Alice/AppData/Roaming/Mozilla/Firefox/Profiles/abcd.default-release/key4.db",
+	}
+	for _, path := range profileFiles {
+		skip, _ := manager.ShouldExclude(Candidate{
+			Path:      path,
+			Name:      filepath.Base(path),
+			Extension: filepath.Ext(path),
+		})
+		if skip {
+			t.Fatalf("expected Firefox profile artifact to be inspected, got excluded path %s", path)
+		}
+	}
+
+	cachePath := "Users/Alice/AppData/Roaming/Mozilla/Firefox/Profiles/abcd.default-release/cache2/entries/000001"
+	skip, rule := manager.ShouldExclude(Candidate{
+		Path:      cachePath,
+		Name:      "000001",
+		Extension: "",
+	})
+	if !skip || rule == nil || rule.ID != "skip.temp_and_browser_cache_paths" {
+		t.Fatalf("expected Firefox cache path to be excluded, got skip=%v rule=%#v", skip, rule)
+	}
+}

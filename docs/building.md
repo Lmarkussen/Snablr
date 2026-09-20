@@ -6,6 +6,13 @@ This guide covers the simplest ways to build, test, and verify Snablr locally.
 
 Run these commands from the repository root.
 
+Linux SQLite support requires a working C compiler and CGO. On Debian/Kali:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y gcc libc6-dev
+```
+
 Quick source build check:
 
 ```bash
@@ -21,6 +28,10 @@ make build
 The binary is written to:
 
 - `bin/snablr`
+
+`make build` uses `CGO_ENABLED=1` so the Linux operator binary can inspect
+SQLite databases. The cross-platform release matrix builds non-Linux targets
+without CGO, so SQLite content inspection is currently Linux-only.
 
 Windows fallback without `make`:
 

@@ -10,6 +10,9 @@ import (
 func credentialCandidatesFromFindings(findings []scanner.Finding) []credentialanalysis.Candidate {
 	var candidates []credentialanalysis.Candidate
 	for _, finding := range findings {
+		if isDirectInspectorCredentialFinding(finding.RuleID) {
+			continue
+		}
 		if entry, ok := credentialEntryFromFinding(finding); ok {
 			valueParts := make([]string, 0, len(entry.Fields))
 			identity := ""
@@ -68,6 +71,17 @@ func credentialCandidatesFromFindings(findings []scanner.Finding) []credentialan
 		})
 	}
 	return candidates
+}
+
+func isDirectInspectorCredentialFinding(ruleID string) bool {
+	switch ruleID {
+	case "keyinspect.content.private_key_header",
+		"dbinspect.access.connection_string",
+		"dbinspect.access.dsn":
+		return true
+	default:
+		return false
+	}
 }
 
 func analyzeCandidates(findings []scanner.Finding, candidates []credentialanalysis.Candidate) credentialanalysis.Report {

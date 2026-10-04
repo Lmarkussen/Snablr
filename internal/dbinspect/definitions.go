@@ -101,6 +101,18 @@ var extensionArtifacts = map[string]artifactDefinition{
 		description: "This file extension is a high-confidence Microsoft SQL Server data-file artifact.",
 		ecosystem:   "mssql",
 	},
+	".dbf": {
+		id:          "dbinspect.artifact.dbase_dbf",
+		name:        "dBASE Database Artifact",
+		description: "This file extension is a high-confidence dBASE database artifact.",
+		ecosystem:   "dbase",
+	},
+	".fdb": {
+		id:          "dbinspect.artifact.firebird_fdb",
+		name:        "Firebird Database Artifact",
+		description: "This file extension is a high-confidence Firebird database artifact.",
+		ecosystem:   "firebird",
+	},
 	".ndf": {
 		id:          "dbinspect.artifact.mssql_ndf",
 		name:        "MSSQL Secondary Data File Artifact",

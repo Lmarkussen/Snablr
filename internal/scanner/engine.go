@@ -183,13 +183,19 @@ func (e *Engine) EvaluateContext(ctx context.Context, meta FileMetadata, content
 		return e.evaluateWIM(ctx, meta, content)
 	}
 	if shouldInspect, skipReason, isSQLite := e.sqliteDecision(meta); isSQLite && !shouldInspect {
-		return Evaluation{
-			Skipped:    true,
-			SkipReason: skipReason,
-		}
+		evaluation := e.evaluateStandard(meta, nil, false)
+		evaluation.Skipped = true
+		evaluation.SkipReason = skipReason
+		return evaluation
 	}
 
 	if e.opts.MaxFileSizeBytes > 0 && meta.Size > e.opts.MaxFileSizeBytes {
+		if isRecognizedDatabaseArtifact(meta) {
+			evaluation := e.evaluateStandard(meta, nil, false)
+			evaluation.Skipped = true
+			evaluation.SkipReason = fmt.Sprintf("file exceeds max size limit of %d bytes", e.opts.MaxFileSizeBytes)
+			return evaluation
+		}
 		return Evaluation{
 			Skipped:    true,
 			SkipReason: fmt.Sprintf("file exceeds max size limit of %d bytes", e.opts.MaxFileSizeBytes),
@@ -658,6 +664,19 @@ func (e *Engine) sqliteDecision(meta FileMetadata) (bool, string, bool) {
 		return shouldInspect, reason, true
 	default:
 		return false, "", false
+	}
+}
+
+func isRecognizedDatabaseArtifact(meta FileMetadata) bool {
+	switch normalizeExtension(meta.Extension) {
+	case ".db", ".db3", ".sqlite", ".sqlite3",
+		".mdb", ".accdb",
+		".mdf", ".ndf", ".ldf",
+		".dbf", ".fdb",
+		".bacpac", ".dacpac":
+		return true
+	default:
+		return false
 	}
 }
 

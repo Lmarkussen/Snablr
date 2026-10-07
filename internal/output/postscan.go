@@ -45,7 +45,17 @@ func credentialCandidatesFromFindings(findings []scanner.Finding) []credentialan
 		if password == "" {
 			continue
 		}
+		// A syntactically valid assignment is not enough: the right-hand side
+		// must have a scalar secret shape. This rejects SQL variables, function
+		// calls, schema/metadata definitions and prose fragments that would
+		// otherwise be exported as credentials.
+		if _, reject := credentialanalysis.NonSecretValueShape(password); reject {
+			continue
+		}
 		identity := credentialanalysis.SelectFieldValue(values, credentialanalysis.FieldRoleIdentity)
+		if _, reject := credentialanalysis.NonSecretValueShape(identity); reject {
+			identity = ""
+		}
 		verification := credentialanalysis.Review
 		basis := "credential_like_value_without_conclusive_identity_association"
 		reasons := []string{"credential-like value extracted but identity association could not be conclusively established"}

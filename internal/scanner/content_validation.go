@@ -1,6 +1,10 @@
 package scanner
 
-import "strings"
+import (
+	"strings"
+
+	"snablr/internal/credentialanalysis"
+)
 
 var placeholderValueTokens = []string{
 	"changeme",
@@ -53,7 +57,11 @@ func weakContentSuppression(ruleID string, category string, matchedText string, 
 		// Placeholder-like and low-entropy values are still suppressed, and the
 		// finding itself keeps its low confidence from the same value-quality
 		// assessment.
-		quality := assessExtractedValuesQuality(extractedSensitiveValues(blob))
+		values := extractedSensitiveValues(blob)
+		if allNonSecretValueShapes(values) {
+			return true, "assigned value looks like a SQL/config fragment rather than a secret"
+		}
+		quality := assessExtractedValuesQuality(values)
 		if quality.Weak && !quality.LengthOnly {
 			return true, "sensitive values look placeholder-like or low quality"
 		}
@@ -104,6 +112,22 @@ func extractedSensitiveValues(blob string) []string {
 func hasMeaningfulConnectionStringEvidence(blob string) bool {
 	quality := assessConnectionStringQuality(blob)
 	return !quality.Weak && quality.Score >= 10
+}
+
+// allNonSecretValueShapes reports whether every extracted value is, by shape,
+// a non-secret fragment (SQL variable, expression, schema/metadata definition,
+// boolean fragment or prose). When true, the surrounding credential-like label
+// is not evidence of a secret.
+func allNonSecretValueShapes(values []string) bool {
+	if len(values) == 0 {
+		return false
+	}
+	for _, value := range values {
+		if _, reject := credentialanalysis.NonSecretValueShape(value); !reject {
+			return false
+		}
+	}
+	return true
 }
 
 func isPlaceholderSecretValue(value string) bool {

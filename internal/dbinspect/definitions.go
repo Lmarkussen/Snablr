@@ -14,11 +14,25 @@ var (
 	sqlMySQLDumpRegex = regexp.MustCompile(`(?im)^--\s+MySQL dump\b`)
 	sqlPgDumpRegex    = regexp.MustCompile(`(?im)^--\s+(PostgreSQL database dump|Dumped by pg_dump)\b`)
 	sqlCreateTable    = regexp.MustCompile(`(?im)\bCREATE\s+TABLE\b`)
+	sqlAlterTable     = regexp.MustCompile(`(?im)\bALTER\s+TABLE\b`)
+	sqlCreateIndex    = regexp.MustCompile(`(?im)\bCREATE\s+(?:UNIQUE\s+)?INDEX\b`)
+	sqlCreateRoutine  = regexp.MustCompile(`(?im)\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:PROCEDURE|PROC|FUNCTION|TRIGGER)\b`)
 	sqlInsertInto     = regexp.MustCompile(`(?im)\bINSERT\s+INTO\b`)
+	sqlInsertValues   = regexp.MustCompile(`(?is)\bINSERT\s+INTO\b[^;]*?\bVALUES\b`)
 	sqlDropIfExists   = regexp.MustCompile(`(?im)\bDROP\s+TABLE\s+IF\s+EXISTS\b`)
 	sqlCopyFromStdin  = regexp.MustCompile(`(?im)\bCOPY\s+[^\r\n;]+\s+FROM\s+stdin;`)
 	sqlLockTables     = regexp.MustCompile(`(?im)\bLOCK\s+TABLES\b`)
 	sqlUnlockTables   = regexp.MustCompile(`(?im)\bUNLOCK\s+TABLES\b`)
+
+	// Strong, self-identifying data-export markers. These appear in dump tool
+	// output rather than in ordinary schema, migration or install scripts.
+	sqlDumpDataMarker = regexp.MustCompile(`(?im)^--\s+Dumping data for table\b|^--\s+Dump completed\b|/\*!40000\s+ALTER\s+TABLE\b`)
+	sqlBackupSyntax   = regexp.MustCompile(`(?im)\bBACKUP\s+(?:DATABASE|LOG)\b|\bRESTORE\s+DATABASE\b|\bINTO\s+(?:OUTFILE|DUMPFILE)\b|^\s*bcp\s`)
+
+	// Procedural/batch script markers distinguish application install scripts
+	// from data-bearing exports when only literal-insert volume is available.
+	sqlBatchSeparator  = regexp.MustCompile(`(?im)^\s*GO\s*$`)
+	sqlDeclareVariable = regexp.MustCompile(`(?im)\bDECLARE\s+@`)
 )
 
 var exactArtifactFiles = map[string]artifactDefinition{

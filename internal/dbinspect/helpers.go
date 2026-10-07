@@ -4,7 +4,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/textdecode"
 )
 
@@ -111,8 +113,8 @@ func normalizeKVKey(key string) string {
 }
 
 func authSummary(values map[string]string) authFields {
-	user := meaningfulValue(firstNonEmpty(values["uid"], values["userid"], values["user"], values["username"]))
-	password := meaningfulValue(firstNonEmpty(values["password"], values["pwd"]))
+	user := meaningfulCredentialValue(firstNonEmpty(values["uid"], values["userid"], values["user"], values["username"]))
+	password := meaningfulCredentialValue(firstNonEmpty(values["password"], values["pwd"]))
 	integrated := isTruthy(firstNonEmpty(values["integratedsecurity"], values["trustedconnection"]))
 	return authFields{
 		user:       user,
@@ -264,6 +266,24 @@ func meaningfulValue(value string) string {
 	return value
 }
 
+// meaningfulCredentialValue additionally rejects values whose shape is a SQL
+// fragment, expression or schema/metadata definition rather than a scalar
+// secret, so a DSN/connection string cannot confirm a credential from a
+// non-secret right-hand side.
+func meaningfulCredentialValue(value string) string {
+	value = meaningfulValue(value)
+	if value == "" {
+		return ""
+	}
+	if looksLikeSampleValue(value) {
+		return ""
+	}
+	if _, reject := credentialanalysis.NonSecretValueShape(value); reject {
+		return ""
+	}
+	return value
+}
+
 func isPlaceholderValue(value string) bool {
 	value = strings.ToLower(trimWrapper(value))
 	switch {
@@ -286,6 +306,76 @@ func isPlaceholderValue(value string) bool {
 		}
 	}
 	return false
+}
+
+// sampleValueWords are generic "this is an example" markers. A value assembled
+// only from these markers and generic credential/config nouns (for example
+// "MyPassword", "MySQLServerName", "EXAMPLE_PASSWORD", "FAKE_API_KEY") is a
+// vendor sample, not a usable secret. The vocabulary is language-neutral and
+// not tied to any customer, product or path.
+var sampleValueWords = map[string]struct{}{
+	"my": {}, "our": {}, "your": {}, "example": {}, "sample": {}, "test": {}, "testing": {},
+	"fake": {}, "dummy": {}, "demo": {}, "placeholder": {}, "changeme": {}, "change": {},
+	"temp": {}, "temporary": {}, "foo": {}, "bar": {}, "baz": {}, "default": {},
+}
+
+var sampleValueNouns = map[string]struct{}{
+	"password": {}, "passwd": {}, "pwd": {}, "passord": {}, "secret": {}, "token": {},
+	"user": {}, "userid": {}, "username": {}, "login": {}, "account": {}, "key": {},
+	"apikey": {}, "server": {}, "host": {}, "name": {}, "id": {}, "db": {}, "database": {},
+	"string": {}, "conn": {}, "connection": {}, "only": {}, "value": {}, "url": {}, "dsn": {},
+	"sql": {}, "mysql": {}, "mssql": {}, "oracle": {}, "postgres": {}, "postgresql": {},
+}
+
+func looksLikeSampleValue(value string) bool {
+	words := splitSampleValueWords(value)
+	if len(words) == 0 {
+		return false
+	}
+	hasMarker := false
+	for _, word := range words {
+		if _, ok := sampleValueWords[word]; ok {
+			hasMarker = true
+			continue
+		}
+		if _, ok := sampleValueNouns[word]; ok {
+			continue
+		}
+		return false
+	}
+	return hasMarker
+}
+
+// splitSampleValueWords splits a value on separators and camel-case boundaries
+// so that "MySQLServerName" becomes my/sql/server/name.
+func splitSampleValueWords(value string) []string {
+	var words []string
+	var current strings.Builder
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		words = append(words, strings.ToLower(current.String()))
+		current.Reset()
+	}
+
+	runes := []rune(strings.TrimSpace(value))
+	for index, r := range runes {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			if unicode.IsUpper(r) && index > 0 {
+				previous := runes[index-1]
+				if unicode.IsLower(previous) || unicode.IsDigit(previous) {
+					flush()
+				}
+			}
+			current.WriteRune(r)
+		default:
+			flush()
+		}
+	}
+	flush()
+	return words
 }
 
 func isTruthy(value string) bool {

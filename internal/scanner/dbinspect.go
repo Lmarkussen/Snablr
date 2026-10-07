@@ -42,6 +42,13 @@ func (e *Engine) recordDBConnectionCandidates(meta FileMetadata, matches []dbins
 		if match.ID != "dbinspect.access.connection_string" {
 			continue
 		}
+		// Only a connection string that carries an actual password is confirmed
+		// credential material. A medium connection-string match (endpoint/user
+		// only, or a metadata-shaped password that was rejected) is
+		// infrastructure context, not an exported credential.
+		if !strings.EqualFold(strings.TrimSpace(match.Severity), "high") {
+			continue
+		}
 		candidate := credentialanalysis.Candidate{
 			Verification:    credentialanalysis.Confirmed,
 			CredentialType:  "connection_string",

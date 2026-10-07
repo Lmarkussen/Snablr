@@ -584,6 +584,11 @@ func genericCredentialEntry(f scanner.Finding) (credentialEntry, bool) {
 	if secretValue == "" || looksPlaceholderCredential(secretValue) {
 		return credentialEntry{}, false
 	}
+	// Reject non-scalar fragments (SQL variables, expressions, schema/metadata
+	// definitions, prose) even when the label is credential-like.
+	if _, reject := credentialanalysis.NonSecretValueShape(secretValue); reject {
+		return credentialEntry{}, false
+	}
 
 	group := "Application / Deployment Credentials"
 	switch {

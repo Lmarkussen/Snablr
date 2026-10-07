@@ -109,6 +109,15 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 		if len(out) >= maxHarvestItems || strings.TrimSpace(candidate.Value) == "" {
 			return
 		}
+		// Scalar secret values must have a scalar secret shape. Syntactically
+		// valid assignments whose right-hand side is a SQL variable, function
+		// call, schema/metadata definition or a prose fragment are not secrets,
+		// regardless of how credential-like the field label is.
+		if IsScalarCredentialType(candidate.CredentialType) {
+			if _, reject := NonSecretValueShape(candidate.Value); reject {
+				return
+			}
+		}
 		out = append(out, base(candidate))
 	}
 	ext := strings.ToLower(filepath.Ext(input.Path))
@@ -697,6 +706,12 @@ func harvestFields(fields map[string]string, add func(Candidate), basis string) 
 	}
 	identity := fieldIdentity(fields)
 	domain := fieldDomain(fields)
+	// A prose/label fragment or SQL expression cannot be an account identity
+	// either; drop it so a real password value is not confirmed against a bogus
+	// identity.
+	if _, reject := NonSecretValueShape(identity); reject {
+		identity = ""
+	}
 	strongAPI := (fields["access_key_id"] != "" || fields["access_key"] != "") && (fields["secret_access_key"] != "" || fields["secret_key"] != "")
 	strongClient := fields["client_id"] != "" && fields["client_secret"] != ""
 	for key, value := range fields {

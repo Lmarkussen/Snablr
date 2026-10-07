@@ -136,8 +136,8 @@ func inspectINISection(section string, values map[string]string) (stringObservat
 	driver := meaningfulValue(firstNonEmpty(values["driver"], values["provider"]))
 	endpoint := meaningfulValue(firstNonEmpty(values["server"], values["host"], values["datasource"]))
 	database := meaningfulValue(firstNonEmpty(values["database"], values["dbname"], values["dbq"]))
-	user := meaningfulValue(firstNonEmpty(values["uid"], values["userid"], values["user"], values["username"]))
-	password := meaningfulValue(firstNonEmpty(values["password"], values["pwd"]))
+	user := meaningfulCredentialValue(firstNonEmpty(values["uid"], values["userid"], values["user"], values["username"]))
+	password := meaningfulCredentialValue(firstNonEmpty(values["password"], values["pwd"]))
 	if driver == "" && endpoint == "" && database == "" && user == "" && password == "" {
 		return stringObservation{}, false
 	}

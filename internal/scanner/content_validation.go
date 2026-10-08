@@ -49,6 +49,14 @@ func weakContentSuppression(ruleID string, category string, matchedText string, 
 			return true, "connection string values look placeholder-like or weak"
 		}
 		return false, ""
+	case "content.credential_note_indicators":
+		// A bare keyword ("credentials", "PW", "pwd") on its own line is a word
+		// or dictionary entry, not a credential note. A note must add a label,
+		// qualifier or value alongside the keyword.
+		if isBareCredentialNoteKeyword(matchedText) {
+			return true, "credential-note keyword appeared without associated credential content"
+		}
+		return false, ""
 	case "content.password_assignment_indicators":
 		// An explicit "<password> = <value>" assignment states a credential
 		// outright. Shortness alone is therefore not enough to withhold the
@@ -128,6 +136,31 @@ func allNonSecretValueShapes(values []string) bool {
 		}
 	}
 	return true
+}
+
+// isBareCredentialNoteKeyword reports whether a matched credential-note phrase
+// consists solely of a single credential keyword, with no account label,
+// qualifier, separator or value attached. Dictionary/wordlist entries look like
+// this and must not be treated as credential notes.
+func isBareCredentialNoteKeyword(matched string) bool {
+	line := strings.TrimSpace(strings.SplitN(matched, "\n", 2)[0])
+	if line == "" {
+		return false
+	}
+	if strings.ContainsAny(line, ":=-*;") {
+		return false
+	}
+	fields := strings.Fields(line)
+	if len(fields) != 1 {
+		return false
+	}
+	switch strings.ToLower(strings.Trim(fields[0], "#;*-> ")) {
+	case "cred", "creds", "credential", "credentials", "password", "passwords",
+		"passord", "pw", "pwd", "login", "account":
+		return true
+	default:
+		return false
+	}
 }
 
 func isPlaceholderSecretValue(value string) bool {

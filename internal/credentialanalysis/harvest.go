@@ -139,6 +139,13 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 	structured := false
 	if strings.HasPrefix(strings.TrimSpace(textContent), "{") || strings.HasPrefix(strings.TrimSpace(textContent), "[") {
 		if value, err := decodeJSON(normalizedContent); err == nil {
+			// A localization / UI resource bundle maps message identifiers onto
+			// human-readable strings. Those strings routinely mention passwords,
+			// logins and secrets in prose ("the password is incorrect"), so no
+			// credential may be inferred from the bundle structure itself.
+			if isLocalizationResource(value) {
+				return out
+			}
 			harvestJSON(value, add)
 			structured = true
 		}
@@ -312,6 +319,78 @@ func decodeJSON(content []byte) (any, error) {
 	return value, nil
 }
 
+// isLocalizationResource reports whether a decoded JSON document is a
+// localization or UI resource bundle rather than data. Such bundles map message
+// identifiers onto human-readable strings and their prose routinely mentions
+// passwords and logins, so no credential may be inferred from the bundle
+// structure. Detection is structural: either the document carries gloss/comment
+// entries next to message keys, or its string values are predominantly
+// multi-word prose.
+func isLocalizationResource(value any) bool {
+	var entries [][2]string
+	collectStringEntries(value, &entries)
+	if len(entries) == 0 {
+		return false
+	}
+	hasComment := false
+	prose := 0
+	for _, entry := range entries {
+		if strings.HasSuffix(entry[0], "comment") {
+			hasComment = true
+		}
+		if looksProseString(entry[1]) {
+			prose++
+		}
+	}
+	total := len(entries)
+	if hasComment && total >= 2 {
+		return true
+	}
+	return total >= 3 && prose*2 >= total
+}
+
+func collectStringEntries(value any, out *[][2]string) {
+	switch object := value.(type) {
+	case map[string]any:
+		for key, raw := range object {
+			if text, ok := raw.(string); ok {
+				*out = append(*out, [2]string{normalizeKey(key), strings.TrimSpace(text)})
+				continue
+			}
+			collectStringEntries(raw, out)
+		}
+	case []any:
+		for _, raw := range object {
+			collectStringEntries(raw, out)
+		}
+	}
+}
+
+// looksProseString reports whether a scalar is natural-language text (two or
+// more word-like tokens) rather than a single opaque value.
+func looksProseString(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if len([]rune(trimmed)) < 4 {
+		return false
+	}
+	words := 0
+	for _, field := range strings.Fields(trimmed) {
+		if containsLetter(field) {
+			words++
+		}
+	}
+	return words >= 2
+}
+
+func containsLetter(value string) bool {
+	for _, r := range value {
+		if unicode.IsLetter(r) {
+			return true
+		}
+	}
+	return false
+}
+
 func harvestJSON(value any, add func(Candidate)) {
 	switch object := value.(type) {
 	case map[string]any:
@@ -462,7 +541,7 @@ func harvestGenericXMLNode(node *xmlHarvestNode, add func(Candidate)) {
 		}
 	}
 	if len(fields) > 0 {
-		harvestFields(fields, add, "structured XML object")
+		harvestFieldsMode(fields, add, "structured XML object", true)
 	}
 }
 
@@ -470,6 +549,16 @@ func harvestXMLSecretElement(node *xmlHarvestNode, add func(Candidate)) {
 	value := xmlElementValue(node)
 	if strings.TrimSpace(value) == "" {
 		return
+	}
+	// A token/secret/key element must carry token evidence in its own value.
+	// Merely existing as an element named <Token>/<Secret>/<ApiKey> is not
+	// enough: application caches and generated metadata contain countless
+	// elements with those names whose values are identifiers, timestamps or
+	// structured fragments. Password elements keep their own value semantics.
+	if !isPasswordKey(node.name) {
+		if _, ok := TokenSecretValueShape(value); !ok {
+			return
+		}
 	}
 	identity, domain := xmlCredentialContext(node)
 	plainText, hasPlainText := xmlChildValue(node, "plaintext")
@@ -701,6 +790,14 @@ func normalizeAssignmentLine(line string) string {
 }
 
 func harvestFields(fields map[string]string, add func(Candidate), basis string) {
+	harvestFieldsMode(fields, add, basis, false)
+}
+
+// harvestFieldsMode classifies a set of same-scope key/value fields. When
+// requireTokenShape is set every token/secret/API-key field must carry a
+// token-shaped value; this is used for structured XML where a credential-like
+// element or key name is otherwise the only evidence available.
+func harvestFieldsMode(fields map[string]string, add func(Candidate), basis string, requireTokenShape bool) {
 	if len(fields) == 0 {
 		return
 	}
@@ -718,7 +815,13 @@ func harvestFields(fields map[string]string, add func(Candidate), basis string) 
 		if !isSecretKey(key) || value == "" {
 			continue
 		}
-		candidate := Candidate{Verification: Review, CredentialType: credentialType(key), Identity: identity, Domain: domain, Value: value, ReviewReasons: []string{"credential-like value requires semantic review"}}
+		credType := credentialType(key)
+		if requireTokenShape && !isPasswordKey(key) {
+			if _, ok := TokenSecretValueShape(value); !ok {
+				continue
+			}
+		}
+		candidate := Candidate{Verification: Review, CredentialType: credType, Identity: identity, Domain: domain, Value: value, ReviewReasons: []string{"credential-like value requires semantic review"}}
 		if (identity != "" && isPasswordKey(key) || strongAPI || strongClient) && !looksReferenceOrTemplate(value) {
 			candidate.Verification = Confirmed
 			candidate.ValidationBasis = basis
@@ -889,6 +992,14 @@ func credentialType(key string) string {
 		return "token"
 	case "secret":
 		return "secret"
+	}
+	switch {
+	case strings.HasSuffix(key, "_token"):
+		return "token"
+	case strings.HasSuffix(key, "_secret"):
+		return "secret"
+	case strings.HasSuffix(key, "_api_key"):
+		return "api_key"
 	}
 	return "password"
 }

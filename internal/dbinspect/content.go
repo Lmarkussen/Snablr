@@ -156,7 +156,9 @@ func inspectINISection(section string, values map[string]string) (stringObservat
 	}
 
 	tags := []string{"database", "db:source:config", "db:ecosystem:" + ecosystem}
-	if user != "" || password != "" {
+	// Only an actual password makes this a credential; a user with no password
+	// (or integrated security) is a configuration/infrastructure artifact.
+	if password != "" {
 		return stringObservation{
 			category:    "database-access",
 			severity:    "high",
@@ -211,14 +213,14 @@ func inspectKVFragment(fragment string, lineNumber int) (stringObservation, bool
 		return stringObservation{}, false
 	}
 
-	if auth.password != "" || auth.user != "" || auth.integrated {
-		severity := "high"
-		if auth.password == "" {
-			severity = "medium"
-		}
+	// A connection string is only a recovered *credential* when it carries an
+	// actual non-placeholder, non-masked password. An account name with an empty
+	// or absent password (for example the ubiquitous Access/Jet
+	// "User ID=Admin;Password=\"\"") is a configuration artifact, not a secret.
+	if auth.password != "" {
 		return stringObservation{
 			category:    "database-access",
-			severity:    severity,
+			severity:    "high",
 			confidence:  "high",
 			id:          "dbinspect.access.connection_string",
 			name:        "Validated Database Connection Details",

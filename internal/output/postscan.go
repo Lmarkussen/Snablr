@@ -13,6 +13,12 @@ func credentialCandidatesFromFindings(findings []scanner.Finding) []credentialan
 		if isDirectInspectorCredentialFinding(finding.RuleID) {
 			continue
 		}
+		// A path/artifact that merely *indicates* a credential store exists is
+		// inventory and attack-surface evidence, never a recovered secret. It
+		// must not enter the Credential & Secret Material analysis.
+		if isCredentialStorePresenceFinding(finding.RuleID) {
+			continue
+		}
 		if entry, ok := credentialEntryFromFinding(finding); ok {
 			valueParts := make([]string, 0, len(entry.Fields))
 			identity := ""
@@ -88,6 +94,29 @@ func isDirectInspectorCredentialFinding(ruleID string) bool {
 	case "keyinspect.content.private_key_header",
 		"dbinspect.access.connection_string",
 		"dbinspect.access.dsn":
+		return true
+	default:
+		return false
+	}
+}
+
+// isCredentialStorePresenceFinding reports whether a rule identifies the
+// presence of a credential store or artifact rather than a recovered value.
+// Such findings stay visible as supporting/inventory evidence but are never
+// projected into the credential material analysis.
+func isCredentialStorePresenceFinding(ruleID string) bool {
+	switch strings.ToLower(strings.TrimSpace(ruleID)) {
+	case "wincredinspect.path.credentials",
+		"wincredinspect.path.vault",
+		"wincredinspect.path.protect",
+		"browsercredinspect.firefox.logins",
+		"browsercredinspect.firefox.key4",
+		"browsercredinspect.chromium.login_data",
+		"browsercredinspect.chromium.cookies",
+		"correlation.windows.dpapi_credential_store",
+		"correlation.browser.profile_credential_store",
+		"awsinspect.path.credentials",
+		"awsinspect.path.config":
 		return true
 	default:
 		return false

@@ -38,9 +38,12 @@ var (
 	xmlSecretAttrRegex    = regexp.MustCompile(`(?i)<[^>]+\b(password|passord|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|secret[_-]?key|client[_-]?secret)\s*=\s*["']([^"']+)["'][^>]*\/?>`)
 	identityLineRegex     = regexp.MustCompile(`(?i)\b(user(name)?|login|account|email|upn|domain|domene|domain administrator|domene administrator)\b`)
 	genericPairRegex      = regexp.MustCompile(`(?im)^\s*((?:[A-Za-z][A-Za-z0-9._@-]{1,32})|(?:domain administrator)|(?:domene administrator))(\s*[:=]\s*)([^\s"';]{4,64})\s*$`)
-	credentialContextLabelRegex = regexp.MustCompile(`(?i)^(user(name)?|login|account|email|upn|admin(istrator)?|domain administrator|domene administrator|db[_-]?user|service[_-]?account)$`)
-	accountAliasLabelRegex      = regexp.MustCompile(`(?i)^(svc[_-]?[a-z0-9._-]+|app[_-]?[a-z0-9._-]+|sql[_-]?[a-z0-9._-]+|adm[_-]?[a-z0-9._-]+|[a-z0-9._-]*admin)$`)
-	genericResourceLabelRegex   = regexp.MustCompile(`(?i)^(msg|message|text|label|caption|title|description|desc|prompt|error|info|hint|notice|status|default(server|host|url)?|server|host|url|uri|path|dir|directory|file|folder)[0-9._-]*$`)
+	// credentialContextLabelRegex is the semantic label allow-list for note-style
+	// "label: value" pairs. Only genuine credential labels qualify; generic
+	// resource/config keys and path-like labels (AppPath, Directory, File, ...)
+	// must never be treated as accounts merely because they use a separator.
+	credentialContextLabelRegex = regexp.MustCompile(`(?i)^(user(name)?|login|account|email|upn|admin(istrator)?|domain administrator|domene administrator|db[_-]?user|service[_-]?account|brukernavn|bruker|konto(navn)?|kontonavn)$`)
+	genericResourceLabelRegex   = regexp.MustCompile(`(?i)^(msg|message|text|label|caption|title|description|desc|prompt|error|info|hint|notice|status|default(server|host|url)?|server|host|url|uri|path|dir|directory|file|folder|location|app(name|path)?|install(dir|path)?)[0-9._-]*$`)
 )
 
 var disallowedGenericPairLabels = map[string]struct{}{
@@ -333,9 +336,7 @@ func parseGenericPairLine(line string) (genericPairMatch, bool) {
 		return genericPairMatch{}, false
 	}
 	if !isCredentialContextLabel(label) {
-		if !accountAliasLabelRegex.MatchString(label) || assessSensitiveValueQuality(value).Weak {
-			return genericPairMatch{}, false
-		}
+		return genericPairMatch{}, false
 	}
 
 	return genericPairMatch{

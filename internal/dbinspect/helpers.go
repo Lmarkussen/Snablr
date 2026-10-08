@@ -296,6 +296,11 @@ func isPlaceholderValue(value string) bool {
 	case strings.HasPrefix(value, "{") && strings.HasSuffix(value, "}"):
 		return true
 	}
+	// A redaction mask ("********", "••••") or an explicit empty-quoted value
+	// is not a recovered secret.
+	if credentialanalysis.IsMaskedValue(value) {
+		return true
+	}
 	switch value {
 	case "username", "user", "password", "pwd", "server", "host", "database", "dbname", "dsn":
 		return true

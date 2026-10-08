@@ -11,7 +11,9 @@ rules:
     name: Password Assignment Indicators
     description: Detect likely hardcoded password assignments in human-readable configuration and script files.
     type: content
-    pattern: '(?im)\b(password|passord|passwd|pwd)\b\s*[:=]\s*["'']?[^\s"'';]{4,}'
+    # A compound/camel-case label such as AdminPassword, SvcPass or
+    # Account1_Password still ends in a password token and must match.
+    pattern: '(?im)\b[A-Za-z0-9_.-]*(?:password|passord|passwd|pwd)\b\s*[:=]\s*["'']?[^\s"'';]{4,}'
     case_sensitive: false
     severity: high
     tags: [credentials, passwords, remediation]
@@ -70,7 +72,11 @@ rules:
     name: Note-Style Credential Pair Indicators
     description: Detect account-like labels followed by secret-like values in human-written notes, lists, and text files.
     type: content
-    pattern: '(?im)^(?:(?:[A-Za-z][A-Za-z0-9._@-]{1,32})|(?:domain administrator)|(?:domene administrator))\s*[:=]\s*\S{6,64}$'
+    # Restricted to semantic credential labels (accounts, passwords, and
+    # explicit secret nouns). Generic config/resource keys and path-like labels
+    # such as AppPath, Directory, File or Location are not credentials and must
+    # not be treated as note-style credential pairs.
+    pattern: '(?im)^(?:(?:user(?:name)?|login|account|email|upn|admin(?:istrator)?|domain[ \t]+administrator|domene[ \t]+administrator|db[_-]?user|service[_-]?account|brukernavn|bruker|konto(?:navn)?|kontonavn))[ \t]*[:=][ \t]*\S{6,64}[ \t]*$'
     case_sensitive: false
     severity: high
     confidence: medium
@@ -90,7 +96,10 @@ rules:
     name: Password Note Value Indicators
     description: Detect password-note phrasing followed by a password-like value in text notes or exports.
     type: content
-    pattern: '(?im)\b(password|passord)\b(?:\s+is|\s*[:=]|\s+)\S{4,64}$'
+    # The separator is limited to spaces/tabs so a bare keyword on one line can
+    # never pair with an unrelated token on the next line (for example a
+    # dictionary or wordlist entry).
+    pattern: '(?im)\b(password|passord)\b(?:[ \t]+is[ \t]+|[ \t]*[:=][ \t]*|[ \t]+)\S{4,64}[ \t]*$'
     case_sensitive: false
     severity: high
     confidence: medium
@@ -128,7 +137,10 @@ rules:
     name: Database Connection String Indicators
     description: Detect connection string patterns that appear to include embedded authentication material.
     type: content
-    pattern: '(?im)\b(server|data source|host|database|initial catalog)\b.{0,120}\b(user id|uid|username|password|pwd)\b'
+    # Requires real connection-string structure: an endpoint/provider key with an
+    # "=" assignment followed by a credential key with its own "=" assignment on
+    # the same line. The bare token "Server" is not, by itself, evidence.
+    pattern: '(?im)\b(?:provider|data[ \t]+source|server|host|initial[ \t]+catalog|database|dsn)[ \t]*=[ \t]*[^\s;\r\n]{1,160}.{0,200}?\b(?:user[ \t]+id|uid|username|password|pwd)[ \t]*=[ \t]*[^\s;\r\n]{1,160}'
     case_sensitive: false
     severity: high
     tags: [database, connection-string, remediation]

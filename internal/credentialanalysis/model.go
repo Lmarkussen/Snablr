@@ -15,6 +15,73 @@ const (
 	Review    Verification = "review"
 )
 
+// Material separates actionable secret material from credential-related
+// correlation evidence. "Confirmed" alone only means the record survived
+// semantic validation; it does not prove that a secret value was recovered, so
+// the ledger needs this second, stricter distinction before a row may be
+// presented as a recovered credential.
+type Material string
+
+const (
+	// MaterialSecret marks a record that carries actual secret material: a
+	// recovered or explicit password, token, key, hash or connection secret.
+	MaterialSecret Material = "secret"
+	// MaterialCorrelation marks a credential-related record that carries no
+	// secret type of its own: an identity observation, a deployment or artifact
+	// marker, or a supporting correlation record.
+	MaterialCorrelation Material = "correlation"
+)
+
+// secretCredentialTypes are the credential types that denote a concrete secret
+// value. A record typed by anything else (for example a "credential indicator"
+// or a group label) is correlation evidence rather than recovered secret
+// material.
+var secretCredentialTypes = map[string]struct{}{
+	"password":          {},
+	"passwd":            {},
+	"pwd":               {},
+	"passord":           {},
+	"secret":            {},
+	"shared_secret":     {},
+	"client_secret":     {},
+	"api_key":           {},
+	"apikey":            {},
+	"api_secret":        {},
+	"access_key":        {},
+	"secret_key":        {},
+	"token":             {},
+	"bearer_token":      {},
+	"access_token":      {},
+	"session_token":     {},
+	"connection_string": {},
+	"dsn":               {},
+	"private_key":       {},
+	"nt_hash":           {},
+	"hash":              {},
+	"certificate":       {},
+}
+
+// IsSecretMaterialType reports whether a credential type denotes a concrete
+// secret value rather than a credential-related category or correlation label.
+func IsSecretMaterialType(credentialType string) bool {
+	_, ok := secretCredentialTypes[strings.ToLower(strings.TrimSpace(credentialType))]
+	return ok
+}
+
+// classifyMaterial reports whether a stored record carries actual secret
+// material. A record is secret material only when it is typed as a concrete
+// secret and holds a value; a credential-like record type (identity marker,
+// deployment indicator, artifact correlation) is supporting evidence instead.
+func classifyMaterial(candidate Candidate) Material {
+	if !IsSecretMaterialType(candidate.CredentialType) {
+		return MaterialCorrelation
+	}
+	if strings.TrimSpace(candidate.Value) == "" {
+		return MaterialCorrelation
+	}
+	return MaterialSecret
+}
+
 type Candidate struct {
 	Verification    Verification
 	CredentialType  string
@@ -33,6 +100,7 @@ type Candidate struct {
 	Container       string
 	Occurrences     int
 	Locations       []string
+	Material        Material
 	ValidationBasis string
 	ReviewReasons   []string
 	Evidence        []Evidence
@@ -65,6 +133,7 @@ type SafeCandidate struct {
 	Container       string       `json:"container,omitempty"`
 	Occurrences     int          `json:"occurrences,omitempty"`
 	Locations       []string     `json:"locations,omitempty"`
+	Material        Material     `json:"material,omitempty"`
 	ValidationBasis string       `json:"validation_basis,omitempty"`
 	ReviewReasons   []string     `json:"review_reasons,omitempty"`
 	Evidence        []Evidence   `json:"evidence,omitempty"`
@@ -89,7 +158,14 @@ func Analyze(candidates []Candidate) Report {
 	report := Report{}
 	merged := make(map[string]analyzedCandidate)
 	for _, candidate := range candidates {
-		if strings.TrimSpace(candidate.Value) == "" || strings.TrimSpace(candidate.CredentialType) == "" {
+		if strings.TrimSpace(candidate.CredentialType) == "" {
+			continue
+		}
+		// A record explicitly marked as correlation evidence describes an
+		// identity, artifact or correlation observation rather than a secret, so
+		// it may legitimately carry no value. Everything else must hold a value
+		// to be credential material at all.
+		if strings.TrimSpace(candidate.Value) == "" && candidate.Material != MaterialCorrelation {
 			continue
 		}
 		report.CandidatesAnalyzed++
@@ -314,6 +390,9 @@ func mergeLogicalCredential(existing, incoming Candidate) Candidate {
 	merged.Disabled = strong.Disabled || weak.Disabled
 	merged.Encrypted = strong.Encrypted || weak.Encrypted
 	merged.Evidence = mergeEvidence(strong.Evidence, weak.Evidence)
+	// The material class follows the merged record's type and value, which are
+	// identical for logically equivalent records.
+	merged.Material = classifyMaterial(merged)
 	if merged.Verification == Confirmed {
 		// The merged record is confirmed; a weaker path's uncertainty notes no
 		// longer describe it, but its evidence above is retained.
@@ -355,6 +434,7 @@ func normalize(candidate Candidate) Candidate {
 	candidate.ValidationBasis = strings.TrimSpace(candidate.ValidationBasis)
 	candidate.ReviewReasons = uniqueSorted(candidate.ReviewReasons)
 	candidate.Evidence = mergeEvidence(nil, candidate.Evidence)
+	candidate.Material = classifyMaterial(candidate)
 	if candidate.Occurrences <= 0 {
 		candidate.Occurrences = 1
 	}
@@ -375,8 +455,8 @@ func toSafe(candidate Candidate) SafeCandidate {
 		RID: candidate.RID, SID: candidate.SID, AccountType: candidate.AccountType, Disabled: candidate.Disabled, Encrypted: candidate.Encrypted,
 		Source: candidate.Source, Host: candidate.Host, Share: candidate.Share, Path: candidate.Path,
 		Container: candidate.Container, Occurrences: candidate.Occurrences, Locations: append([]string{}, candidate.Locations...),
-		ValidationBasis: candidate.ValidationBasis,
-		ReviewReasons:   append([]string{}, candidate.ReviewReasons...), Evidence: append([]Evidence{}, candidate.Evidence...),
+		Material: classifyMaterial(candidate), ValidationBasis: candidate.ValidationBasis,
+		ReviewReasons: append([]string{}, candidate.ReviewReasons...), Evidence: append([]Evidence{}, candidate.Evidence...),
 	}
 }
 

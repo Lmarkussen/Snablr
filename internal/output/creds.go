@@ -101,6 +101,10 @@ func (c *CredsWriter) Close() error {
 
 	entries := buildCredentialEntries(augmentFindingsForReporting(c.findings))
 	analysis := analyzeCandidates(c.findings, c.candidates)
+	// Correlation records carry no secret value of their own, so the sensitive
+	// export only renders records that hold actual secret material.
+	confirmedRecords := secretMaterialRecords(analysis.Candidates, credentialanalysis.Confirmed)
+	reviewRecords := secretMaterialRecords(analysis.Candidates, credentialanalysis.Review)
 	ntdsEntries := make([]ntdsCredentialEntry, 0, len(c.ntds))
 	for _, entry := range c.ntds {
 		ntdsEntries = append(ntdsEntries, entry)
@@ -110,7 +114,7 @@ func (c *CredsWriter) Close() error {
 		right := strings.ToLower(ntdsEntries[j].domain + "\x00" + ntdsEntries[j].account + fmt.Sprintf("\x00%d\x00%s\x00%s", ntdsEntries[j].rid, ntdsEntries[j].source, ntdsEntries[j].hash))
 		return left < right
 	})
-	if len(entries) == 0 && len(ntdsEntries) == 0 && len(analysis.Confirmed) == 0 && len(analysis.Review) == 0 {
+	if len(entries) == 0 && len(ntdsEntries) == 0 && confirmedRecords == 0 && reviewRecords == 0 {
 		if _, err := io.WriteString(c.w, "# No high-confidence credentials were exported.\n"); err != nil {
 			if c.closer != nil {
 				_ = c.closer.Close()
@@ -152,9 +156,9 @@ func (c *CredsWriter) Close() error {
 	})
 
 	var builder strings.Builder
-	if len(analysis.Confirmed) > 0 {
+	if confirmedRecords > 0 {
 		builder.WriteString("==== CONFIRMED CREDENTIALS ====\n")
-		builder.WriteString(fmt.Sprintf("Count: %d\n\n", len(analysis.Confirmed)))
+		builder.WriteString(fmt.Sprintf("Count: %d\n\n", confirmedRecords))
 	}
 	// Legacy curated sections remain useful for established formats. Mark the
 	// shared records they render by source path, then render every other
@@ -164,6 +168,9 @@ func (c *CredsWriter) Close() error {
 	renderedConfirmed := make(map[string]struct{})
 	for _, candidate := range analysis.Candidates {
 		if candidate.Verification != credentialanalysis.Confirmed {
+			continue
+		}
+		if candidate.Material == credentialanalysis.MaterialCorrelation {
 			continue
 		}
 		for _, entry := range entries {
@@ -251,6 +258,9 @@ func (c *CredsWriter) Close() error {
 		if candidate.Verification != credentialanalysis.Confirmed {
 			continue
 		}
+		if candidate.Material == credentialanalysis.MaterialCorrelation {
+			continue
+		}
 		if strings.EqualFold(candidate.CredentialType, "private_key") && !isRawPrivateCandidate(candidate) && hasLegacyPrivateEntry(candidate, entries) {
 			continue
 		}
@@ -275,14 +285,17 @@ func (c *CredsWriter) Close() error {
 		writeCandidateProvenance(&builder, candidate)
 		builder.WriteString("Validation: " + candidate.ValidationBasis + "\n\n")
 	}
-	if len(analysis.Review) > 0 {
+	if reviewRecords > 0 {
 		if builder.Len() > 0 {
 			builder.WriteString("\n")
 		}
 		builder.WriteString("==== POTENTIAL CREDENTIAL MATERIAL — REVIEW ====\n")
-		builder.WriteString(fmt.Sprintf("Count: %d\n\n", len(analysis.Review)))
+		builder.WriteString(fmt.Sprintf("Count: %d\n\n", reviewRecords))
 		for _, candidate := range analysis.Candidates {
 			if candidate.Verification != credentialanalysis.Review {
+				continue
+			}
+			if candidate.Material == credentialanalysis.MaterialCorrelation {
 				continue
 			}
 			builder.WriteString("Type: " + candidate.CredentialType + "\n")
@@ -362,6 +375,22 @@ func hasConfirmedCandidateAtPath(candidates []credentialanalysis.Candidate, path
 		}
 	}
 	return false
+}
+
+// secretMaterialRecords counts the ledger records that hold actual secret
+// material for one verification state.
+func secretMaterialRecords(candidates []credentialanalysis.Candidate, verification credentialanalysis.Verification) int {
+	count := 0
+	for _, candidate := range candidates {
+		if candidate.Verification != verification {
+			continue
+		}
+		if candidate.Material == credentialanalysis.MaterialCorrelation {
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 func writeCandidateProvenance(builder *strings.Builder, candidate credentialanalysis.Candidate) {

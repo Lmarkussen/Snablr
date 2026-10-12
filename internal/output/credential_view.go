@@ -13,13 +13,21 @@ import (
 // sensitive creds export still carry every record.
 const maxReviewRows = 200
 
+// maxCredentialExtraLocations bounds how many additional locations one credential
+// row renders inside its collapsed provenance block. A single credential can be
+// observed in hundreds of files; the row stays readable and the complete list
+// remains available in the JSON export and the sensitive creds export.
+const maxCredentialExtraLocations = 40
+
 // credentialReportView is the operator-facing projection of the credential
 // analysis. It carries only non-sensitive metadata (no secret values) and adds
 // the provenance and finding linkage the raw analysis model does not express.
 type credentialReportView struct {
 	Confirmed              []credentialRow
+	Supporting             []credentialRow
 	Review                 []credentialRow
 	RecoveredSecrets       int
+	SupportingCount        int
 	ReviewTotal            int
 	ReviewTruncated        bool
 	ReviewRendered         int
@@ -30,18 +38,19 @@ type credentialReportView struct {
 
 // credentialRow is one operator-facing credential row.
 type credentialRow struct {
-	Identity        string
-	Type            string
-	Host            string
-	Share           string
-	Provenance      string
-	Locations       []string
-	Occurrences     int
-	OccurrenceLabel string
-	Validation      string
-	ReviewReasons   string
-	Anchor          string
-	Status          string
+	Identity           string
+	Type               string
+	Host               string
+	Share              string
+	Provenance         string
+	ExtraLocations     []string
+	ExtraLocationTotal int
+	Occurrences        int
+	OccurrenceLabel    string
+	Validation         string
+	ReviewReasons      string
+	Anchor             string
+	Status             string
 }
 
 func buildCredentialReportView(analysis credentialanalysis.Report, groups ...[]htmlCategoryGroup) credentialReportView {
@@ -56,11 +65,19 @@ func buildCredentialReportView(analysis credentialanalysis.Report, groups ...[]h
 	}
 	for _, candidate := range analysis.Confirmed {
 		row := credentialRowFromCandidate(candidate, index)
+		// Only records that carry real secret material belong in the actionable
+		// credential table. Credential-related records without a secret type stay
+		// in the supporting hierarchy below the findings.
+		if candidate.Material == credentialanalysis.MaterialCorrelation {
+			view.Supporting = append(view.Supporting, row)
+			continue
+		}
 		if row.Validation == validationCryptographic {
 			view.RecoveredSecrets++
 		}
 		view.Confirmed = append(view.Confirmed, row)
 	}
+	view.SupportingCount = len(view.Supporting)
 	view.ReviewTotal = len(analysis.Review)
 	for i, candidate := range analysis.Review {
 		if i >= maxReviewRows {
@@ -79,7 +96,6 @@ func credentialRowFromCandidate(candidate credentialanalysis.SafeCandidate, inde
 		Type:            candidate.CredentialType,
 		Host:            candidate.Host,
 		Share:           candidate.Share,
-		Locations:       append([]string{}, candidate.Locations...),
 		Occurrences:     candidate.Occurrences,
 		OccurrenceLabel: strconv.Itoa(maxIntValue(candidate.Occurrences, 1)),
 		Validation:      validationBasisLabel(candidate.ValidationBasis),
@@ -89,9 +105,22 @@ func credentialRowFromCandidate(candidate credentialanalysis.SafeCandidate, inde
 		row.Occurrences = 1
 	}
 	row.Provenance = credentialanalysis.Provenance(candidate.Host, candidate.Share, candidate.Path, candidate.Container)
-	if row.Provenance == "" && len(row.Locations) > 0 {
-		row.Provenance = row.Locations[0]
+	locations := append([]string{}, candidate.Locations...)
+	if row.Provenance == "" && len(locations) > 0 {
+		row.Provenance, locations = locations[0], locations[1:]
 	}
+	extra := make([]string, 0, len(locations))
+	for _, location := range locations {
+		if location == "" || strings.EqualFold(location, row.Provenance) {
+			continue
+		}
+		extra = append(extra, location)
+	}
+	row.ExtraLocationTotal = len(extra)
+	if len(extra) > maxCredentialExtraLocations {
+		extra = extra[:maxCredentialExtraLocations]
+	}
+	row.ExtraLocations = extra
 	row.Anchor = lookupCredentialAnchor(candidate, index)
 	if row.Anchor == "" {
 		row.Status = credentialStatusText(candidate)

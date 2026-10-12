@@ -31,6 +31,8 @@ type Candidate struct {
 	Share           string
 	Path            string
 	Container       string
+	Occurrences     int
+	Locations       []string
 	ValidationBasis string
 	ReviewReasons   []string
 	Evidence        []Evidence
@@ -61,17 +63,20 @@ type SafeCandidate struct {
 	Share           string       `json:"share,omitempty"`
 	Path            string       `json:"path,omitempty"`
 	Container       string       `json:"container,omitempty"`
+	Occurrences     int          `json:"occurrences,omitempty"`
+	Locations       []string     `json:"locations,omitempty"`
 	ValidationBasis string       `json:"validation_basis,omitempty"`
 	ReviewReasons   []string     `json:"review_reasons,omitempty"`
 	Evidence        []Evidence   `json:"evidence,omitempty"`
 }
 
 type Report struct {
-	CandidatesAnalyzed int             `json:"candidates_analyzed"`
-	Confirmed          []SafeCandidate `json:"confirmed,omitempty"`
-	Review             []SafeCandidate `json:"review,omitempty"`
-	DuplicatesMerged   int             `json:"duplicates_merged"`
-	Candidates         []Candidate     `json:"-"`
+	CandidatesAnalyzed     int             `json:"candidates_analyzed"`
+	SuppressedPlaceholders int             `json:"suppressed_placeholders"`
+	Confirmed              []SafeCandidate `json:"confirmed,omitempty"`
+	Review                 []SafeCandidate `json:"review,omitempty"`
+	DuplicatesMerged       int             `json:"duplicates_merged"`
+	Candidates             []Candidate     `json:"-"`
 }
 
 type analyzedCandidate struct {
@@ -87,6 +92,13 @@ func Analyze(candidates []Candidate) Report {
 			continue
 		}
 		report.CandidatesAnalyzed++
+		// Recognised placeholders and templates are not credential material.
+		// They are excluded from confirmed material, review material and the
+		// explicit sensitive export instead of being downgraded to review.
+		if _, placeholder := PlaceholderReason(candidate.Value); placeholder {
+			report.SuppressedPlaceholders++
+			continue
+		}
 		candidate = normalize(candidate)
 		// Verification is deliberately not part of identity: independent evidence
 		// may promote an initially reviewed candidate to confirmed. A weaker
@@ -252,6 +264,8 @@ func mergeLogicalCredential(existing, incoming Candidate) Candidate {
 	merged.Host = firstNonEmptyString(strong.Host, weak.Host)
 	merged.Share = firstNonEmptyString(strong.Share, weak.Share)
 	merged.Container = firstNonEmptyString(strong.Container, weak.Container)
+	merged.Occurrences = strong.Occurrences + weak.Occurrences
+	merged.Locations = uniqueSorted(append(append([]string{}, strong.Locations...), weak.Locations...))
 	merged.RID = firstNonZero(strong.RID, weak.RID)
 	merged.SID = firstNonEmptyString(strong.SID, weak.SID)
 	merged.AccountType = firstNonEmptyString(strong.AccountType, weak.AccountType)
@@ -299,6 +313,16 @@ func normalize(candidate Candidate) Candidate {
 	candidate.ValidationBasis = strings.TrimSpace(candidate.ValidationBasis)
 	candidate.ReviewReasons = uniqueSorted(candidate.ReviewReasons)
 	candidate.Evidence = mergeEvidence(nil, candidate.Evidence)
+	if candidate.Occurrences <= 0 {
+		candidate.Occurrences = 1
+	}
+	// Every distinct observation location is retained so that deduplication
+	// never drops where a credential was found.
+	locations := append([]string{}, candidate.Locations...)
+	if location := candidateProvenance(candidate); location != "" {
+		locations = append(locations, location)
+	}
+	candidate.Locations = uniqueSorted(locations)
 	return candidate
 }
 
@@ -308,9 +332,67 @@ func toSafe(candidate Candidate) SafeCandidate {
 		Identity: candidate.Identity, Domain: candidate.Domain, ValuePresent: candidate.Value != "",
 		RID: candidate.RID, SID: candidate.SID, AccountType: candidate.AccountType, Disabled: candidate.Disabled, Encrypted: candidate.Encrypted,
 		Source: candidate.Source, Host: candidate.Host, Share: candidate.Share, Path: candidate.Path,
-		Container: candidate.Container, ValidationBasis: candidate.ValidationBasis,
-		ReviewReasons: append([]string{}, candidate.ReviewReasons...), Evidence: append([]Evidence{}, candidate.Evidence...),
+		Container: candidate.Container, Occurrences: candidate.Occurrences, Locations: append([]string{}, candidate.Locations...),
+		ValidationBasis: candidate.ValidationBasis,
+		ReviewReasons:   append([]string{}, candidate.ReviewReasons...), Evidence: append([]Evidence{}, candidate.Evidence...),
 	}
+}
+
+// Provenance renders one observation location as a single operator-facing
+// string. A UNC-style form is used whenever host/share are known; logical
+// container members stay joined with "!" so an archive member is never shown as
+// a bare loose file.
+func Provenance(host, share, path, container string) string {
+	path = strings.TrimSpace(path)
+	container = strings.TrimSpace(container)
+	if container != "" && container != path && !strings.Contains(path, "!") {
+		if path == "" {
+			path = container
+		} else {
+			path = container + "!" + path
+		}
+	}
+	if path == "" {
+		return ""
+	}
+	outer, members := splitContainerPath(path)
+	outer = strings.ReplaceAll(outer, "/", `\`)
+	if len(members) > 0 {
+		path = outer + "!" + strings.Join(members, "!")
+	} else {
+		path = outer
+	}
+	host, share = strings.TrimSpace(host), strings.TrimSpace(share)
+	if host == "" && share == "" {
+		return path
+	}
+	if !strings.HasPrefix(path, `\`) {
+		path = `\` + path
+	}
+	return `\\` + valueOrDashString(host) + `\` + valueOrDashString(share) + path
+}
+
+// candidateProvenance renders the location carried directly on a candidate.
+func candidateProvenance(candidate Candidate) string {
+	return Provenance(candidate.Host, candidate.Share, candidate.Path, candidate.Container)
+}
+
+// splitContainerPath separates the outer file path from logical container
+// members joined with "!" (for example "backup.zip!docs/settings.ini").
+func splitContainerPath(value string) (string, []string) {
+	parts := strings.Split(value, "!")
+	if len(parts) == 1 {
+		return value, nil
+	}
+	return parts[0], parts[1:]
+}
+
+func valueOrDashString(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
+	return value
 }
 
 func mergeEvidence(left, right []Evidence) []Evidence {

@@ -29,10 +29,13 @@ func TestHarvestStructuredAndReviewMaterial(t *testing.T) {
 	}
 }
 
-func TestHarvestRecognizesPlaceholdersAndEnvironmentPairs(t *testing.T) {
+func TestHarvestSuppressesPlaceholdersAndConfirmsEnvironmentPairs(t *testing.T) {
 	got := Harvest(HarvestInput{Content: []byte("DB_USERNAME=svc\nDB_PASSWORD=secret\nTEMPLATE_PASSWORD=${PASSWORD}\n"), Path: "service.env"})
-	if !hasCandidate(got, Confirmed, "secret") || !hasCandidate(got, Review, "${PASSWORD}") {
+	if !hasCandidate(got, Confirmed, "secret") {
 		t.Fatalf("environment candidates incorrect: %#v", got)
+	}
+	if hasCandidate(got, Confirmed, "${PASSWORD}") || hasCandidate(got, Review, "${PASSWORD}") {
+		t.Fatalf("template value was not suppressed from credential material: %#v", got)
 	}
 }
 

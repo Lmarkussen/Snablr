@@ -1054,50 +1054,87 @@
     <section id="credential-analysis">
       <div class="section-head">
         <h2>Credential &amp; Secret Material</h2>
-        <span class="section-note">Post-scan classification is separate from finding priority. Review material is retained for operator inspection; values are intentionally omitted from this safe report.</span>
+        <span class="section-note">Post-scan classification is separate from finding priority. Confirmed rows carry an explicit or cryptographically recovered secret; placeholders and templates are suppressed from credential material entirely. Values are intentionally omitted from this safe report.</span>
       </div>
       <div class="summary-grid">
         <article class="card">
           <span class="card-label">Confirmed Credentials</span>
           <span class="card-value">{{ len .CredentialAnalysis.Confirmed }}</span>
-          <div class="card-meta">Validated by offline structure or cryptographic recovery.</div>
+          <div class="card-meta">Each row carries a concrete value from an explicit credential context or a recovered credential store.</div>
+        </article>
+        <article class="card">
+          <span class="card-label">High-Value Recovered Secrets</span>
+          <span class="card-value">{{ .CredentialView.RecoveredSecrets }}</span>
+          <div class="card-meta">Cryptographically recovered material (credential-store, hash or private-key recovery).</div>
         </article>
         <article class="card">
           <span class="card-label">Potential Credential Material — Review</span>
           <span class="card-value">{{ len .CredentialAnalysis.Review }}</span>
-          <div class="card-meta">Retained because semantic validation was inconclusive.</div>
+          <div class="card-meta">Retained because semantic validation was inconclusive; not confirmed.</div>
         </article>
         <article class="card">
-          <span class="card-label">Duplicate Candidates Merged</span>
-          <span class="card-value">{{ .CredentialAnalysis.DuplicatesMerged }}</span>
-          <div class="card-meta">Repeated evidence is consolidated without dropping provenance.</div>
+          <span class="card-label">Suppressed Templates / Noise</span>
+          <span class="card-value">{{ .CredentialView.SuppressedPlaceholders }}</span>
+          <div class="card-meta">Placeholder, template and masked values excluded from all credential material.</div>
         </article>
       </div>
-      {{- if .CredentialAnalysis.Confirmed }}
+      {{- if .CredentialView.Confirmed }}
       <div class="table-card">
         <h3>Confirmed Credentials</h3>
         <table>
-          <thead><tr><th>Identity</th><th>Type</th><th>Validation</th><th>Source</th></tr></thead>
+          <thead><tr><th>Identity</th><th>Type</th><th>Host</th><th>Share</th><th>Source</th><th>Observations</th><th>Validation</th><th>Finding</th></tr></thead>
           <tbody>
-          {{- range .CredentialAnalysis.Confirmed }}
-            <tr><td>{{ valueOrDash .Identity }}</td><td>{{ .CredentialType }}</td><td>{{ valueOrDash .ValidationBasis }}</td><td>{{ valueOrDash .Path }}</td></tr>
+          {{- range .CredentialView.Confirmed }}
+            <tr class="credential-row confirmed-row">
+              <td>{{ valueOrDash .Identity }}</td>
+              <td>{{ .Type }}</td>
+              <td>{{ valueOrDash .Host }}</td>
+              <td>{{ valueOrDash .Share }}</td>
+              <td>{{ valueOrDash .Provenance }}{{ if gt .Occurrences 1 }}<div class="muted">{{ .Occurrences }} observations: {{ range $i, $location := .Locations }}{{ if $i }} · {{ end }}{{ $location }}{{ end }}</div>{{ end }}</td>
+              <td>{{ .OccurrenceLabel }}</td>
+              <td>{{ .Validation }}</td>
+              <td>{{ if .Anchor }}<a href="#{{ .Anchor }}">finding card</a>{{ else }}{{ .Status }}{{ end }}</td>
+            </tr>
           {{- end }}
           </tbody>
         </table>
       </div>
       {{- end }}
-      {{- if .CredentialAnalysis.Review }}
-      <div class="table-card">
-        <h3>Potential Credential Material — Review</h3>
+      {{- if .CredentialView.Review }}
+      <details class="table-card group" id="credential-review">
+        <summary class="group-summary">
+          <div class="group-top">
+            <div class="group-title">
+              <h3>Potential Credential Material — Review</h3>
+            </div>
+            <div class="group-stats">
+              <span>{{ .CredentialView.ReviewTotal }} records</span>
+              <span>Showing {{ .CredentialView.ReviewRendered }}</span>
+            </div>
+          </div>
+          <p class="group-guidance">Unconfirmed material retained for operator inspection. Placeholder values are suppressed before this stage; every row keeps its provenance so it can be located.</p>
+        </summary>
         <table>
-          <thead><tr><th>Identity candidate</th><th>Type</th><th>Review reason</th><th>Source</th></tr></thead>
+          <thead><tr><th>Identity candidate</th><th>Type</th><th>Host</th><th>Share</th><th>Source</th><th>Observations</th><th>Review reason</th><th>Finding</th></tr></thead>
           <tbody>
-          {{- range .CredentialAnalysis.Review }}
-            <tr><td>{{ valueOrDash .Identity }}</td><td>{{ .CredentialType }}</td><td>{{ joinList .ReviewReasons "; " }}</td><td>{{ valueOrDash .Path }}</td></tr>
+          {{- range .CredentialView.Review }}
+            <tr class="credential-row review-row">
+              <td>{{ valueOrDash .Identity }}</td>
+              <td>{{ .Type }}</td>
+              <td>{{ valueOrDash .Host }}</td>
+              <td>{{ valueOrDash .Share }}</td>
+              <td>{{ valueOrDash .Provenance }}</td>
+              <td>{{ .OccurrenceLabel }}</td>
+              <td>{{ valueOrDash .ReviewReasons }}</td>
+              <td>{{ if .Anchor }}<a href="#{{ .Anchor }}">finding card</a>{{ else }}{{ .Status }}{{ end }}</td>
+            </tr>
           {{- end }}
           </tbody>
         </table>
-      </div>
+        {{- if .CredentialView.ReviewTruncated }}
+        <p class="muted">Showing the first {{ .CredentialView.ReviewRendered }} of {{ .CredentialView.ReviewTotal }} review records. The full untruncated set remains in the JSON export and the explicit sensitive creds export.</p>
+        {{- end }}
+      </details>
       {{- end }}
     </section>
 
@@ -1579,7 +1616,7 @@
 
 	        <div class="finding-list">
 	          {{- range .Findings }}
-	          <article class="finding-card {{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" data-search="{{ .SearchText }}"
+	          <article class="finding-card {{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" id="{{ findingAnchor .Finding }}" data-search="{{ .SearchText }}"
               data-severity="{{ .Finding.Severity }}"
               data-category="{{ .Finding.Category }}"
               data-confidence="{{ .Finding.Confidence }}"
@@ -1908,7 +1945,8 @@
               data-signal="{{ primarySignal .Finding }}"
               data-correlated="{{ if isCorrelated .Finding }}true{{ else }}false{{ end }}"
               data-actionable="{{ if isActionable .Finding }}true{{ else }}false{{ end }}"
-              data-triage="{{ .Finding.TriageClass }}">
+              data-triage="{{ .Finding.TriageClass }}"
+              id="{{ findingAnchor .Finding }}">
               <div class="supporting-card-top">
                 <span class="badge {{ severityClass .Finding.Severity }}">{{ .Finding.Severity }}</span>
                 {{- if primarySignal .Finding }}<span class="badge {{ signalClass (primarySignal .Finding) }}">signal {{ signalLabel (primarySignal .Finding) }}</span>{{ end -}}

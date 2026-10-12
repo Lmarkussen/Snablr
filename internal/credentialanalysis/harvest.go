@@ -109,6 +109,11 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 		if len(out) >= maxHarvestItems || strings.TrimSpace(candidate.Value) == "" {
 			return
 		}
+		// Recognised placeholders and templates are not credential material and
+		// are excluded from every credential output, never reported for review.
+		if IsPlaceholderValue(candidate.Value) {
+			return
+		}
 		// Scalar secret values must have a scalar secret shape. Syntactically
 		// valid assignments whose right-hand side is a SQL variable, function
 		// call, schema/metadata definition or a prose fragment are not secrets,
@@ -562,6 +567,7 @@ func harvestXMLSecretElement(node *xmlHarvestNode, add func(Candidate)) {
 	}
 	identity, domain := xmlCredentialContext(node)
 	plainText, hasPlainText := xmlChildValue(node, "plaintext")
+	identityPlaceholder := IsPlaceholderIdentity(identity)
 	verification := Review
 	basis := "windows_unattend_credential_element"
 	reasons := []string{"credential-like XML element requires semantic review"}
@@ -570,6 +576,7 @@ func harvestXMLSecretElement(node *xmlHarvestNode, add func(Candidate)) {
 	case strings.EqualFold(node.name, "administratorpassword"):
 		if identity == "" {
 			identity = "Administrator"
+			identityPlaceholder = false
 		}
 		if hasPlainText && strings.EqualFold(plainText, "true") {
 			verification = Confirmed
@@ -584,16 +591,19 @@ func harvestXMLSecretElement(node *xmlHarvestNode, add func(Candidate)) {
 		case hasPlainText && strings.EqualFold(plainText, "false"):
 			reasons = append(reasons, "plaintext flag is false")
 		case hasPlainText && strings.EqualFold(plainText, "true"):
-			if identity != "" {
+			if identity != "" && !identityPlaceholder {
 				verification = Confirmed
 				basis = "windows_unattend_plaintext_password"
 			}
-		case identity != "":
+		case identity != "" && !identityPlaceholder:
 			verification = Confirmed
 			basis = "windows_unattend_structured_password"
 		}
 	}
 
+	if identityPlaceholder {
+		reasons = append(reasons, "identity resembles template or variable reference")
+	}
 	if looksReferenceOrTemplate(value) {
 		reasons = append(reasons, "value resembles template or variable reference")
 	} else if verification == Confirmed {
@@ -696,11 +706,17 @@ var inlinePairPattern = regexp.MustCompile(`(?is)["']?(username|user|userid|logi
 
 func harvestInlinePairs(text string, add func(Candidate)) {
 	for _, match := range inlinePairPattern.FindAllStringSubmatch(text, -1) {
-		if looksReferenceOrTemplate(match[4]) {
-			add(Candidate{Verification: Review, CredentialType: "password", Identity: match[2], Value: match[4], ReviewReasons: []string{"value resembles template or variable reference"}})
+		identity, value := match[2], match[4]
+		if IsPlaceholderValue(value) {
+			// A placeholder is not credential material; it is not routed to
+			// review either.
 			continue
 		}
-		add(Candidate{Verification: Confirmed, CredentialType: "password", Identity: match[2], Value: match[4], ValidationBasis: "structured credential object"})
+		if IsPlaceholderIdentity(identity) {
+			add(Candidate{Verification: Review, CredentialType: "password", Identity: identity, Value: value, ReviewReasons: []string{"identity resembles template or variable reference"}})
+			continue
+		}
+		add(Candidate{Verification: Confirmed, CredentialType: "password", Identity: identity, Value: value, ValidationBasis: "structured credential object"})
 	}
 }
 
@@ -809,6 +825,10 @@ func harvestFieldsMode(fields map[string]string, add func(Candidate), basis stri
 	if _, reject := NonSecretValueShape(identity); reject {
 		identity = ""
 	}
+	// A symbolic/template identity ("USER_TEMPLATE", "%APP_USER%") is not an
+	// account, so an identity + password field pairing must not confirm the
+	// password on the strength of that identity alone.
+	identityPlaceholder := IsPlaceholderIdentity(identity)
 	strongAPI := (fields["access_key_id"] != "" || fields["access_key"] != "") && (fields["secret_access_key"] != "" || fields["secret_key"] != "")
 	strongClient := fields["client_id"] != "" && fields["client_secret"] != ""
 	for key, value := range fields {
@@ -822,10 +842,13 @@ func harvestFieldsMode(fields map[string]string, add func(Candidate), basis stri
 			}
 		}
 		candidate := Candidate{Verification: Review, CredentialType: credType, Identity: identity, Domain: domain, Value: value, ReviewReasons: []string{"credential-like value requires semantic review"}}
-		if (identity != "" && isPasswordKey(key) || strongAPI || strongClient) && !looksReferenceOrTemplate(value) {
+		if (identity != "" && !identityPlaceholder && isPasswordKey(key) || strongAPI || strongClient) && !looksReferenceOrTemplate(value) {
 			candidate.Verification = Confirmed
 			candidate.ValidationBasis = basis
 			candidate.ReviewReasons = nil
+		}
+		if identityPlaceholder {
+			candidate.ReviewReasons = append(candidate.ReviewReasons, "identity resembles template or variable reference")
 		}
 		if looksReferenceOrTemplate(value) {
 			candidate.ReviewReasons = append(candidate.ReviewReasons, "value resembles template or variable reference")
@@ -1004,9 +1027,11 @@ func credentialType(key string) string {
 	return "password"
 }
 
+// looksReferenceOrTemplate reports whether a value is a placeholder, template or
+// variable reference rather than a literal secret. It delegates to the shared
+// structural placeholder classifier so every harvest path sees the same rules.
 func looksReferenceOrTemplate(value string) bool {
-	lower := strings.ToLower(strings.TrimSpace(value))
-	return lower == "null" || lower == "false" || lower == "********" || lower == "<password>" || strings.Contains(lower, "${") || strings.Contains(lower, "{{") || strings.Contains(lower, "%password%") || strings.Contains(lower, "replace_me") || strings.Contains(lower, "your_password") || strings.Contains(lower, "changeme") || lower == "example"
+	return IsPlaceholderValue(value)
 }
 
 func firstNonEmpty(values ...string) string {

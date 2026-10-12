@@ -20,6 +20,9 @@ func credentialCandidatesFromFindings(findings []scanner.Finding) []credentialan
 			continue
 		}
 		if entry, ok := credentialEntryFromFinding(finding); ok {
+			if credentialEntryIsPlaceholder(entry) {
+				continue
+			}
 			valueParts := make([]string, 0, len(entry.Fields))
 			identity := ""
 			for _, field := range entry.Fields {
@@ -58,22 +61,27 @@ func credentialCandidatesFromFindings(findings []scanner.Finding) []credentialan
 		if _, reject := credentialanalysis.NonSecretValueShape(password); reject {
 			continue
 		}
+		// A placeholder or template is not credential material. It is excluded
+		// from confirmed material, review material and the sensitive export
+		// rather than being downgraded to review.
+		if credentialanalysis.IsPlaceholderValue(password) {
+			continue
+		}
 		identity := credentialanalysis.SelectFieldValue(values, credentialanalysis.FieldRoleIdentity)
 		if _, reject := credentialanalysis.NonSecretValueShape(identity); reject {
 			identity = ""
 		}
+		identityPlaceholder := credentialanalysis.IsPlaceholderIdentity(identity)
 		verification := credentialanalysis.Review
 		basis := "credential_like_value_without_conclusive_identity_association"
 		reasons := []string{"credential-like value extracted but identity association could not be conclusively established"}
-		if identity != "" && passwordValue != "" {
+		if identity != "" && !identityPlaceholder && passwordValue != "" {
 			verification = credentialanalysis.Confirmed
 			basis = "structured_config_pair"
 			reasons = nil
 		}
-		if looksPlaceholderCredential(password) {
-			verification = credentialanalysis.Review
-			basis = "placeholder_like_value_requires_review"
-			reasons = append(reasons, "value resembles template or placeholder syntax")
+		if identityPlaceholder {
+			reasons = append(reasons, "identity resembles template or variable reference")
 		}
 		credentialType := "password"
 		if values["token"] != "" || values["api_key"] != "" {
@@ -87,6 +95,30 @@ func credentialCandidatesFromFindings(findings []scanner.Finding) []credentialan
 		})
 	}
 	return candidates
+}
+
+// credentialEntryIsPlaceholder reports whether a finding-derived credential
+// entry is built entirely from recognised placeholders or templates. Such an
+// entry is not credential material and must not be projected into the report.
+func credentialEntryIsPlaceholder(entry credentialEntry) bool {
+	values := 0
+	for _, field := range entry.Fields {
+		switch {
+		case strings.EqualFold(field.Label, "User"),
+			strings.EqualFold(field.Label, "Domain"),
+			strings.EqualFold(field.Label, "Profile"):
+			continue
+		}
+		value := strings.TrimSpace(field.Value)
+		if value == "" {
+			continue
+		}
+		values++
+		if !credentialanalysis.IsPlaceholderValue(value) {
+			return false
+		}
+	}
+	return values > 0
 }
 
 func isDirectInspectorCredentialFinding(ruleID string) bool {

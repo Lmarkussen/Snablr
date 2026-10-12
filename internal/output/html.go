@@ -110,6 +110,7 @@ func NewHTMLWriter(w io.Writer, closer io.Closer) (*HTMLWriter, error) {
 		"normalizedSource":  normalizedSourceLabel,
 		"slug":              slug,
 		"accessPathLabel":   accessPathSummaryLabel,
+		"findingAnchor":     findingAnchor,
 	}).ParseFS(reportTemplates, "templates/report.html.tmpl")
 	if err != nil {
 		return nil, err
@@ -228,6 +229,7 @@ func (h *HTMLWriter) Close() error {
 		}
 		return err
 	}
+	credentialAnalysis := analyzeCandidates(h.findings, h.candidates)
 
 	data := struct {
 		Version                     string
@@ -251,6 +253,7 @@ func (h *HTMLWriter) Close() error {
 		FilterOptions               reportFilterOptions
 		Validation                  *validationSummary
 		CredentialAnalysis          credentialanalysis.Report
+		CredentialView              credentialReportView
 	}{
 		Version:                     version.Short(),
 		Profile:                     h.profile,
@@ -271,7 +274,8 @@ func (h *HTMLWriter) Close() error {
 		SupportingFindingCount:      len(supportingFindings),
 		FilterOptions:               filterOptions,
 		Validation:                  validation,
-		CredentialAnalysis:          analyzeCandidates(h.findings, h.candidates),
+		CredentialAnalysis:          credentialAnalysis,
+		CredentialView:              buildCredentialReportView(credentialAnalysis, categoryGroups, supportingCategoryGroups),
 	}
 	data.TopAccessPaths = topAccessPaths(data.AccessPaths, 8)
 

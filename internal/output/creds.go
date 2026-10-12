@@ -187,6 +187,11 @@ func (c *CredsWriter) Close() error {
 			}
 		}
 		for _, entry := range ntdsEntries {
+			// An entry without a source cannot be matched by location; matching
+			// on two empty values would drop unrelated confirmed candidates.
+			if strings.TrimSpace(entry.source) == "" {
+				continue
+			}
 			if candidate.Path == entry.source || candidate.Source == entry.source {
 				renderedConfirmed[candidateExportKey(candidate)] = struct{}{}
 				break
@@ -361,13 +366,20 @@ func hasConfirmedCandidateAtPath(candidates []credentialanalysis.Candidate, path
 
 func writeCandidateProvenance(builder *strings.Builder, candidate credentialanalysis.Candidate) {
 	primary := strings.TrimSpace(candidate.Source)
+	// When the host/share are known, render the full UNC-style location so the
+	// operator can locate the source directly, including archive members.
+	if strings.TrimSpace(candidate.Host) != "" || strings.TrimSpace(candidate.Share) != "" {
+		if location := credentialanalysis.Provenance(candidate.Host, candidate.Share, candidate.Path, candidate.Container); location != "" {
+			primary = location
+		}
+	}
 	if candidate.Path != "" && (primary == "" || primary == "cli") {
 		primary = candidate.Path
 	}
 	if primary != "" {
 		builder.WriteString("Source: " + primary + "\n")
 	}
-	seen := map[string]struct{}{candidate.Path: {}, candidate.Source: {}}
+	seen := map[string]struct{}{candidate.Path: {}, candidate.Source: {}, primary: {}}
 	additional := make([]string, 0, len(candidate.Evidence))
 	for _, evidence := range candidate.Evidence {
 		path := strings.TrimSpace(evidence.Path)
@@ -502,7 +514,7 @@ func awsCredentialEntry(f scanner.Finding) (credentialEntry, bool) {
 	if accessKey == "" || secretKey == "" {
 		return credentialEntry{}, false
 	}
-	if looksPlaceholderCredential(accessKey) || looksPlaceholderCredential(secretKey) || looksPlaceholderCredential(sessionToken) {
+	if placeholderCredentialValue(accessKey) || placeholderCredentialValue(secretKey) || placeholderCredentialValue(sessionToken) {
 		return credentialEntry{}, false
 	}
 	fields := []credentialField{
@@ -532,7 +544,7 @@ func databaseCredentialEntry(f scanner.Finding) (credentialEntry, bool) {
 		return credentialEntry{}, false
 	}
 	info := parseDatabaseCredential(raw)
-	if info.password == "" || looksPlaceholderCredential(info.password) {
+	if info.password == "" || placeholderCredentialValue(info.password) {
 		return credentialEntry{}, false
 	}
 	fields := []credentialField{}
@@ -581,7 +593,7 @@ func privateKeyEntry(f scanner.Finding) (credentialEntry, bool) {
 func genericCredentialEntry(f scanner.Finding) (credentialEntry, bool) {
 	values := parseAssignmentValues(joinNonEmpty(f.Context, f.MatchedText))
 	secretLabel, secretValue := bestSecretValue(values)
-	if secretValue == "" || looksPlaceholderCredential(secretValue) {
+	if secretValue == "" || placeholderCredentialValue(secretValue) {
 		return credentialEntry{}, false
 	}
 	// Reject non-scalar fragments (SQL variables, expressions, schema/metadata
@@ -802,6 +814,14 @@ func parseDatabaseSemicolonKV(raw string) databaseCredential {
 		user:     firstNonEmpty(values["user_id"], values["userid"], values["uid"], values["user"], values["username"]),
 		password: firstNonEmpty(values["password"], values["pwd"]),
 	}
+}
+
+// placeholderCredentialValue reports whether a value is a recognised placeholder
+// or template and therefore must never be exported as a credential. It combines
+// the structural classifier with the legacy substring heuristic so established
+// sample/weak values stay suppressed.
+func placeholderCredentialValue(value string) bool {
+	return looksPlaceholderCredential(value) || credentialanalysis.IsPlaceholderValue(value)
 }
 
 func looksPlaceholderCredential(value string) bool {

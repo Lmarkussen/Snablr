@@ -78,39 +78,38 @@ type reportFilterOptions struct {
 
 func NewHTMLWriter(w io.Writer, closer io.Closer) (*HTMLWriter, error) {
 	tmpl, err := template.New("report.html.tmpl").Funcs(template.FuncMap{
-		"joinTags":          strings.Join,
-		"joinList":          strings.Join,
-		"severityClass":     severityClass,
-		"confidenceClass":   confidenceClass,
-		"priorityClass":     priorityClass,
-		"priorityLabel":     priorityLabel,
-		"sourceClass":       sourceClass,
-		"diffClass":         diffClass,
-		"diffLabel":         diffLabel,
-		"signalLabel":       signalLabel,
-		"signalClass":       signalClass,
-		"primarySignal":     primarySignal,
-		"signalMatchLabel":  signalMatchLabel,
-		"truncatePath":      truncatePath,
-		"uncPath":           uncPath,
-		"downloadHref":      safeDownloadHref,
-		"valueOrDash":       valueOrDash,
-		"displayMatch":      displayMatch,
-		"displayContext":    displayContext,
-		"displayRawMatch":   displayRawMatch,
-		"displayRawContext": displayRawContext,
-		"findingSearchText": findingSearchText,
-		"isHeuristicHit":    isHeuristicHit,
-		"formatScanTime":    formatScanTime,
-		"formatDuration":    formatDuration,
-		"triageClass":       triageClass,
-		"triageLabel":       triageLabel,
-		"isActionable":      isActionable,
-		"isCorrelated":      isCorrelated,
-		"normalizedSource":  normalizedSourceLabel,
-		"slug":              slug,
-		"accessPathLabel":   accessPathSummaryLabel,
-		"findingAnchor":     findingAnchor,
+		"joinTags":               strings.Join,
+		"joinList":               strings.Join,
+		"severityClass":          severityClass,
+		"confidenceClass":        confidenceClass,
+		"priorityClass":          priorityClass,
+		"priorityLabel":          priorityLabel,
+		"sourceClass":            sourceClass,
+		"diffClass":              diffClass,
+		"diffLabel":              diffLabel,
+		"signalLabel":            signalLabel,
+		"signalClass":            signalClass,
+		"primarySignal":          primarySignal,
+		"signalMatchLabel":       signalMatchLabel,
+		"truncatePath":           truncatePath,
+		"uncPath":                uncPath,
+		"downloadHref":           safeDownloadHref,
+		"valueOrDash":            valueOrDash,
+		"displayMatch":           displayMatch,
+		"displayContext":         displayContext,
+		"contextAddsInformation": contextAddsInformation,
+		"findingSearchText":      findingSearchText,
+		"isHeuristicHit":         isHeuristicHit,
+		"formatScanTime":         formatScanTime,
+		"formatDuration":         formatDuration,
+		"triageClass":            triageClass,
+		"triageLabel":            triageLabel,
+		"isActionable":           isActionable,
+		"isCorrelated":           isCorrelated,
+		"normalizedSource":       normalizedSourceLabel,
+		"slug":                   slug,
+		"accessPathLabel":        accessPathSummaryLabel,
+		"findingAnchor":          findingAnchor,
 	}).ParseFS(reportTemplates, "templates/report.html.tmpl")
 	if err != nil {
 		return nil, err
@@ -435,38 +434,66 @@ func signalMatchLabel(signal string) string {
 	}
 }
 
+// displayMatch renders the safe projection of the matched evidence. Raw
+// MatchedText is deliberately never used: when the scanner produced a redacted
+// variant, the evidence block must show the mask rather than the value.
 func displayMatch(f scanner.Finding) string {
 	if strings.TrimSpace(f.MatchedTextRedacted) != "" {
 		return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.MatchedTextRedacted)), 240)
 	}
-	if strings.TrimSpace(f.MatchedText) != "" {
-		return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.MatchedText)), 240)
-	}
 	return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.Match)), 160)
 }
 
-func displayRawMatch(f scanner.Finding) string {
-	if strings.TrimSpace(f.MatchedText) != "" {
-		return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.MatchedText)), 240)
-	}
-	return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.Match)), 160)
-}
-
+// displayContext renders the safe projection of the surrounding context. It
+// falls back to the unredacted context fields only when the finding carries no
+// redaction at all, so a masked value is never accompanied by its plaintext.
 func displayContext(f scanner.Finding) string {
 	if strings.TrimSpace(f.ContextRedacted) != "" {
 		return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.ContextRedacted)), 320)
 	}
+	if findingRedactedEvidence(f) {
+		return ""
+	}
 	if strings.TrimSpace(f.Context) != "" {
 		return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.Context)), 320)
 	}
 	return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.Snippet)), 240)
 }
 
-func displayRawContext(f scanner.Finding) string {
-	if strings.TrimSpace(f.Context) != "" {
-		return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.Context)), 320)
+// findingRedactedEvidence reports whether the finding carries a redacted
+// projection that differs from its raw text, which means the scanner withheld a
+// secret from this finding.
+func findingRedactedEvidence(f scanner.Finding) bool {
+	return strings.TrimSpace(f.MatchedTextRedacted) != strings.TrimSpace(f.MatchedText) ||
+		strings.TrimSpace(f.ContextRedacted) != strings.TrimSpace(f.Context)
+}
+
+// contextAddsInformation reports whether the context block adds anything beyond
+// the evidence block. Context that is the same as, or that only repeats,
+// evidence is omitted so a card never renders the same text twice.
+func contextAddsInformation(f scanner.Finding) bool {
+	context := normalizeEvidenceBlock(displayContext(f))
+	if context == "" {
+		return false
 	}
-	return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.Snippet)), 240)
+	evidence := normalizeEvidenceBlock(displayMatch(f))
+	if evidence == "" {
+		return true
+	}
+	if context == evidence {
+		return false
+	}
+	if strings.Contains(context, evidence) {
+		remainder := strings.TrimSpace(strings.Replace(context, evidence, "", 1))
+		return len([]rune(remainder)) >= 20
+	}
+	return true
+}
+
+// normalizeEvidenceBlock collapses whitespace so two blocks that differ only in
+// layout are recognised as duplicates.
+func normalizeEvidenceBlock(value string) string {
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func findingSearchText(f scanner.Finding, changedFields []string, diffStatus string) string {
@@ -494,9 +521,12 @@ func findingSearchText(f scanner.Finding, changedFields []string, diffStatus str
 		f.MatchReason,
 		f.RuleExplanation,
 		f.RuleRemediation,
-		boundReportText(redactPrivateKeyMaterial(f.Snippet), 180),
+		// Search text is emitted into a hidden attribute, so it must use the
+		// same redacted projection as the visible evidence. Raw matched text and
+		// raw snippets are deliberately excluded: they can carry the unredacted
+		// value that the evidence block replaced with a mask.
 		boundReportText(redactPrivateKeyMaterial(f.ContextRedacted), 180),
-		boundReportText(redactPrivateKeyMaterial(firstNonEmpty(f.MatchedTextRedacted, f.MatchedText)), 180),
+		boundReportText(redactPrivateKeyMaterial(firstNonEmpty(f.MatchedTextRedacted, f.Match)), 180),
 		f.PotentialAccount,
 		diffStatus,
 		joinListOrEmpty(changedFields),

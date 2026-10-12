@@ -24,6 +24,8 @@ type credentialReportView struct {
 	ReviewTruncated        bool
 	ReviewRendered         int
 	SuppressedPlaceholders int
+	SuppressedWeakReview   int
+	SuppressedTotal        int
 }
 
 // credentialRow is one operator-facing credential row.
@@ -49,6 +51,8 @@ func buildCredentialReportView(analysis credentialanalysis.Report, groups ...[]h
 	}
 	view := credentialReportView{
 		SuppressedPlaceholders: analysis.SuppressedPlaceholders,
+		SuppressedWeakReview:   analysis.SuppressedWeakReview,
+		SuppressedTotal:        analysis.SuppressedPlaceholders + analysis.SuppressedWeakReview,
 	}
 	for _, candidate := range analysis.Confirmed {
 		row := credentialRowFromCandidate(candidate, index)

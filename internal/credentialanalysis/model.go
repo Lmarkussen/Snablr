@@ -73,6 +73,7 @@ type SafeCandidate struct {
 type Report struct {
 	CandidatesAnalyzed     int             `json:"candidates_analyzed"`
 	SuppressedPlaceholders int             `json:"suppressed_placeholders"`
+	SuppressedWeakReview   int             `json:"suppressed_weak_review"`
 	Confirmed              []SafeCandidate `json:"confirmed,omitempty"`
 	Review                 []SafeCandidate `json:"review,omitempty"`
 	DuplicatesMerged       int             `json:"duplicates_merged"`
@@ -97,6 +98,14 @@ func Analyze(candidates []Candidate) Report {
 		// explicit sensitive export instead of being downgraded to review.
 		if _, placeholder := PlaceholderReason(candidate.Value); placeholder {
 			report.SuppressedPlaceholders++
+			continue
+		}
+		// A review candidate with no identity, no explicit password assignment,
+		// no structured credential relationship and no token shape is not
+		// meaningful credential evidence. It stays recorded by the caller but
+		// must not enter the operator credential ledger.
+		if _, weak := reviewCandidateLacksEvidence(candidate); weak {
+			report.SuppressedWeakReview++
 			continue
 		}
 		candidate = normalize(candidate)
@@ -147,6 +156,39 @@ func Analyze(candidates []Candidate) Report {
 
 func candidateKey(candidate Candidate) string {
 	return strings.ToLower(candidate.CredentialType) + "\x00" + strings.ToLower(candidate.Domain) + "\x00" + strings.ToLower(candidate.Identity) + "\x00" + candidate.Value
+}
+
+// reviewCandidateLacksEvidence reports whether a review candidate carries no
+// meaningful credential evidence. Such a candidate is a vague "maybe
+// credential" value: it has no identity, comes from no explicit password
+// assignment, resolves to no structured credential relationship and has no
+// token/API-key shape.
+//
+// Confirmed candidates are never affected: recovered secrets, structured
+// credential objects, validated connection strings and inspector findings all
+// arrive confirmed and keep their place in the ledger.
+func reviewCandidateLacksEvidence(candidate Candidate) (string, bool) {
+	if candidate.Verification == Confirmed {
+		return "", false
+	}
+	credentialType := strings.ToLower(strings.TrimSpace(candidate.CredentialType))
+	switch credentialType {
+	case "private_key", "nt_hash", "certificate", "connection_string":
+		// Recovered or composite material carries its own evidence.
+		return "", false
+	case "password":
+		// A password alias is an explicit credential assignment; this holds even
+		// when the identity is unknown and the value is weak, because a weak
+		// password is still exactly what the operator needs to see.
+		return "", false
+	}
+	if identity := strings.TrimSpace(candidate.Identity); identity != "" && !IsPlaceholderIdentity(identity) {
+		return "", false
+	}
+	if _, ok := TokenSecretValueShape(candidate.Value); ok {
+		return "", false
+	}
+	return "no identity, explicit password assignment, structured credential relationship or token shape", true
 }
 
 // recordKey identifies one stored logical record: the credential key plus the

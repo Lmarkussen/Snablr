@@ -815,6 +815,21 @@
 	      color: #183153;
 	    }
 	    .evidence-toggle summary::-webkit-details-marker { display: none; }
+	    .finding-technical {
+	      margin-top: 10px;
+	      border: 1px solid var(--line);
+	      border-radius: 12px;
+	      background: rgba(248, 251, 255, 0.92);
+	      padding: 10px 12px;
+	    }
+	    .finding-technical summary {
+	      cursor: pointer;
+	      font-weight: 700;
+	      color: #183153;
+	    }
+	    .finding-technical > .detail-list {
+	      margin-top: 10px;
+	    }
 	    .evidence-grid {
 	      display: grid;
 	      gap: 12px;
@@ -1074,8 +1089,8 @@
         </article>
         <article class="card">
           <span class="card-label">Suppressed Templates / Noise</span>
-          <span class="card-value">{{ .CredentialView.SuppressedPlaceholders }}</span>
-          <div class="card-meta">Placeholder, template and masked values excluded from all credential material.</div>
+          <span class="card-value">{{ .CredentialView.SuppressedTotal }}</span>
+          <div class="card-meta">{{ .CredentialView.SuppressedPlaceholders }} placeholder/template or masked, {{ .CredentialView.SuppressedWeakReview }} evidence-free review candidates excluded from the ledger.</div>
         </article>
       </div>
       {{- if .CredentialView.Confirmed }}
@@ -1773,58 +1788,69 @@
 	                  {{- if .Finding.Confidence }}
 	                  <div>
 	                    <strong>Confidence</strong>
-	                    <div class="finding-text">{{ .Finding.Confidence }} confidence{{ if .Finding.ConfidenceScore }} (score {{ .Finding.ConfidenceScore }}){{ end }}</div>
+	                    <div class="finding-text">{{ .Finding.Confidence }} confidence</div>
 	                  </div>
 	                  {{- end }}
-	                  {{- if .Finding.ConfidenceReasons }}
-	                  <div>
-	                    <strong>Confidence Reasons</strong>
-	                    <ul class="confidence-reasons">
-	                      {{- range .Finding.ConfidenceReasons }}
-	                      <li>{{ . }}</li>
+	                  {{- if or .Finding.ConfidenceReasons .Finding.ConfidenceBreakdown.BaseScore .Finding.ConfidenceBreakdown.FinalScore .Finding.ConfidenceBreakdown.ValueQualityScore .Finding.SupportingSignals }}
+	                  <details class="finding-technical">
+	                    <summary>Technical details</summary>
+	                    <div class="detail-list">
+	                      <div>
+	                        <strong>Confidence Score</strong>
+	                        <div class="finding-text">{{ .Finding.ConfidenceScore }}{{ if .Finding.ConfidenceBreakdown.FinalScore }} (final {{ .Finding.ConfidenceBreakdown.FinalScore }}){{ end }}</div>
+	                      </div>
+	                      {{- if .Finding.ConfidenceReasons }}
+	                      <div>
+	                        <strong>Confidence Reasons</strong>
+	                        <ul class="confidence-reasons">
+	                          {{- range .Finding.ConfidenceReasons }}
+	                          <li>{{ . }}</li>
+	                          {{- end }}
+	                        </ul>
+	                      </div>
 	                      {{- end }}
-	                    </ul>
-	                  </div>
-	                  {{- end }}
-	                  {{- if or .Finding.ConfidenceBreakdown.BaseScore .Finding.ConfidenceBreakdown.ValueQualityScore .Finding.ConfidenceBreakdown.ValueQualityReason }}
-	                  <div>
-	                    <strong>Confidence Breakdown</strong>
-	                    <ul class="confidence-reasons">
-	                      <li>Base score: {{ .Finding.ConfidenceBreakdown.BaseScore }}</li>
-	                      <li>Content signal strength: {{ .Finding.ConfidenceBreakdown.ContentSignalStrength }}</li>
-	                      <li>Heuristic signal contribution: {{ .Finding.ConfidenceBreakdown.HeuristicSignalContribution }}</li>
-	                      <li>Path/context contribution: {{ .Finding.ConfidenceBreakdown.PathContextContribution }}</li>
-	                      <li>Correlation contribution: {{ .Finding.ConfidenceBreakdown.CorrelationContribution }}</li>
-	                      {{- if or .Finding.ConfidenceBreakdown.ValueQualityScore .Finding.ConfidenceBreakdown.ValueQualityReason }}
-	                      <li>
-	                        Value quality:
-	                        {{- if .Finding.ConfidenceBreakdown.ValueQualityLabel }} {{ .Finding.ConfidenceBreakdown.ValueQualityLabel }}{{ end -}}
-	                        {{- if .Finding.ConfidenceBreakdown.ValueQualityScore }} (score {{ .Finding.ConfidenceBreakdown.ValueQualityScore }}){{ end -}}
-	                        {{- if .Finding.ConfidenceBreakdown.ValueQualityReason }}. {{ .Finding.ConfidenceBreakdown.ValueQualityReason }}{{ end -}}
-	                      </li>
+	                      {{- if or .Finding.ConfidenceBreakdown.BaseScore .Finding.ConfidenceBreakdown.ValueQualityScore .Finding.ConfidenceBreakdown.ValueQualityReason }}
+	                      <div>
+	                        <strong>Confidence Breakdown</strong>
+	                        <ul class="confidence-reasons">
+	                          <li>Base score: {{ .Finding.ConfidenceBreakdown.BaseScore }}</li>
+	                          <li>Content signal strength: {{ .Finding.ConfidenceBreakdown.ContentSignalStrength }}</li>
+	                          <li>Heuristic signal contribution: {{ .Finding.ConfidenceBreakdown.HeuristicSignalContribution }}</li>
+	                          <li>Path/context contribution: {{ .Finding.ConfidenceBreakdown.PathContextContribution }}</li>
+	                          <li>Correlation contribution: {{ .Finding.ConfidenceBreakdown.CorrelationContribution }}</li>
+	                          {{- if or .Finding.ConfidenceBreakdown.ValueQualityScore .Finding.ConfidenceBreakdown.ValueQualityReason }}
+	                          <li>
+	                            Value quality:
+	                            {{- if .Finding.ConfidenceBreakdown.ValueQualityLabel }} {{ .Finding.ConfidenceBreakdown.ValueQualityLabel }}{{ end -}}
+	                            {{- if .Finding.ConfidenceBreakdown.ValueQualityScore }} (score {{ .Finding.ConfidenceBreakdown.ValueQualityScore }}){{ end -}}
+	                            {{- if .Finding.ConfidenceBreakdown.ValueQualityReason }}. {{ .Finding.ConfidenceBreakdown.ValueQualityReason }}{{ end -}}
+	                          </li>
+	                          {{- end }}
+	                          {{- if .Finding.ConfidenceBreakdown.TriageAdjustment }}
+	                          <li>Triage adjustment: {{ if gt .Finding.ConfidenceBreakdown.TriageAdjustment 0 }}+{{ end }}{{ .Finding.ConfidenceBreakdown.TriageAdjustment }}</li>
+	                          {{- end }}
+	                          {{- if .Finding.ConfidenceBreakdown.FinalScore }}
+	                          <li>Final score: {{ .Finding.ConfidenceBreakdown.FinalScore }}</li>
+	                          {{- end }}
+	                        </ul>
+	                      </div>
 	                      {{- end }}
-	                      {{- if .Finding.ConfidenceBreakdown.TriageAdjustment }}
-	                      <li>Triage adjustment: {{ if gt .Finding.ConfidenceBreakdown.TriageAdjustment 0 }}+{{ end }}{{ .Finding.ConfidenceBreakdown.TriageAdjustment }}</li>
+	                      {{- if .Finding.SupportingSignals }}
+	                      <div>
+	                        <strong>Supporting Signals</strong>
+	                        <ul class="supporting-signal-list">
+	                          {{- range .Finding.SupportingSignals }}
+	                          <li>
+	                            <span class="badge {{ signalClass .SignalType }}">{{ signalLabel .SignalType }}</span>
+	                            {{- if .RuleID }} <strong>{{ .RuleID }}</strong>{{ end -}}
+	                            {{- if .Reason }} {{ .Reason }}{{ end -}}
+	                          </li>
+	                          {{- end }}
+	                        </ul>
+	                      </div>
 	                      {{- end }}
-	                      {{- if .Finding.ConfidenceBreakdown.FinalScore }}
-	                      <li>Final score: {{ .Finding.ConfidenceBreakdown.FinalScore }}</li>
-	                      {{- end }}
-	                    </ul>
-	                  </div>
-	                  {{- end }}
-	                  {{- if .Finding.SupportingSignals }}
-	                  <div>
-	                    <strong>Supporting Signals</strong>
-	                    <ul class="supporting-signal-list">
-	                      {{- range .Finding.SupportingSignals }}
-	                      <li>
-	                        <span class="badge {{ signalClass .SignalType }}">{{ signalLabel .SignalType }}</span>
-	                        {{- if .RuleID }} <strong>{{ .RuleID }}</strong>{{ end -}}
-	                        {{- if .Reason }} {{ .Reason }}{{ end -}}
-	                      </li>
-	                      {{- end }}
-	                    </ul>
-	                  </div>
+	                    </div>
+	                  </details>
 	                  {{- end }}
 	                </div>
 	              </section>
@@ -1837,22 +1863,10 @@
 	                    <pre class="evidence-block">{{ displayMatch .Finding }}</pre>
 	                  </div>
 	                  {{- end }}
-	                  {{- if and .Finding.MatchedText .Finding.MatchedTextRedacted (ne .Finding.MatchedText .Finding.MatchedTextRedacted) }}
-	                  <div class="evidence-pair">
-	                    <span class="evidence-label">Raw Matched Text</span>
-	                    <pre class="evidence-block">{{ displayRawMatch .Finding }}</pre>
-	                  </div>
-	                  {{- end }}
-	                  {{- if displayContext .Finding }}
+	                  {{- if contextAddsInformation .Finding }}
 	                  <div class="evidence-pair">
 	                    <span class="evidence-label">Context / Snippet</span>
 	                    <pre class="evidence-block">{{ displayContext .Finding }}</pre>
-	                  </div>
-	                  {{- end }}
-	                  {{- if and .Finding.Context .Finding.ContextRedacted (ne .Finding.Context .Finding.ContextRedacted) }}
-	                  <div class="evidence-pair">
-	                    <span class="evidence-label">Raw Context</span>
-	                    <pre class="evidence-block">{{ displayRawContext .Finding }}</pre>
 	                  </div>
 	                  {{- end }}
 	                  {{- if .Finding.LineNumber }}

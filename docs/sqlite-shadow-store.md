@@ -7,8 +7,7 @@ database is required for correctness during an SQLite-authoritative scan; a
 runtime write failure stops new work and exits non-zero rather than silently
 switching persistence backends.
 
-The legacy JSON checkpoint and incremental inventory remain available only as
-an explicit compatibility path with `--legacy-json`. This migration switch is
+The legacy JSON checkpoint support has been removed;
 temporary and is retained for recovery and parity testing; it is not consulted
 by SQLite-authoritative resume.
 
@@ -38,14 +37,12 @@ file write workload.
 ## SQLite resume
 
 Pass `--resume` to reopen the latest scan in the selected SQLite database.
-`--sqlite-resume` remains accepted as a temporary compatibility alias, but is
 not required. Snablr validates the schema, scan metadata, integrity, and
 semantics fingerprint before resuming. Rows that were pending, failed,
 partial, or invalidated by a semantics change remain eligible for inspection.
 Findings and credentials from completed work are replayed through the normal
 output sink with stable identities, so reopening does not duplicate results.
 
-For migration testing, `--legacy-json --checkpoint-file <path>` selects the
 old JSON authority explicitly. SQLite state and reports can contain sensitive
 recovered credentials; protect both files and their parent directories.
 

@@ -33,7 +33,6 @@ scan:
   prioritize_ad_shares: true
   only_ad_shares: false
   max_scan_time: ""
-  checkpoint_file: ""
   resume: false
   # Explicit state_dir enables credential-independent incremental content scanning.
   state_dir: ""

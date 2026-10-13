@@ -58,11 +58,11 @@ HTML reports may contain recovered passwords, tokens, hashes, keys, and other
 credential material for operator review. Protect report files accordingly;
 newly created output files use restrictive permissions.
 
-The optional `--sqlite-state-file` shadow store is documented in
-`docs/sqlite-shadow-store.md`; JSON checkpoint and incremental inventory files
+The optional `--sqlite-state-file` scan database is documented in
+`docs/sqlite-shadow-store.md`; SQLite scan state database
 remain authoritative during this migration phase.
 - `state`
-  Stores exact-resume checkpoints and credential-independent incremental object/access inventory.
+  Stores authoritative SQLite scan state and credential-independent incremental object/access inventory.
 - `metrics`
   Tracks counters and phase timing for progress and reports.
 
@@ -152,7 +152,6 @@ Incremental state is opt-in with `--state-dir DIR` (and `--incremental` when exp
 rm -rf -- /absolute/path/to/snablr-state
 ```
 
-Checkpoint/resume is separate: `--checkpoint-file PATH` stores exact-resume progress in the path you choose, and `--resume` reads that existing file. Its JSON contains completed host/share/file identifiers and file size/modification metadata, plus timestamps; it does not contain findings, evidence snippets, file contents, passwords, hashes, Kerberos material, or recovered credentials. Delete the checkpoint after the interrupted scan has been resumed or abandoned:
 
 ```bash
 rm -f -- /absolute/path/to/checkpoint.json
@@ -168,7 +167,6 @@ WIM, archive, SQLite, and other bounded artifact inspection is local and tempora
 
 ### Checkpoint/Resume Versus Incremental State
 
-Checkpoint/resume (`--checkpoint-file` and `--resume`) is for continuing an interrupted or exact scan workflow. Incremental state (`--state-dir` and `--incremental`) is a credential-independent content-inspection cache that still rediscovers access on every run. The two mechanisms can be used together, but they solve different problems.
 
 ## Installation
 

@@ -137,7 +137,6 @@ Example:
 ```bash
 ./bin/snablr scan \
   --config examples/config.domain.yaml \
-  --checkpoint-file state/domain-scan.json \
   --resume
 ```
 

@@ -116,14 +116,14 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	}
 	semantics := scanSemanticsFingerprint(cfg, manager)
 
-	var shadow *store.ShadowStore
+	var shadow *store.SQLiteStore
 	var sqliteResume *store.ResumeState
-	sqliteAuthority := !cfg.Scan.LegacyJSON
+	sqliteAuthority := true
 	if sqliteAuthority {
 		sqlitePath := sqliteStatePath(cfg)
 		var resumeState store.ResumeState
 		var resumeErr error
-		if cfg.Scan.Resume || cfg.Scan.SQLiteResume {
+		if cfg.Scan.Resume {
 			shadow, resumeState, resumeErr = store.OpenForResume(sqlitePath, store.ResumeOptions{ExpectedSemantics: semantics, MaterializeFiles: false})
 			if resumeErr != nil {
 				return fmt.Errorf("open authoritative SQLite resume state: %w", resumeErr)
@@ -187,11 +187,6 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		}
 		reader := sqliteResumeReader{shadow: shadow, semanticsMatch: semanticsMatch, expectedSemantics: semantics}
 		checkpoints = state.NewManagerFromSQLiteReader(reader, 10*time.Second)
-	} else {
-		checkpoints, err = state.NewManager(cfg.Scan.CheckpointFile, cfg.Scan.Resume, 10*time.Second)
-		if err != nil {
-			return fmt.Errorf("open checkpoint state: %w", err)
-		}
 	}
 	if checkpoints != nil {
 		checkpoints.Start(scanCtx)
@@ -211,9 +206,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			inventoryPath := filepath.Join(cfg.Scan.StateDir, "inventory.json")
 			inventory, err = state.NewInventoryManager(inventoryPath, 10*time.Second)
 			if err != nil {
-				if cfg.Scan.LegacyJSON {
-					logger.Warnf("incremental inventory unavailable; scanning without content skip state: %v", err)
-				}
+				logger.Warnf("incremental inventory unavailable; scanning without content skip state: %v", err)
 				inventory = nil
 			}
 		}
@@ -372,7 +365,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		return fmt.Errorf("create output writer: %w", err)
 	}
 	sink = output.WrapWithSuppression(sink, cfg.Suppression)
-	output.AttachShadowStore(sink, shadow)
+	output.AttachSQLiteStore(sink, shadow)
 	if exporter, ok := sink.(scanner.SensitiveCredentialExporter); ok {
 		engine.SetCredentialExporter(exporter)
 	}
@@ -537,7 +530,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 }
 
 type sqliteResumeReader struct {
-	shadow            *store.ShadowStore
+	shadow            *store.SQLiteStore
 	semanticsMatch    bool
 	expectedSemantics string
 }
@@ -698,7 +691,7 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 	var walkErrs []error
 	for _, sharePlan := range plannedShares {
 		incrementalEnabled := incrementalScanEnabled(cfg)
-		if (!cfg.Scan.LegacyJSON || !incrementalEnabled) && checkpoints != nil && checkpoints.ShouldSkipShare(host, sharePlan.Share) {
+		if (true) && checkpoints != nil && checkpoints.ShouldSkipShare(host, sharePlan.Share) {
 			logger.Infof("resume: skipping completed share %s/%s", host, sharePlan.Share)
 			continue
 		}

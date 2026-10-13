@@ -281,7 +281,6 @@ See also:
 
 ### What To Check
 
-- confirm the same `--checkpoint-file` is being reused
 - inspect the checkpoint JSON directly
 - ensure the scan is not being restarted with a different host naming form
 - confirm the share/path filters are consistent between runs

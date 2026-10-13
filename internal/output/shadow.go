@@ -10,24 +10,24 @@ import (
 
 var shadowSinks sync.Map
 
-func AttachShadowStore(sink scanner.FindingSink, shadow *store.ShadowStore) {
+func AttachSQLiteStore(sink scanner.FindingSink, shadow *store.SQLiteStore) {
 	if sink == nil || shadow == nil {
 		return
 	}
 	shadowSinks.Store(sink, shadow)
 	if wrapped, ok := sink.(*suppressionWriter); ok {
-		AttachShadowStore(wrapped.inner, shadow)
+		AttachSQLiteStore(wrapped.inner, shadow)
 	}
 }
 
 func shadowFinding(sink scanner.FindingSink, finding scanner.Finding) {
 	if value, ok := shadowSinks.Load(sink); ok {
-		_ = value.(*store.ShadowStore).RecordFinding(finding)
+		_ = value.(*store.SQLiteStore).RecordFinding(finding)
 	}
 }
 
 func shadowCredential(sink scanner.FindingSink, candidate credentialanalysis.Candidate) {
 	if value, ok := shadowSinks.Load(sink); ok {
-		_ = value.(*store.ShadowStore).RecordCredential(candidate)
+		_ = value.(*store.SQLiteStore).RecordCredential(candidate)
 	}
 }

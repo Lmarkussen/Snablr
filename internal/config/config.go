@@ -61,12 +61,9 @@ type ScanConfig struct {
 	SeedManifest               string   `yaml:"seed_manifest"`
 	ValidationMode             bool     `yaml:"validation_mode"`
 	MaxScanTime                string   `yaml:"max_scan_time"`
-	CheckpointFile             string   `yaml:"checkpoint_file"`
 	Resume                     bool     `yaml:"resume"`
-	LegacyJSON                 bool     `yaml:"legacy_json"`
 	StateDir                   string   `yaml:"state_dir"`
 	SQLiteStateFile            string   `yaml:"sqlite_state_file"`
-	SQLiteResume               bool     `yaml:"sqlite_resume"`
 	Incremental                bool     `yaml:"incremental"`
 	ForceRescan                bool     `yaml:"force_rescan"`
 	SkipReachabilityCheck      bool     `yaml:"skip_reachability_check"`

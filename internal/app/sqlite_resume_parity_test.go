@@ -31,7 +31,7 @@ func (deterministicEvaluator) Evaluate(meta scanner.FileMetadata, content []byte
 type paritySink struct {
 	mu       sync.Mutex
 	findings []scanner.Finding
-	shadow   *store.ShadowStore
+	shadow   *store.SQLiteStore
 }
 
 func (s *paritySink) WriteFinding(finding scanner.Finding) error {
@@ -52,7 +52,7 @@ func (s *paritySink) keys() []string {
 	return keys
 }
 
-type parityResumeReader struct{ shadow *store.ShadowStore }
+type parityResumeReader struct{ shadow *store.SQLiteStore }
 
 func (r parityResumeReader) ResumeTargetComplete(host string) (bool, error) {
 	return r.shadow.ResumeTargetComplete(host)
@@ -79,7 +79,7 @@ func (m *parityMetrics) snapshot() parityCounts {
 
 func runDeterministicScanner(t *testing.T, dbPath string, resume bool, stopAfter int, retry bool) (store.Snapshot, parityCounts, []string) {
 	t.Helper()
-	var shadow *store.ShadowStore
+	var shadow *store.SQLiteStore
 	var loaded store.ResumeState
 	var err error
 	if resume {

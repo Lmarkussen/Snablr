@@ -136,12 +136,9 @@ func runScan(args []string) error {
 	seedManifest := fs.String("seed-manifest", "", "Path to a seeder manifest JSON file for in-report validation summary")
 	validationMode := fs.Bool("validation-mode", false, "Enable diagnostic validation logging and summary output")
 	maxScanTime := fs.String("max-scan-time", "", "Maximum total scan time, for example 30m or 2h")
-	checkpointFile := fs.String("checkpoint-file", "", "Path to persistent exact-resume checkpoint JSON (contains progress/path metadata)")
-	resume := fs.Bool("resume", false, "Resume from an existing persistent checkpoint file")
-	legacyJSON := fs.Bool("legacy-json", false, "Use the legacy JSON checkpoint/inventory backend instead of authoritative SQLite")
+	resume := fs.Bool("resume", false, "Resume from the authoritative Snablr scan database")
 	stateDir := fs.String("state-dir", "", "Directory for incremental metadata (target/share/path metadata; treat as sensitive engagement data)")
 	sqliteStateFile := fs.String("sqlite-state-file", "", "Optional SQLite state file override (default: snablr.db in the output workspace)")
-	sqliteResume := fs.Bool("sqlite-resume", false, "Compatibility alias for SQLite-authoritative --resume")
 	incremental := fs.Bool("incremental", false, "Reuse unchanged completed file inspections from --state-dir; persists inventory metadata")
 	forceRescan := fs.Bool("force-rescan", false, "Ignore reusable completed objects in incremental state")
 	listShares := fs.Bool("list-shares", false, "List readable shares accessible to the authenticated user and exit")
@@ -228,12 +225,9 @@ func runScan(args []string) error {
 		SeedManifest:               *seedManifest,
 		ValidationMode:             *validationMode,
 		MaxScanTime:                *maxScanTime,
-		CheckpointFile:             *checkpointFile,
 		Resume:                     *resume,
-		LegacyJSON:                 *legacyJSON,
 		StateDir:                   *stateDir,
 		SQLiteStateFile:            *sqliteStateFile,
-		SQLiteResume:               *sqliteResume,
 		Incremental:                *incremental,
 		ForceRescan:                *forceRescan,
 		ListShares:                 *listShares,
@@ -632,7 +626,6 @@ func printScanUsage(fs *flag.FlagSet) {
 	fmt.Println("  snablr scan --output-format all --json-out results.json --html-out report.html")
 	fmt.Println("  snablr scan --share Finance --path Reports/ --max-depth 4")
 	fmt.Println("  snablr scan --baseline previous-results.json --output-format all --json-out results.json --html-out report.html")
-	fmt.Println("  snablr scan --checkpoint-file state.json --resume")
 	fmt.Println("  snablr scan --wim-allow-large --wim-max-size 536870912")
 	fmt.Println("  snablr scan --output-format html --html-out report.html --report-backup-artifacts")
 	fmt.Println()

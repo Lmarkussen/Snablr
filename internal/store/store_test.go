@@ -17,7 +17,7 @@ import (
 
 var storeTestTime = time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
 
-func openTestStore(t *testing.T) (*ShadowStore, string) {
+func openTestStore(t *testing.T) (*SQLiteStore, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "state.db")
 	s, err := Open(path, Options{ScanID: "scan-synthetic", SnablrVersion: "test", Semantics: "semantics-synthetic", QueueSize: 32, BatchSize: 8, FlushEvery: time.Hour})
@@ -27,7 +27,7 @@ func openTestStore(t *testing.T) (*ShadowStore, string) {
 	return s, path
 }
 
-func TestShadowStorePersistsLogicalStateAndReopens(t *testing.T) {
+func TestSQLiteStorePersistsLogicalStateAndReopens(t *testing.T) {
 	s, path := openTestStore(t)
 	if err := s.RecordTarget("synthetic-host.test", "completed", storeTestTime); err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestShadowStorePersistsLogicalStateAndReopens(t *testing.T) {
 	check(db)
 }
 
-func TestShadowStoreRollsBackFailedBatch(t *testing.T) {
+func TestSQLiteStoreRollsBackFailedBatch(t *testing.T) {
 	s, path := openTestStore(t)
 	if err := s.enqueue(func(tx *sql.Tx) error {
 		if _, err := tx.Exec(`INSERT INTO targets(scan_id,host,status,updated_at) VALUES(?,?,?,?)`, s.scanID, "synthetic-host.test", "partial", storeTestTime.Format(time.RFC3339Nano)); err != nil {
@@ -117,7 +117,7 @@ func TestShadowStoreRollsBackFailedBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.Flush(); err == nil {
-		t.Fatal("expected failed batch to mark shadow store unhealthy")
+		t.Fatal("expected failed batch to mark state store unhealthy")
 	}
 	_ = s.Close()
 	db, err := sql.Open("sqlite3", path)
@@ -134,7 +134,7 @@ func TestShadowStoreRollsBackFailedBatch(t *testing.T) {
 	}
 }
 
-func TestShadowStorePermissionsAndSidecars(t *testing.T) {
+func TestSQLiteStorePermissionsAndSidecars(t *testing.T) {
 	s, path := openTestStore(t)
 	if err := s.RecordTarget("synthetic-host.test", "partial", storeTestTime); err != nil {
 		t.Fatal(err)
@@ -219,7 +219,7 @@ func TestRemainingWorkLookupUsesStatusIndex(t *testing.T) {
 	}
 }
 
-func TestShadowStoreScale100kFiles(t *testing.T) {
+func TestSQLiteStoreScale100kFiles(t *testing.T) {
 	if testing.Short() {
 		t.Skip("scale test is skipped in short mode")
 	}

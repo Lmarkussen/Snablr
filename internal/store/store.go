@@ -47,7 +47,7 @@ type FileState struct {
 	ModifiedAt, FirstSeen, LastSeen, UpdatedAt time.Time
 }
 
-type ShadowStore struct {
+type SQLiteStore struct {
 	db               *sql.DB
 	path             string
 	scanID           string
@@ -64,7 +64,7 @@ type ShadowStore struct {
 	failAfterBatches int
 }
 
-func (s *ShadowStore) ScanID() string {
+func (s *SQLiteStore) ScanID() string {
 	if s == nil {
 		return ""
 	}
@@ -76,10 +76,10 @@ type event struct {
 	barrier chan error
 }
 
-func Open(path string, options Options) (*ShadowStore, error) {
+func Open(path string, options Options) (*SQLiteStore, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return nil, fmt.Errorf("sqlite shadow store path cannot be empty")
+		return nil, fmt.Errorf("sqlite state store path cannot be empty")
 	}
 	if options.ScanID == "" {
 		options.ScanID = fmt.Sprintf("scan-%d", time.Now().UTC().UnixNano())
@@ -98,9 +98,9 @@ func Open(path string, options Options) (*ShadowStore, error) {
 	}
 	db, err := sql.Open("sqlite3", path)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite shadow store: %w", err)
+		return nil, fmt.Errorf("open sqlite state store: %w", err)
 	}
-	cleanup := func(e error) (*ShadowStore, error) { _ = db.Close(); return nil, e }
+	cleanup := func(e error) (*SQLiteStore, error) { _ = db.Close(); return nil, e }
 	for _, pragma := range []string{
 		"PRAGMA journal_mode=WAL",
 		"PRAGMA synchronous=NORMAL",
@@ -108,14 +108,14 @@ func Open(path string, options Options) (*ShadowStore, error) {
 		"PRAGMA busy_timeout=5000",
 	} {
 		if _, err := db.Exec(pragma); err != nil {
-			return cleanup(fmt.Errorf("configure sqlite shadow store: %w", err))
+			return cleanup(fmt.Errorf("configure sqlite state store: %w", err))
 		}
 	}
 	if err := initializeSchema(db); err != nil {
 		return cleanup(err)
 	}
 	_ = os.Chmod(path, 0o600)
-	s := &ShadowStore{db: db, path: path, scanID: options.ScanID, queue: make(chan event, options.QueueSize), batch: options.BatchSize, interval: options.FlushEvery, done: make(chan struct{}), healthy: true, failAfterBatches: options.FailAfterBatches}
+	s := &SQLiteStore{db: db, path: path, scanID: options.ScanID, queue: make(chan event, options.QueueSize), batch: options.BatchSize, interval: options.FlushEvery, done: make(chan struct{}), healthy: true, failAfterBatches: options.FailAfterBatches}
 	if err := s.BeginScan(options.ScanID, options.SnablrVersion, options.Semantics, time.Now().UTC()); err != nil {
 		return cleanup(err)
 	}
@@ -151,7 +151,7 @@ INSERT INTO metadata(key, value) VALUES ('schema_version', '1') ON CONFLICT(key)
 	return err
 }
 
-func (s *ShadowStore) run() {
+func (s *SQLiteStore) run() {
 	defer close(s.done)
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -190,7 +190,7 @@ func (s *ShadowStore) run() {
 	}
 }
 
-func (s *ShadowStore) commit(events []event) error {
+func (s *SQLiteStore) commit(events []event) error {
 	if s.failAfterBatches > 0 && s.committedBatches >= s.failAfterBatches {
 		return errors.New("synthetic authoritative SQLite write failure")
 	}
@@ -211,20 +211,20 @@ func (s *ShadowStore) commit(events []event) error {
 	return s.restrictSidecars()
 }
 
-func (s *ShadowStore) enqueue(apply func(*sql.Tx) error) error {
+func (s *SQLiteStore) enqueue(apply func(*sql.Tx) error) error {
 	if err := s.healthError(); err != nil {
 		return err
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return errors.New("sqlite shadow store is closed")
+		return errors.New("sqlite state store is closed")
 	}
 	s.queue <- event{apply: apply}
 	return nil
 }
 
-func (s *ShadowStore) Flush() error {
+func (s *SQLiteStore) Flush() error {
 	if s == nil {
 		return nil
 	}
@@ -235,14 +235,14 @@ func (s *ShadowStore) Flush() error {
 	s.mu.RLock()
 	if s.closed {
 		s.mu.RUnlock()
-		return errors.New("sqlite shadow store is closed")
+		return errors.New("sqlite state store is closed")
 	}
 	s.queue <- event{barrier: barrier}
 	s.mu.RUnlock()
 	return <-barrier
 }
 
-func (s *ShadowStore) Close() error {
+func (s *SQLiteStore) Close() error {
 	if s == nil {
 		return nil
 	}
@@ -258,20 +258,20 @@ func (s *ShadowStore) Close() error {
 	return s.healthError()
 }
 
-func (s *ShadowStore) Healthy() bool { return s != nil && s.healthError() == nil }
+func (s *SQLiteStore) Healthy() bool { return s != nil && s.healthError() == nil }
 
 // Failure reports the first authoritative persistence error, if any.
 // Callers use this to stop scheduling work rather than silently continuing.
-func (s *ShadowStore) Failure() error     { return s.healthError() }
-func (s *ShadowStore) healthError() error { s.mu.RLock(); defer s.mu.RUnlock(); return s.firstErr }
-func (s *ShadowStore) markUnhealthy(err error) {
+func (s *SQLiteStore) Failure() error     { return s.healthError() }
+func (s *SQLiteStore) healthError() error { s.mu.RLock(); defer s.mu.RUnlock(); return s.firstErr }
+func (s *SQLiteStore) markUnhealthy(err error) {
 	s.mu.Lock()
 	if s.firstErr == nil {
-		s.firstErr = fmt.Errorf("sqlite shadow store disabled after write failure: %w", err)
+		s.firstErr = fmt.Errorf("sqlite state store disabled after write failure: %w", err)
 	}
 	s.mu.Unlock()
 }
-func (s *ShadowStore) restrictSidecars() error {
+func (s *SQLiteStore) restrictSidecars() error {
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		if _, err := os.Stat(s.path + suffix); err == nil {
 			_ = os.Chmod(s.path+suffix, 0o600)
@@ -280,51 +280,51 @@ func (s *ShadowStore) restrictSidecars() error {
 	return nil
 }
 
-func (s *ShadowStore) BeginScan(id, version, semantics string, started time.Time) error {
+func (s *SQLiteStore) BeginScan(id, version, semantics string, started time.Time) error {
 	s.scanID = id
 	return s.enqueue(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO scans(scan_id,schema_version,snablr_version,semantics,started_at,status) VALUES(?,?,?,?,?,?) ON CONFLICT(scan_id) DO UPDATE SET snablr_version=excluded.snablr_version, semantics=excluded.semantics`, id, SchemaVersion, version, semantics, started.UTC().Format(time.RFC3339Nano), StatusRunning)
 		return err
 	})
 }
-func (s *ShadowStore) SetScanStatus(status Status, ended time.Time) error {
+func (s *SQLiteStore) SetScanStatus(status Status, ended time.Time) error {
 	return s.enqueue(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`UPDATE scans SET status=?, ended_at=? WHERE scan_id=?`, status, ended.UTC().Format(time.RFC3339Nano), s.scanID)
 		return err
 	})
 }
-func (s *ShadowStore) RecordTarget(host, status string, at time.Time) error {
+func (s *SQLiteStore) RecordTarget(host, status string, at time.Time) error {
 	return s.enqueue(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO targets(scan_id,host,status,updated_at) VALUES(?,?,?,?) ON CONFLICT(scan_id,host) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at`, s.scanID, host, status, at.UTC().Format(time.RFC3339Nano))
 		return err
 	})
 }
-func (s *ShadowStore) RecordShare(host, share, status string, at time.Time) error {
+func (s *SQLiteStore) RecordShare(host, share, status string, at time.Time) error {
 	return s.enqueue(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO shares(scan_id,host,share,status,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(scan_id,host,share) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at`, s.scanID, host, share, status, at.UTC().Format(time.RFC3339Nano))
 		return err
 	})
 }
-func (s *ShadowStore) RecordFile(key, host, share, path, status, semantics string, size int64, modifiedAt, firstSeen, lastSeen, updatedAt time.Time) error {
+func (s *SQLiteStore) RecordFile(key, host, share, path, status, semantics string, size int64, modifiedAt, firstSeen, lastSeen, updatedAt time.Time) error {
 	f := FileState{Key: key, Host: host, Share: share, Path: path, Status: status, Semantics: semantics, Size: size, ModifiedAt: modifiedAt, FirstSeen: firstSeen, LastSeen: lastSeen, UpdatedAt: updatedAt}
 	return s.enqueue(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO files(scan_id,file_key,host,share,path,size,modified_at,first_seen,last_seen,updated_at,status,semantics) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(scan_id,file_key) DO UPDATE SET size=excluded.size,modified_at=excluded.modified_at,last_seen=excluded.last_seen,updated_at=excluded.updated_at,status=excluded.status,semantics=excluded.semantics`, s.scanID, f.Key, f.Host, f.Share, f.Path, f.Size, timeString(f.ModifiedAt), timeString(f.FirstSeen), timeString(f.LastSeen), timeString(f.UpdatedAt), f.Status, f.Semantics)
 		return err
 	})
 }
-func (s *ShadowStore) RecordAccess(contextID, fileKey, result string, first, last time.Time) error {
+func (s *SQLiteStore) RecordAccess(contextID, fileKey, result string, first, last time.Time) error {
 	return s.enqueue(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO access_observations(scan_id,context_id,file_key,first_seen,last_seen,access_result) VALUES(?,?,?,?,?,?) ON CONFLICT(scan_id,context_id,file_key) DO UPDATE SET last_seen=excluded.last_seen,access_result=excluded.access_result`, s.scanID, contextID, fileKey, timeString(first), timeString(last), result)
 		return err
 	})
 }
-func (s *ShadowStore) RecordMember(parent, member, kind, memberPath, status, provenance string) error {
+func (s *SQLiteStore) RecordMember(parent, member, kind, memberPath, status, provenance string) error {
 	return s.enqueue(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO members(scan_id,parent_key,member_key,member_type,member_path,status,provenance) VALUES(?,?,?,?,?,?,?) ON CONFLICT(scan_id,parent_key,member_key) DO UPDATE SET status=excluded.status,provenance=excluded.provenance`, s.scanID, parent, member, kind, memberPath, status, provenance)
 		return err
 	})
 }
-func (s *ShadowStore) RecordFinding(f scanner.Finding) error {
+func (s *SQLiteStore) RecordFinding(f scanner.Finding) error {
 	payload, _ := json.Marshal(f)
 	digest := sha256.Sum256(payload)
 	fingerprint := fmt.Sprintf("%x", digest[:])
@@ -333,7 +333,7 @@ func (s *ShadowStore) RecordFinding(f scanner.Finding) error {
 		return err
 	})
 }
-func (s *ShadowStore) RecordCredential(c credentialanalysis.Candidate) error {
+func (s *SQLiteStore) RecordCredential(c credentialanalysis.Candidate) error {
 	payload, _ := credentialPayload(c)
 	key := fmt.Sprintf("%s|%s|%s|%s", c.CredentialType, c.Identity, c.Path, c.Value)
 	return s.enqueue(func(tx *sql.Tx) error {
@@ -354,7 +354,7 @@ func credentialPayload(c credentialanalysis.Candidate) ([]byte, error) {
 	object["value"] = c.Value
 	return json.Marshal(object)
 }
-func (s *ShadowStore) RecordCorrelation(key string, payload any) error {
+func (s *SQLiteStore) RecordCorrelation(key string, payload any) error {
 	data, _ := json.Marshal(payload)
 	return s.enqueue(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO correlations(scan_id,correlation_key,payload) VALUES(?,?,?) ON CONFLICT(scan_id,correlation_key) DO UPDATE SET payload=excluded.payload`, s.scanID, key, data)
@@ -368,30 +368,30 @@ func timeString(t time.Time) any {
 	return t.UTC().Format(time.RFC3339Nano)
 }
 
-// ShadowSink forwards output events while the owning scan monitors persistence
+// SQLiteSink forwards output events while the owning scan monitors persistence
 // health and applies its authority-specific failure policy.
-type ShadowSink struct {
+type SQLiteSink struct {
 	underlying scanner.FindingSink
-	store      *ShadowStore
+	store      *SQLiteStore
 }
 
-func WrapSink(underlying scanner.FindingSink, shadow *ShadowStore) *ShadowSink {
-	return &ShadowSink{underlying: underlying, store: shadow}
+func WrapSink(underlying scanner.FindingSink, shadow *SQLiteStore) *SQLiteSink {
+	return &SQLiteSink{underlying: underlying, store: shadow}
 }
-func (s *ShadowSink) WriteFinding(f scanner.Finding) error {
+func (s *SQLiteSink) WriteFinding(f scanner.Finding) error {
 	if err := s.store.RecordFinding(f); err != nil {
 	}
 	return s.underlying.WriteFinding(f)
 }
-func (s *ShadowSink) Close() error { return s.underlying.Close() }
-func (s *ShadowSink) RecordCredentialCandidate(c credentialanalysis.Candidate) error {
+func (s *SQLiteSink) Close() error { return s.underlying.Close() }
+func (s *SQLiteSink) RecordCredentialCandidate(c credentialanalysis.Candidate) error {
 	_ = s.store.RecordCredential(c)
 	if r, ok := s.underlying.(scanner.CredentialCandidateSink); ok {
 		return r.RecordCredentialCandidate(c)
 	}
 	return nil
 }
-func (s *ShadowSink) ExportNTDSCurrentHash(domain, account, source string, rid uint32, sid string, machine, disabled bool, hash []byte) error {
+func (s *SQLiteSink) ExportNTDSCurrentHash(domain, account, source string, rid uint32, sid string, machine, disabled bool, hash []byte) error {
 	if e, ok := s.underlying.(scanner.SensitiveCredentialExporter); ok {
 		return e.ExportNTDSCurrentHash(domain, account, source, rid, sid, machine, disabled, hash)
 	}

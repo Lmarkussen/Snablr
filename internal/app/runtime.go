@@ -154,23 +154,14 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if strings.TrimSpace(opts.MaxScanTime) != "" {
 		cfg.Scan.MaxScanTime = opts.MaxScanTime
 	}
-	if strings.TrimSpace(opts.CheckpointFile) != "" {
-		cfg.Scan.CheckpointFile = opts.CheckpointFile
-	}
 	if opts.Resume {
 		cfg.Scan.Resume = true
-	}
-	if opts.LegacyJSON {
-		cfg.Scan.LegacyJSON = true
 	}
 	if strings.TrimSpace(opts.StateDir) != "" {
 		cfg.Scan.StateDir = opts.StateDir
 	}
 	if strings.TrimSpace(opts.SQLiteStateFile) != "" {
 		cfg.Scan.SQLiteStateFile = opts.SQLiteStateFile
-	}
-	if opts.SQLiteResume {
-		cfg.Scan.SQLiteResume = true
 	}
 	if opts.Incremental {
 		cfg.Scan.Incremental = true
@@ -369,15 +360,6 @@ func validateScanConfig(cfg config.Config) error {
 	}
 	if cfg.Scan.MaxDepth < 0 {
 		return fmt.Errorf("max_depth cannot be negative")
-	}
-	if cfg.Scan.LegacyJSON && cfg.Scan.SQLiteResume {
-		return fmt.Errorf("legacy JSON and SQLite resume cannot be selected together")
-	}
-	if cfg.Scan.SQLiteResume && !cfg.Scan.Resume {
-		return fmt.Errorf("sqlite-resume is a compatibility alias for --resume and requires resume=true")
-	}
-	if cfg.Scan.LegacyJSON && cfg.Scan.Resume && strings.TrimSpace(cfg.Scan.CheckpointFile) == "" {
-		return fmt.Errorf("legacy JSON resume requires a checkpoint file: set scan.checkpoint_file or pass --checkpoint-file")
 	}
 	if cfg.Scan.Incremental && strings.TrimSpace(cfg.Scan.StateDir) == "" {
 		return fmt.Errorf("incremental scanning requires a state directory: set scan.state_dir or pass --state-dir")

@@ -25,7 +25,6 @@ func Default() Config {
 			OnlyADShares:               false,
 			Baseline:                   "",
 			MaxScanTime:                "",
-			CheckpointFile:             "",
 			Resume:                     false,
 			StateDir:                   "",
 			Incremental:                false,

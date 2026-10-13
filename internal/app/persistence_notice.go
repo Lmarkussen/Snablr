@@ -34,14 +34,7 @@ func logPersistenceNotice(cfg config.Config, logger *logx.Logger) {
 		add("incremental state directory", cfg.Scan.StateDir)
 		add("incremental inventory", filepath.Join(cfg.Scan.StateDir, "inventory.json"))
 	}
-	if strings.TrimSpace(cfg.Scan.CheckpointFile) != "" {
-		add("checkpoint/resume file", cfg.Scan.CheckpointFile)
-	}
-	if cfg.Scan.LegacyJSON {
-		add("legacy JSON authority", cfg.Scan.CheckpointFile)
-	} else {
-		add("authoritative SQLite state", sqliteStatePath(cfg))
-	}
+	add("authoritative SQLite state", sqliteStatePath(cfg))
 	selection, err := config.ParseOutputFormat(cfg.Output.Format)
 	if err == nil {
 		if selection.JSON {

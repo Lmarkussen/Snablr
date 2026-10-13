@@ -20,7 +20,7 @@ type Snapshot struct {
 	CorrelationKeys map[string]struct{}
 }
 
-func (s *ShadowStore) Snapshot() (Snapshot, error) {
+func (s *SQLiteStore) Snapshot() (Snapshot, error) {
 	if err := s.Flush(); err != nil {
 		return Snapshot{}, err
 	}

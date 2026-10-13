@@ -58,7 +58,7 @@ type ResumeState struct {
 
 // OpenForResume validates and reopens an existing shadow scan. The returned
 // store writes to the same scan row; it never creates a new scan row.
-func OpenForResume(path string, options ResumeOptions) (*ShadowStore, ResumeState, error) {
+func OpenForResume(path string, options ResumeOptions) (*SQLiteStore, ResumeState, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil, ResumeState{}, fmt.Errorf("sqlite resume state path cannot be empty")
@@ -67,7 +67,7 @@ func OpenForResume(path string, options ResumeOptions) (*ShadowStore, ResumeStat
 	if err != nil {
 		return nil, ResumeState{}, fmt.Errorf("open sqlite resume state: %w", err)
 	}
-	cleanup := func(e error) (*ShadowStore, ResumeState, error) { _ = db.Close(); return nil, ResumeState{}, e }
+	cleanup := func(e error) (*SQLiteStore, ResumeState, error) { _ = db.Close(); return nil, ResumeState{}, e }
 	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000"} {
 		if _, err := db.Exec(pragma); err != nil {
 			return cleanup(fmt.Errorf("configure sqlite resume state: %w", err))
@@ -293,7 +293,7 @@ func loadResumeState(db *sql.DB, requestedID string, materializeFiles bool, out 
 
 // LookupFile returns one persisted file row without materializing the scan's
 // complete inventory. It is intended for the experimental lazy resume path.
-func (s *ShadowStore) LookupFile(host, share, path string) (FileState, bool, error) {
+func (s *SQLiteStore) LookupFile(host, share, path string) (FileState, bool, error) {
 	if s == nil || s.db == nil {
 		return FileState{}, false, fmt.Errorf("sqlite resume store is closed")
 	}
@@ -310,7 +310,7 @@ func (s *ShadowStore) LookupFile(host, share, path string) (FileState, bool, err
 	return file, true, nil
 }
 
-func (s *ShadowStore) ResumeTargetComplete(host string) (bool, error) {
+func (s *SQLiteStore) ResumeTargetComplete(host string) (bool, error) {
 	var status string
 	err := s.db.QueryRow(`SELECT status FROM targets WHERE scan_id=? AND host=?`, s.scanID, host).Scan(&status)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -319,7 +319,7 @@ func (s *ShadowStore) ResumeTargetComplete(host string) (bool, error) {
 	return status == "completed", err
 }
 
-func (s *ShadowStore) ResumeShareComplete(host, share string) (bool, error) {
+func (s *SQLiteStore) ResumeShareComplete(host, share string) (bool, error) {
 	var status string
 	err := s.db.QueryRow(`SELECT status FROM shares WHERE scan_id=? AND host=? AND share=?`, s.scanID, host, share).Scan(&status)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -328,7 +328,7 @@ func (s *ShadowStore) ResumeShareComplete(host, share string) (bool, error) {
 	return status == "completed", err
 }
 
-func (s *ShadowStore) RemainingFileCount() (int64, error) {
+func (s *SQLiteStore) RemainingFileCount() (int64, error) {
 	var count int64
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM files WHERE scan_id=? AND status NOT IN ('completed','skipped_unchanged')`, s.scanID).Scan(&count)
 	return count, err

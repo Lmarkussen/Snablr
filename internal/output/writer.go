@@ -262,6 +262,7 @@ type MultiWriter struct {
 func (m *MultiWriter) WriteFinding(f scanner.Finding) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	shadowFinding(m, f)
 
 	for _, sink := range m.sinks {
 		if err := sink.WriteFinding(f); err != nil {
@@ -287,6 +288,7 @@ func (m *MultiWriter) ExportNTDSCurrentHash(domain, account, source string, rid 
 func (m *MultiWriter) RecordCredentialCandidate(candidate credentialanalysis.Candidate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	shadowCredential(m, candidate)
 	for _, sink := range m.sinks {
 		if recorder, ok := sink.(scanner.CredentialCandidateSink); ok {
 			if err := recorder.RecordCredentialCandidate(candidate); err != nil {

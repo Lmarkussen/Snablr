@@ -57,6 +57,10 @@ Snablr is organized around a small set of focused modules:
 HTML reports may contain recovered passwords, tokens, hashes, keys, and other
 credential material for operator review. Protect report files accordingly;
 newly created output files use restrictive permissions.
+
+The optional `--sqlite-state-file` shadow store is documented in
+`docs/sqlite-shadow-store.md`; JSON checkpoint and incremental inventory files
+remain authoritative during this migration phase.
 - `state`
   Stores exact-resume checkpoints and credential-independent incremental object/access inventory.
 - `metrics`

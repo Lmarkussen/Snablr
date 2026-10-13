@@ -35,6 +35,7 @@ func NewConsoleWriter(w io.Writer, closer io.Closer) *ConsoleWriter {
 }
 
 func (c *ConsoleWriter) WriteFinding(f scanner.Finding) error {
+	shadowFinding(c, f)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

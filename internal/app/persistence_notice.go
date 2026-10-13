@@ -37,6 +37,7 @@ func logPersistenceNotice(cfg config.Config, logger *logx.Logger) {
 	if strings.TrimSpace(cfg.Scan.CheckpointFile) != "" {
 		add("checkpoint/resume file", cfg.Scan.CheckpointFile)
 	}
+	add("SQLite shadow state", cfg.Scan.SQLiteStateFile)
 	selection, err := config.ParseOutputFormat(cfg.Output.Format)
 	if err == nil {
 		if selection.JSON {

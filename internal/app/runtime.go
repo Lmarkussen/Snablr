@@ -163,6 +163,9 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if strings.TrimSpace(opts.StateDir) != "" {
 		cfg.Scan.StateDir = opts.StateDir
 	}
+	if strings.TrimSpace(opts.SQLiteStateFile) != "" {
+		cfg.Scan.SQLiteStateFile = opts.SQLiteStateFile
+	}
 	if opts.Incremental {
 		cfg.Scan.Incremental = true
 	}

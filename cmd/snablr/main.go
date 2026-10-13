@@ -139,6 +139,7 @@ func runScan(args []string) error {
 	checkpointFile := fs.String("checkpoint-file", "", "Path to persistent exact-resume checkpoint JSON (contains progress/path metadata)")
 	resume := fs.Bool("resume", false, "Resume from an existing persistent checkpoint file")
 	stateDir := fs.String("state-dir", "", "Directory for incremental metadata (target/share/path metadata; treat as sensitive engagement data)")
+	sqliteStateFile := fs.String("sqlite-state-file", "", "Optional SQLite shadow state file; JSON checkpoint/inventory remain authoritative")
 	incremental := fs.Bool("incremental", false, "Reuse unchanged completed file inspections from --state-dir; persists inventory metadata")
 	forceRescan := fs.Bool("force-rescan", false, "Ignore reusable completed objects in incremental state")
 	listShares := fs.Bool("list-shares", false, "List readable shares accessible to the authenticated user and exit")
@@ -228,6 +229,7 @@ func runScan(args []string) error {
 		CheckpointFile:             *checkpointFile,
 		Resume:                     *resume,
 		StateDir:                   *stateDir,
+		SQLiteStateFile:            *sqliteStateFile,
 		Incremental:                *incremental,
 		ForceRescan:                *forceRescan,
 		ListShares:                 *listShares,

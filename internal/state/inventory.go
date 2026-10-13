@@ -535,6 +535,17 @@ type InventoryManager struct {
 	stopOnce sync.Once
 	stopCh   chan struct{}
 	doneCh   chan struct{}
+	shadow   ShadowStore
+	scanID   string
+}
+
+func (m *InventoryManager) AttachShadow(shadow ShadowStore, scanID string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.shadow, m.scanID = shadow, scanID
+	m.mu.Unlock()
 }
 
 func NewInventoryManager(filePath string, interval time.Duration) (*InventoryManager, error) {
@@ -617,30 +628,56 @@ func (m *InventoryManager) Prepare(observation FileObservation, credentialContex
 	if !m.Enabled() {
 		return SkipDecision{}, nil
 	}
-	return m.inventory.Prepare(observation, credentialContextID, semantics, forceRescan)
+	decision, err := m.inventory.Prepare(observation, credentialContextID, semantics, forceRescan)
+	if err == nil && m.shadow != nil {
+		m.inventory.mu.RLock()
+		object, ok := m.inventory.objects[decision.Key]
+		m.inventory.mu.RUnlock()
+		if ok {
+			_ = m.shadow.RecordFile(object.Key, object.Identity.Server, object.Identity.Share, object.Identity.Path, string(object.Status), object.Semantics, object.Size, object.ModifiedAt, object.FirstSeen, object.LastSeen, object.UpdatedAt)
+		}
+		_ = m.shadow.RecordAccess(credentialContextID, decision.Key, "accessible", time.Now().UTC(), time.Now().UTC())
+	}
+	return decision, err
 }
 
 func (m *InventoryManager) MarkScanning(key string) {
 	if m.Enabled() {
 		m.inventory.MarkScanning(key)
+		m.shadowFile(key)
 	}
 }
 
 func (m *InventoryManager) MarkCompleted(key string) {
 	if m.Enabled() {
 		m.inventory.MarkCompleted(key)
+		m.shadowFile(key)
 	}
 }
 
 func (m *InventoryManager) MarkFailed(key string) {
 	if m.Enabled() {
 		m.inventory.MarkFailed(key)
+		m.shadowFile(key)
 	}
 }
 
 func (m *InventoryManager) MarkPartial(key string) {
 	if m.Enabled() {
 		m.inventory.MarkPartial(key)
+		m.shadowFile(key)
+	}
+}
+
+func (m *InventoryManager) shadowFile(key string) {
+	if m.shadow == nil {
+		return
+	}
+	m.inventory.mu.RLock()
+	object, ok := m.inventory.objects[key]
+	m.inventory.mu.RUnlock()
+	if ok {
+		_ = m.shadow.RecordFile(object.Key, object.Identity.Server, object.Identity.Share, object.Identity.Path, string(object.Status), object.Semantics, object.Size, object.ModifiedAt, object.FirstSeen, object.LastSeen, object.UpdatedAt)
 	}
 }
 

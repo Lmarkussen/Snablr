@@ -42,6 +42,7 @@ func NewJSONWriter(w io.Writer, closer io.Closer, pretty bool) *JSONWriter {
 }
 
 func (j *JSONWriter) WriteFinding(f scanner.Finding) error {
+	shadowFinding(j, f)
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
@@ -51,6 +52,7 @@ func (j *JSONWriter) WriteFinding(f scanner.Finding) error {
 }
 
 func (j *JSONWriter) RecordCredentialCandidate(candidate credentialanalysis.Candidate) error {
+	shadowCredential(j, candidate)
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	j.candidates = append(j.candidates, candidate)

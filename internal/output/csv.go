@@ -25,6 +25,7 @@ func NewCSVWriter(w io.Writer, closer io.Closer) *CSVWriter {
 }
 
 func (c *CSVWriter) WriteFinding(finding scanner.Finding) error {
+	shadowFinding(c, finding)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

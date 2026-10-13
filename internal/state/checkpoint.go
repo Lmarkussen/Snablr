@@ -25,6 +25,17 @@ type Manager struct {
 	stopOnce sync.Once
 	stopCh   chan struct{}
 	doneCh   chan struct{}
+	shadow   ShadowStore
+	scanID   string
+}
+
+func (m *Manager) AttachShadow(shadow ShadowStore, scanID string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.shadow, m.scanID = shadow, scanID
+	m.mu.Unlock()
 }
 
 func NewManager(path string, resume bool, interval time.Duration) (*Manager, error) {
@@ -110,21 +121,33 @@ func (m *Manager) ShouldSkipHost(host string) bool {
 	if !m.Enabled() {
 		return false
 	}
-	return m.store.IsHostComplete(host)
+	skip := m.store.IsHostComplete(host)
+	if skip && m.shadow != nil {
+		_ = m.shadow.RecordTarget(host, "completed", time.Now().UTC())
+	}
+	return skip
 }
 
 func (m *Manager) ShouldSkipShare(host, share string) bool {
 	if !m.Enabled() {
 		return false
 	}
-	return m.store.IsShareComplete(host, share)
+	skip := m.store.IsShareComplete(host, share)
+	if skip && m.shadow != nil {
+		_ = m.shadow.RecordShare(host, share, "completed", time.Now().UTC())
+	}
+	return skip
 }
 
 func (m *Manager) ShouldSkipFile(host, share, path string, size int64, modifiedAt time.Time) bool {
 	if !m.Enabled() {
 		return false
 	}
-	return m.store.IsFileComplete(host, share, path, size, modifiedAt)
+	skip := m.store.IsFileComplete(host, share, path, size, modifiedAt)
+	if skip && m.shadow != nil {
+		_ = m.shadow.RecordFile(FileKey(host, share, path), host, share, path, "completed", "", size, modifiedAt, time.Time{}, time.Time{}, time.Now().UTC())
+	}
+	return skip
 }
 
 func (m *Manager) BeginShare(host, share string, fileCount int) {
@@ -161,6 +184,9 @@ func (m *Manager) StartShare(host, share string) {
 		return
 	}
 	m.pending[key] = &shareProgress{}
+	if m.shadow != nil {
+		_ = m.shadow.RecordShare(host, share, "partial", time.Now().UTC())
+	}
 }
 
 func (m *Manager) AddPendingFiles(host, share string, fileCount int) {
@@ -202,6 +228,9 @@ func (m *Manager) FinishShareEnumeration(host, share string) {
 	}
 	if !progress.failed {
 		m.store.MarkShareComplete(host, share)
+		if m.shadow != nil {
+			_ = m.shadow.RecordShare(host, share, "completed", time.Now().UTC())
+		}
 	}
 	delete(m.pending, key)
 }
@@ -220,6 +249,9 @@ func (m *Manager) AbortShare(host, share string) {
 		progress.failed = true
 		delete(m.pending, key)
 	}
+	if m.shadow != nil {
+		_ = m.shadow.RecordShare(host, share, "failed", time.Now().UTC())
+	}
 }
 
 func (m *Manager) RecordFileResult(host, share, path string, size int64, modifiedAt time.Time, success bool) {
@@ -229,6 +261,13 @@ func (m *Manager) RecordFileResult(host, share, path string, size int64, modifie
 
 	if success {
 		m.store.MarkFileComplete(host, share, path, size, modifiedAt)
+	}
+	if m.shadow != nil {
+		status := "failed"
+		if success {
+			status = "completed"
+		}
+		_ = m.shadow.RecordFile(FileKey(host, share, path), host, share, path, status, "", size, modifiedAt, time.Time{}, time.Time{}, time.Now().UTC())
 	}
 
 	key := ShareKey(host, share)
@@ -262,4 +301,7 @@ func (m *Manager) MarkHostComplete(host string) {
 		return
 	}
 	m.store.MarkHostComplete(host)
+	if m.shadow != nil {
+		_ = m.shadow.RecordTarget(host, "completed", time.Now().UTC())
+	}
 }

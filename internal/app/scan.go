@@ -26,7 +26,9 @@ import (
 	"snablr/internal/smb"
 	"snablr/internal/sqliteinspect"
 	"snablr/internal/state"
+	"snablr/internal/store"
 	"snablr/internal/ui"
+	"snablr/internal/version"
 	"snablr/internal/wiminspect"
 	"snablr/pkg/logx"
 )
@@ -151,6 +153,36 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	}
 	semantics := scanSemanticsFingerprint(cfg, manager)
 	credentialContextID := state.CredentialContextID(cfg.Scan.SMBAuth, cfg.Scan.Username, cfg.Scan.Domain)
+	var shadow *store.ShadowStore
+	if strings.TrimSpace(cfg.Scan.SQLiteStateFile) != "" {
+		shadow, err = store.Open(cfg.Scan.SQLiteStateFile, store.Options{Semantics: semantics, SnablrVersion: version.String()})
+		if err != nil {
+			logger.Warnf("SQLite shadow state unavailable; continuing with JSON state: %v", err)
+			shadow = nil
+		} else {
+			if checkpoints != nil {
+				checkpoints.AttachShadow(shadow, "")
+			}
+			if inventory != nil {
+				inventory.AttachShadow(shadow, "")
+			}
+			defer func() {
+				status := store.StatusCompleted
+				if errors.Is(scanCtx.Err(), context.DeadlineExceeded) {
+					status = store.StatusTimedOut
+				} else if ctx.Err() != nil || output.WasCanceledByUser(sink) {
+					status = store.StatusInterrupted
+				}
+				if err != nil {
+					status = store.StatusFailed
+				}
+				_ = shadow.SetScanStatus(status, time.Now().UTC())
+				if closeErr := shadow.Close(); closeErr != nil {
+					logger.Warnf("SQLite shadow state flush failed: %v", closeErr)
+				}
+			}()
+		}
+	}
 
 	bundles := artifactbundle.New(artifactbundle.Options{})
 	defer func() { _ = bundles.Close() }()
@@ -270,6 +302,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		return fmt.Errorf("create output writer: %w", err)
 	}
 	sink = output.WrapWithSuppression(sink, cfg.Suppression)
+	output.AttachShadowStore(sink, shadow)
 	if exporter, ok := sink.(scanner.SensitiveCredentialExporter); ok {
 		engine.SetCredentialExporter(exporter)
 	}

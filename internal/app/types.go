@@ -36,6 +36,7 @@ type ScanOptions struct {
 	CheckpointFile             string
 	Resume                     bool
 	StateDir                   string
+	SQLiteStateFile            string
 	Incremental                bool
 	ForceRescan                bool
 	ListShares                 bool

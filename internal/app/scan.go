@@ -102,6 +102,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	}
 	scanCtx, scanCancel := context.WithCancel(scanCtx)
 	defer scanCancel()
+	operatorInterrupted := false
 
 	manager, err := loadRuleManager(cfg, logger)
 	if err != nil {
@@ -237,10 +238,10 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			status := store.StatusCompleted
 			if errors.Is(scanCtx.Err(), context.DeadlineExceeded) {
 				status = store.StatusTimedOut
-			} else if ctx.Err() != nil || output.WasCanceledByUser(sink) {
+			} else if operatorInterrupted || errors.Is(scanCtx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.Canceled) || output.WasCanceledByUser(sink) {
 				status = store.StatusInterrupted
 			}
-			if err != nil || shadow.Failure() != nil {
+			if shadow.Failure() != nil || (err != nil && status != store.StatusInterrupted) {
 				status = store.StatusFailed
 			}
 			if statusErr := shadow.SetScanStatus(status, time.Now().UTC()); statusErr != nil && err == nil {
@@ -310,7 +311,8 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 
 	resolvedTargets, err := resolveTargetsFunc(scanCtx, cfg.Scan, logger, recorder)
 	if err != nil {
-		if errors.Is(err, context.Canceled) && output.WasCanceledByUser(sink) {
+		if errors.Is(err, context.Canceled) && (errors.Is(ctx.Err(), context.Canceled) || output.WasCanceledByUser(sink)) {
+			operatorInterrupted = true
 			return nil
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -389,8 +391,8 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			return
 		}
 		output.SetMetricsSnapshot(sink, recorder.Snapshot())
-		interrupted := errors.Is(ctx.Err(), context.Canceled) || output.WasCanceledByUser(sink)
-		if interrupted {
+		wasInterrupted := operatorInterrupted || errors.Is(scanCtx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.Canceled) || output.WasCanceledByUser(sink)
+		if wasInterrupted {
 			output.SetScanInterrupted(sink, "operator interruption")
 		}
 		if closeErr := sink.Close(); closeErr != nil {
@@ -401,7 +403,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 				err = closeErr
 			}
 		}
-		if interrupted && err == nil {
+		if wasInterrupted && (err == nil || errors.Is(err, context.Canceled)) {
 			err = &ExitError{Code: 130, Err: fmt.Errorf("scan interrupted by operator")}
 		}
 	}()
@@ -454,7 +456,8 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			if failure := authorityFailure(); failure != nil {
 				return failure
 			}
-			if errors.Is(err, context.Canceled) && output.WasCanceledByUser(sink) {
+			if errors.Is(err, context.Canceled) && (errors.Is(ctx.Err(), context.Canceled) || output.WasCanceledByUser(sink)) {
+				operatorInterrupted = true
 				return nil
 			}
 			if errors.Is(err, context.DeadlineExceeded) {
@@ -479,7 +482,8 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			if failure := authorityFailure(); failure != nil {
 				return failure
 			}
-			if errors.Is(err, context.Canceled) && output.WasCanceledByUser(sink) {
+			if errors.Is(err, context.Canceled) && (errors.Is(ctx.Err(), context.Canceled) || output.WasCanceledByUser(sink)) {
+				operatorInterrupted = true
 				return nil
 			}
 			if errors.Is(err, context.DeadlineExceeded) {
@@ -520,7 +524,8 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		if failure := authorityFailure(); failure != nil {
 			return failure
 		}
-		if errors.Is(errors.Join(errs...), context.Canceled) && output.WasCanceledByUser(sink) {
+		if errors.Is(errors.Join(errs...), context.Canceled) && (errors.Is(ctx.Err(), context.Canceled) || output.WasCanceledByUser(sink)) {
+			operatorInterrupted = true
 			return nil
 		}
 		return errors.Join(errs...)

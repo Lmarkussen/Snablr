@@ -35,7 +35,7 @@ Snablr is intended for authorized defensive security work only. Run it only agai
 - Deterministic scan profiles for default, validation, and aggressive bounded-inspection modes
 - Ranked top access-path summaries for correlated AD, backup, AWS credential profile, credential-store, private-key, browser, and app/database exposure clusters
 - Baseline and diff mode for repeated scans and change tracking
-- Synthetic lab seeding and manifest-based verification with `snablr-seed`
+- Synthetic seeding and manifest-based verification with `snablr-seed`
 
 ## Architecture Summary
 
@@ -135,6 +135,8 @@ snablr scan --targets FILE01.example.com --no-ldap \
 ## Assessment Data, State and Cleanup
 
 Snablr does not create a hidden machine-global cache. Persistent paths are operator-controlled, and Snablr prints the resolved absolute paths at scan startup. The default scan writes `scanned_targets.txt` in the current directory; JSON/HTML output is written only when selected, and optional CSV, Markdown, and credential exports use the paths supplied in configuration or flags. Reports and exports can contain sensitive findings or evidence. Snablr creates these files with mode `0600` and creates output directories it owns with mode `0700`, subject to the operating system and existing parent-directory permissions.
+
+Pressing Ctrl-C during a scan gracefully stops new work, preserves completed findings, restores the terminal, and finalizes an HTML report marked `INTERRUPTED / PARTIAL SCAN`. An explicit `--html-out` path is honored. If no HTML path is supplied, the interrupted report is written to `snablr-interrupted.html`. After the report is finalized, Snablr exits with status `130`.
 
 Incremental state is opt-in with `--state-dir DIR` (and `--incremental` when explicitly requested). It retains `DIR/inventory.json`, including normalized server/share/path metadata, size and modification timestamps, scan status and semantics, and access observations. Access observations use an opaque local correlation identifier derived from authentication mode, username, and domain. This is not cryptographic anonymization and may be dictionary-testable. No passwords, NT hashes, Kerberos tickets/ccaches/session keys, or recovered secret values are intentionally stored in the inventory. Treat the entire state directory as sensitive engagement data because paths, share names, access observations, and timestamps may be confidential. Delete it when the pivot/rescan workflow no longer needs it:
 

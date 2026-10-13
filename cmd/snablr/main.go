@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 
@@ -189,7 +190,9 @@ func runScan(args []string) error {
 		return err
 	}
 
-	return app.RunScan(context.Background(), app.ScanOptions{
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stopSignals()
+	return app.RunScan(ctx, app.ScanOptions{
 		ConfigPath:                 *configPath,
 		Targets:                    parseTargets(*targets),
 		TargetsFile:                *targetsFile,
@@ -643,6 +646,10 @@ func printScanUsage(fs *flag.FlagSet) {
 	fmt.Println()
 	fmt.Println("Flags:")
 	fs.PrintDefaults()
+	fmt.Println()
+	fmt.Println("Ctrl-C gracefully stops a scan, finalizes accumulated outputs, and writes an INTERRUPTED / PARTIAL SCAN HTML report.")
+	fmt.Println("The --html-out path is honored when supplied; otherwise interrupted console scans write snablr-interrupted.html.")
+	fmt.Println("A successfully finalized interrupted scan exits with status 130.")
 }
 
 func printDiscoverUsage(fs *flag.FlagSet) {

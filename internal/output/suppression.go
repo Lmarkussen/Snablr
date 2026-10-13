@@ -184,6 +184,12 @@ func (s *suppressionWriter) SetScanProfile(profile string) {
 	}
 }
 
+func (s *suppressionWriter) SetScanInterrupted(reason string) {
+	if aware, ok := s.inner.(InterruptionAware); ok {
+		aware.SetScanInterrupted(reason)
+	}
+}
+
 func (s *suppressionWriter) SetTargetTotal(total int) {
 	if aware, ok := s.inner.(LiveProgressAware); ok {
 		aware.SetTargetTotal(total)

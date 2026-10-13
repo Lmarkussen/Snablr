@@ -929,6 +929,12 @@
           <span class="report-kicker">Snablr</span>
           <h1>Snablr Scan Report</h1>
           <p class="subtitle">Standalone defensive triage report for post-scan review. Use the filter to narrow findings quickly, then open the most relevant categories first.</p>
+          {{- if .Interrupted }}
+          <div style="border: 2px solid #b42318; background: #fff1f0; color: #7a271a; padding: 16px; margin: 16px 0; border-radius: 8px;">
+            <strong>INTERRUPTED / PARTIAL SCAN</strong>
+            <div>Scan interrupted by operator. Partial results reflect work completed before interruption{{ if .InterruptionReason }} ({{ .InterruptionReason }}){{ end }}.</div>
+          </div>
+          {{- end }}
           <div class="hero-meta">
             <span class="meta-pill"><strong>Version</strong> {{ .Version }}</span>
             <span class="meta-pill"><strong>Profile</strong> {{ valueOrDash .Profile }}</span>
@@ -1025,6 +1031,13 @@
     </section>
 
     <section class="summary-grid">
+      {{- if .Interrupted }}
+      <article class="card">
+        <span class="card-label">Targets Completed</span>
+        <span class="card-value">{{ .Summary.HostsScanned }} / {{ .Metrics.Counters.TargetsLoaded }}</span>
+        <div class="card-meta">Partial scan; remaining targets were not scheduled.</div>
+      </article>
+      {{- end }}
       <article class="card">
         <span class="card-label">Hosts Scanned</span>
         <span class="card-value">{{ .Summary.HostsScanned }}</span>

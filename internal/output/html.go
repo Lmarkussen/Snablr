@@ -35,6 +35,9 @@ type HTMLWriter struct {
 	suppression     *suppressionSummary
 	backupArtifacts *backupArtifactCollector
 	w               io.Writer
+	writeOnClose    bool
+	interrupted     bool
+	interruption    string
 }
 
 type htmlCategoryGroup struct {
@@ -121,7 +124,21 @@ func NewHTMLWriter(w io.Writer, closer io.Closer) (*HTMLWriter, error) {
 		summary:         newSummaryCollector(),
 		template:        tmpl,
 		backupArtifacts: newBackupArtifactCollector(),
+		writeOnClose:    true,
 	}, nil
+}
+
+func (h *HTMLWriter) SetWriteOnClose(enabled bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.writeOnClose = enabled
+}
+
+func (h *HTMLWriter) SetScanInterrupted(reason string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.interrupted = true
+	h.interruption = strings.TrimSpace(reason)
 }
 
 func (h *HTMLWriter) WriteFinding(f scanner.Finding) error {
@@ -200,6 +217,15 @@ func (h *HTMLWriter) SetScanProfile(profile string) {
 func (h *HTMLWriter) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if !h.writeOnClose && !h.interrupted {
+		if h.closer != nil {
+			return h.closer.Close()
+		}
+		return nil
+	}
+	if atomic, ok := h.closer.(*atomicOutput); ok {
+		atomic.commit = true
+	}
 
 	augmented := augmentFindingsForReporting(h.findings)
 	groupedFindings := groupDuplicateReportFindings(augmented)
@@ -253,6 +279,8 @@ func (h *HTMLWriter) Close() error {
 		Validation                  *validationSummary
 		CredentialAnalysis          credentialanalysis.Report
 		CredentialView              credentialReportView
+		Interrupted                 bool
+		InterruptionReason          string
 	}{
 		Version:                     version.Short(),
 		Profile:                     h.profile,
@@ -275,6 +303,8 @@ func (h *HTMLWriter) Close() error {
 		Validation:                  validation,
 		CredentialAnalysis:          credentialAnalysis,
 		CredentialView:              buildCredentialReportView(credentialAnalysis, categoryGroups, supportingCategoryGroups),
+		Interrupted:                 h.interrupted,
+		InterruptionReason:          h.interruption,
 	}
 	data.TopAccessPaths = topAccessPaths(data.AccessPaths, 8)
 

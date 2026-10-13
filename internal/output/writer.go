@@ -30,6 +30,10 @@ type MetricsAware interface {
 	SetMetricsSnapshot(metrics.Snapshot)
 }
 
+type InterruptionAware interface {
+	SetScanInterrupted(string)
+}
+
 type BaselineAware interface {
 	SetBaselineFindings([]scanner.Finding)
 }
@@ -187,17 +191,32 @@ func NewWriter(cfg config.OutputConfig) (scanner.FindingSink, error) {
 	}
 
 	if selection.HTML {
-		file, err := createOutputFile(cfg.HTMLOut)
+		file, commit, err := createAtomicOutputFile(cfg.HTMLOut)
 		if err != nil {
 			_ = closeSinks(sinks)
 			return nil, fmt.Errorf("create html output file %s: %w", cfg.HTMLOut, err)
 		}
-		htmlWriter, err := NewHTMLWriter(file, file)
+		htmlWriter, err := NewHTMLWriter(file, commit)
 		if err != nil {
 			_ = file.Close()
 			_ = closeSinks(sinks)
 			return nil, err
 		}
+		htmlWriter.SetBackupArtifactInventoryEnabled(cfg.ReportBackupArtifacts)
+		sinks = append(sinks, htmlWriter)
+	} else if strings.TrimSpace(cfg.HTMLOut) != "" {
+		file, commit, err := createAtomicOutputFile(cfg.HTMLOut)
+		if err != nil {
+			_ = closeSinks(sinks)
+			return nil, fmt.Errorf("create interrupted html output file %s: %w", cfg.HTMLOut, err)
+		}
+		htmlWriter, err := NewHTMLWriter(file, commit)
+		if err != nil {
+			_ = file.Close()
+			_ = closeSinks(sinks)
+			return nil, err
+		}
+		htmlWriter.SetWriteOnClose(false)
 		htmlWriter.SetBackupArtifactInventoryEnabled(cfg.ReportBackupArtifacts)
 		sinks = append(sinks, htmlWriter)
 	}
@@ -306,6 +325,20 @@ func (m *MultiWriter) Close() error {
 
 func (m *MultiWriter) SetMetricsSnapshot(snapshot metrics.Snapshot) {
 	m.broadcastMetrics(func(aware MetricsAware) { aware.SetMetricsSnapshot(snapshot) })
+}
+
+func (m *MultiWriter) SetScanInterrupted(reason string) {
+	m.broadcastInterruption(func(aware InterruptionAware) { aware.SetScanInterrupted(reason) })
+}
+
+func (m *MultiWriter) broadcastInterruption(fn func(InterruptionAware)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sink := range m.sinks {
+		if aware, ok := sink.(InterruptionAware); ok {
+			fn(aware)
+		}
+	}
 }
 
 func (m *MultiWriter) SetBaselineFindings(findings []scanner.Finding) {
@@ -547,6 +580,53 @@ func createOutputFile(path string) (*os.File, error) {
 	return file, nil
 }
 
+type atomicOutput struct {
+	file        *os.File
+	temporary   string
+	destination string
+	commit      bool
+}
+
+func createAtomicOutputFile(path string) (*os.File, *atomicOutput, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, nil, fmt.Errorf("output path cannot be empty")
+	}
+	dir := filepath.Dir(path)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, nil, err
+		}
+	}
+	temporaryFile, err := os.CreateTemp(dir, ".snablr-report-*")
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := temporaryFile.Chmod(0o600); err != nil {
+		_ = temporaryFile.Close()
+		_ = os.Remove(temporaryFile.Name())
+		return nil, nil, err
+	}
+	return temporaryFile, &atomicOutput{file: temporaryFile, temporary: temporaryFile.Name(), destination: path}, nil
+}
+
+func (a *atomicOutput) Close() error {
+	if a == nil || a.file == nil {
+		return nil
+	}
+	syncErr := a.file.Sync()
+	closeErr := a.file.Close()
+	if !a.commit {
+		_ = os.Remove(a.temporary)
+		return errors.Join(syncErr, closeErr)
+	}
+	if renameErr := os.Rename(a.temporary, a.destination); renameErr != nil {
+		_ = os.Remove(a.temporary)
+		return errors.Join(syncErr, closeErr, renameErr)
+	}
+	return errors.Join(syncErr, closeErr)
+}
+
 func uncPath(f scanner.Finding) string {
 	// Logical container member paths keep forward slashes
 	// ("document.docx!word/document.xml"); only the SMB file path itself is
@@ -633,6 +713,15 @@ func SetMetricsSnapshot(sink scanner.FindingSink, snapshot metrics.Snapshot) {
 	}
 	if aware, ok := sink.(MetricsAware); ok {
 		aware.SetMetricsSnapshot(snapshot)
+	}
+}
+
+func SetScanInterrupted(sink scanner.FindingSink, reason string) {
+	if sink == nil {
+		return
+	}
+	if aware, ok := sink.(InterruptionAware); ok {
+		aware.SetScanInterrupted(reason)
 	}
 }
 

@@ -2544,6 +2544,37 @@ func TestNewWriterNoTUIForcesPlainConsole(t *testing.T) {
 	}
 }
 
+func TestInterruptedConsoleRunWritesPartialHTML(t *testing.T) {
+	t.Parallel()
+
+	htmlPath := filepath.Join(t.TempDir(), "snablr-interrupted.html")
+	sink, err := NewWriter(config.OutputConfig{
+		Format:  "console",
+		NoTUI:   true,
+		HTMLOut: htmlPath,
+	})
+	if err != nil {
+		t.Fatalf("NewWriter returned error: %v", err)
+	}
+	if err := sink.WriteFinding(sampleFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	SetScanInterrupted(sink, "operator interruption")
+	if err := sink.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	report, err := os.ReadFile(htmlPath)
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	for _, want := range []string{"INTERRUPTED / PARTIAL SCAN", "Scan interrupted by operator", "content.synthetic_password"} {
+		if !strings.Contains(string(report), want) {
+			t.Fatalf("expected partial report to contain %q", want)
+		}
+	}
+}
+
 func TestDetermineLiveSinkModeDefaultsToTUIForInteractiveHTML(t *testing.T) {
 	if got := determineLiveSinkMode("html", false, true); got != liveSinkTUI {
 		t.Fatalf("expected interactive html runs to use TUI, got %q", got)

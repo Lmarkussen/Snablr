@@ -69,6 +69,13 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	if err := validateScanConfig(cfg); err != nil {
 		return err
 	}
+	selection, err := config.ParseOutputFormat(cfg.Output.Format)
+	if err != nil {
+		return err
+	}
+	if !selection.HTML && strings.TrimSpace(opts.HTMLOut) == "" {
+		cfg.Output.HTMLOut = "snablr-interrupted.html"
+	}
 	if opts.ListShares {
 		return runListShares(ctx, cfg, logger)
 	}
@@ -275,6 +282,11 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		if sink == nil {
 			return
 		}
+		output.SetMetricsSnapshot(sink, recorder.Snapshot())
+		interrupted := errors.Is(ctx.Err(), context.Canceled) || output.WasCanceledByUser(sink)
+		if interrupted {
+			output.SetScanInterrupted(sink, "operator interruption")
+		}
 		if closeErr := sink.Close(); closeErr != nil {
 			if logger != nil {
 				logger.Errorf("output finalization failed: %v", closeErr)
@@ -282,6 +294,9 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			if err == nil {
 				err = closeErr
 			}
+		}
+		if interrupted && err == nil {
+			err = &ExitError{Code: 130, Err: fmt.Errorf("scan interrupted by operator")}
 		}
 	}()
 	defer func() {

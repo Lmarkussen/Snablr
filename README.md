@@ -425,9 +425,9 @@ Optional sidecar exports:
 
 If you do not provide output paths, the defaults from your config file are used. If you override them on the CLI, Snablr writes to the paths you provide.
 
-## Lab Seeder
+## Synthetic Seeder
 
-Snablr also includes `snablr-seed`, a lab-only helper for generating synthetic fake SMB share content so you can test scans, prioritization, reporting, and manifest-to-results verification end to end.
+Snablr also includes `snablr-seed`, a synthetic helper for generating fake SMB share content so you can test scans, prioritization, reporting, and manifest-to-results verification end to end.
 
 Quick start:
 

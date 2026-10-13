@@ -26,7 +26,7 @@ GOENV += GOMODCACHE=$(GOMODCACHE)
 endif
 RELEASE_TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
-.PHONY: build test lint release release-snapshot clean synthetic-cleanup synthetic-seed synthetic-validate
+.PHONY: build test lint release release-snapshot clean
 
 help:
 	@echo "Snablr build targets"
@@ -84,11 +84,3 @@ release-snapshot:
 clean:
 	rm -rf $(BIN_DIR) $(DIST_DIR)
 
-synthetic-cleanup:
-	SNABLR_CLEAN_ASSUME_YES=1 bash ./scripts/synthetic-cleanup.sh .
-
-synthetic-seed:
-	bash ./scripts/synthetic-seed.sh
-
-synthetic-validate:
-	bash ./scripts/synthetic-validate.sh

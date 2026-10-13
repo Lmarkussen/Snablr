@@ -70,7 +70,7 @@ func TestResolveLDAPSPNDefaultsFromHostname(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveLDAPSPN returned error: %v", err)
 	}
-	if got != "ldap/dc01.test.local" {
+	if got != "ldap/directory01.test.local" {
 		t.Fatalf("resolveLDAPSPN returned %q", got)
 	}
 }

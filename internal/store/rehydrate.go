@@ -16,6 +16,7 @@ import (
 type ResumeOptions struct {
 	ScanID            string
 	ExpectedSemantics string
+	MaterializeFiles  bool
 	QueueSize         int
 	BatchSize         int
 	FlushEvery        time.Duration
@@ -43,6 +44,7 @@ type AccessState struct {
 type ResumeState struct {
 	ScanID, SchemaVersion, SnablrVersion, Semantics, Status string
 	SemanticsMatch                                          bool
+	FilesMaterialized                                       bool
 	StartedAt, EndedAt                                      time.Time
 	Targets                                                 []TargetState
 	Shares                                                  []ShareState
@@ -75,7 +77,7 @@ func OpenForResume(path string, options ResumeOptions) (*ShadowStore, ResumeStat
 		return cleanup(err)
 	}
 	var state ResumeState
-	if err := loadResumeState(db, options.ScanID, &state); err != nil {
+	if err := loadResumeState(db, options.ScanID, options.MaterializeFiles, &state); err != nil {
 		return cleanup(err)
 	}
 	if strings.TrimSpace(state.Semantics) == "" {
@@ -115,7 +117,8 @@ func validateExistingSchema(db *sql.DB) error {
 	return nil
 }
 
-func loadResumeState(db *sql.DB, requestedID string, out *ResumeState) error {
+func loadResumeState(db *sql.DB, requestedID string, materializeFiles bool, out *ResumeState) error {
+	out.FilesMaterialized = materializeFiles
 	query := `SELECT scan_id,schema_version,snablr_version,semantics,started_at,ended_at,status FROM scans WHERE scan_id=?`
 	args := []any{requestedID}
 	if strings.TrimSpace(requestedID) == "" {
@@ -170,25 +173,27 @@ func loadResumeState(db *sql.DB, requestedID string, out *ResumeState) error {
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	rows, err = db.Query(`SELECT file_key,host,share,path,status,semantics,size,modified_at,first_seen,last_seen,updated_at FROM files WHERE scan_id=?`, out.ScanID)
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var v FileState
-		var modified, first, last, updated sql.NullString
-		if err := rows.Scan(&v.Key, &v.Host, &v.Share, &v.Path, &v.Status, &v.Semantics, &v.Size, &modified, &first, &last, &updated); err != nil {
-			rows.Close()
+	if materializeFiles {
+		rows, err = db.Query(`SELECT file_key,host,share,path,status,semantics,size,modified_at,first_seen,last_seen,updated_at FROM files WHERE scan_id=?`, out.ScanID)
+		if err != nil {
 			return err
 		}
-		v.ModifiedAt = parseNullableTime(modified)
-		v.FirstSeen = parseNullableTime(first)
-		v.LastSeen = parseNullableTime(last)
-		v.UpdatedAt = parseNullableTime(updated)
-		out.Files = append(out.Files, v)
-	}
-	if err := rows.Close(); err != nil {
-		return err
+		for rows.Next() {
+			var v FileState
+			var modified, first, last, updated sql.NullString
+			if err := rows.Scan(&v.Key, &v.Host, &v.Share, &v.Path, &v.Status, &v.Semantics, &v.Size, &modified, &first, &last, &updated); err != nil {
+				rows.Close()
+				return err
+			}
+			v.ModifiedAt = parseNullableTime(modified)
+			v.FirstSeen = parseNullableTime(first)
+			v.LastSeen = parseNullableTime(last)
+			v.UpdatedAt = parseNullableTime(updated)
+			out.Files = append(out.Files, v)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
 	}
 	rows, err = db.Query(`SELECT parent_key,member_key,member_type,member_path,status,provenance FROM members WHERE scan_id=?`, out.ScanID)
 	if err != nil {
@@ -286,6 +291,49 @@ func loadResumeState(db *sql.DB, requestedID string, out *ResumeState) error {
 	return rows.Close()
 }
 
+// LookupFile returns one persisted file row without materializing the scan's
+// complete inventory. It is intended for the experimental lazy resume path.
+func (s *ShadowStore) LookupFile(host, share, path string) (FileState, bool, error) {
+	if s == nil || s.db == nil {
+		return FileState{}, false, fmt.Errorf("sqlite resume store is closed")
+	}
+	var file FileState
+	var modified, first, last, updated sql.NullString
+	err := s.db.QueryRow(`SELECT file_key,host,share,path,status,semantics,size,modified_at,first_seen,last_seen,updated_at FROM files WHERE scan_id=? AND host=? AND share=? AND path=?`, s.scanID, host, share, path).Scan(&file.Key, &file.Host, &file.Share, &file.Path, &file.Status, &file.Semantics, &file.Size, &modified, &first, &last, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return FileState{}, false, nil
+	}
+	if err != nil {
+		return FileState{}, false, err
+	}
+	file.ModifiedAt, file.FirstSeen, file.LastSeen, file.UpdatedAt = parseNullableTime(modified), parseNullableTime(first), parseNullableTime(last), parseNullableTime(updated)
+	return file, true, nil
+}
+
+func (s *ShadowStore) ResumeTargetComplete(host string) (bool, error) {
+	var status string
+	err := s.db.QueryRow(`SELECT status FROM targets WHERE scan_id=? AND host=?`, s.scanID, host).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return status == "completed", err
+}
+
+func (s *ShadowStore) ResumeShareComplete(host, share string) (bool, error) {
+	var status string
+	err := s.db.QueryRow(`SELECT status FROM shares WHERE scan_id=? AND host=? AND share=?`, s.scanID, host, share).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return status == "completed", err
+}
+
+func (s *ShadowStore) RemainingFileCount() (int64, error) {
+	var count int64
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM files WHERE scan_id=? AND status NOT IN ('completed','skipped_unchanged')`, s.scanID).Scan(&count)
+	return count, err
+}
+
 func parseNullableTime(value sql.NullString) time.Time {
 	if !value.Valid {
 		return time.Time{}
@@ -304,6 +352,9 @@ func parseTime(value string) time.Time {
 // time the state was loaded. It is used to avoid replaying results belonging
 // to incomplete work items.
 func (s ResumeState) FileWasCompleted(host, share, path string) bool {
+	if !s.FilesMaterialized {
+		return true
+	}
 	for _, file := range s.Files {
 		if file.Status != "completed" && file.Status != "skipped_unchanged" {
 			continue

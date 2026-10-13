@@ -2,7 +2,9 @@ package store
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -45,7 +47,7 @@ func TestOpenForResumeRehydratesLogicalState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reopened, state, err := OpenForResume(path, ResumeOptions{ExpectedSemantics: "semantics-a", BatchSize: 8, FlushEvery: time.Hour})
+	reopened, state, err := OpenForResume(path, ResumeOptions{ExpectedSemantics: "semantics-a", MaterializeFiles: true, BatchSize: 8, FlushEvery: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,13 +125,78 @@ func TestOpenForResumeScaleSyntheticFiles(t *testing.T) {
 	if err := shadow.Close(); err != nil {
 		t.Fatal(err)
 	}
-	_, state, err := OpenForResume(path, ResumeOptions{ExpectedSemantics: "scale-semantics", BatchSize: 512, FlushEvery: time.Hour})
+	_, state, err := OpenForResume(path, ResumeOptions{ExpectedSemantics: "scale-semantics", MaterializeFiles: true, BatchSize: 512, FlushEvery: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(state.Files) != 100_000 {
 		t.Fatalf("rehydrated %d files, want 100000", len(state.Files))
 	}
+}
+
+func TestOpenForResumeMillionFilesMeasurement(t *testing.T) {
+	if os.Getenv("SNABLR_SQLITE_MILLION") != "1" {
+		t.Skip("set SNABLR_SQLITE_MILLION=1 for the local scale measurement")
+	}
+	path := filepath.Join(t.TempDir(), "million.sqlite")
+	started := time.Now()
+	shadow, err := Open(path, Options{ScanID: "million-scan", Semantics: "million-semantics", QueueSize: 4096, BatchSize: 1024, FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 1_000_000; index++ {
+		status := "completed"
+		if index%11 == 0 {
+			status = "failed"
+		} else if index%17 == 0 {
+			status = "partial"
+		}
+		if err := shadow.RecordFile("million-"+itoa(index), "synthetic-host-"+itoa(index%32), "SyntheticShare-"+itoa(index%64), "file-"+itoa(index)+".dat", status, "million-semantics", int64(index%8192), storeTestTime, storeTestTime, storeTestTime, storeTestTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := shadow.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	writeDuration := time.Since(started)
+	dbSize := fileSize(path)
+	walSize := fileSize(path + "-wal")
+	shmSize := fileSize(path + "-shm")
+	before := memoryBytes()
+	openStarted := time.Now()
+	reopened, state, err := OpenForResume(path, ResumeOptions{ExpectedSemantics: "million-semantics", MaterializeFiles: false, BatchSize: 1024, FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	openDuration := time.Since(openStarted)
+	peak := memoryBytes()
+	remainingStarted := time.Now()
+	remaining, err := reopened.RemainingFileCount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	remainingDuration := time.Since(remainingStarted)
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cleanDBSize := fileSize(path)
+	t.Logf("million rows=%d write=%s db=%d wal=%d shm=%d open=%s remaining=%d remaining_query=%s memory_before=%d memory_after=%d state_files=%d clean_db=%d", 1_000_000, writeDuration, dbSize, walSize, shmSize, openDuration, remaining, remainingDuration, before, peak, len(state.Files), cleanDBSize)
+	if remaining == 0 {
+		t.Fatal("scale fixture unexpectedly has no remaining work")
+	}
+}
+
+func fileSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+func memoryBytes() uint64 {
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	return stats.Alloc
 }
 
 func itoa(value int) string {

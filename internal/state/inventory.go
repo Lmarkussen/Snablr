@@ -123,12 +123,13 @@ type SkipDecision struct {
 
 // Inventory is a concurrent, atomically persisted content-scan inventory.
 type Inventory struct {
-	path    string
-	dirty   bool
-	mu      sync.RWMutex
-	objects map[string]ObjectRecord
-	access  map[string]AccessObservation
-	stats   InventoryStats
+	path         string
+	dirty        bool
+	mu           sync.RWMutex
+	objects      map[string]ObjectRecord
+	access       map[string]AccessObservation
+	stats        InventoryStats
+	resumeReader SQLiteResumeReader
 }
 
 // OpenInventory opens an existing inventory or creates an empty in-memory
@@ -300,6 +301,11 @@ func (i *Inventory) Prepare(observation FileObservation, credentialContextID, se
 	now := time.Now().UTC()
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	if i.resumeReader != nil {
+		if file, found, err := i.resumeReader.LookupFile(identity.Server, identity.Share, identity.Path); err == nil && found {
+			i.objects[key] = ObjectRecord{Key: file.Key, Identity: identity, Size: file.Size, ModifiedAt: file.ModifiedAt, Status: ObjectStatus(file.Status), Semantics: file.Semantics, FirstSeen: file.FirstSeen, LastSeen: file.LastSeen, UpdatedAt: file.UpdatedAt}
+		}
+	}
 
 	i.stats.Discovered++
 	knownAccess := false
@@ -579,6 +585,13 @@ func NewInventoryManagerFromSQLite(resume SQLiteResumeState) *InventoryManager {
 		}
 	}
 	return &InventoryManager{inventory: inventory, interval: defaultSaveInterval, stopCh: make(chan struct{}), doneCh: make(chan struct{})}
+}
+
+func NewInventoryManagerFromSQLiteReader(reader SQLiteResumeReader, interval time.Duration) *InventoryManager {
+	if interval <= 0 {
+		interval = defaultSaveInterval
+	}
+	return &InventoryManager{inventory: &Inventory{objects: make(map[string]ObjectRecord), access: make(map[string]AccessObservation), resumeReader: reader}, interval: interval, stopCh: make(chan struct{}), doneCh: make(chan struct{})}
 }
 
 func (m *InventoryManager) Enabled() bool {

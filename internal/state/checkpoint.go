@@ -22,11 +22,12 @@ type Manager struct {
 	pending map[string]*shareProgress
 	started bool
 
-	stopOnce sync.Once
-	stopCh   chan struct{}
-	doneCh   chan struct{}
-	shadow   ShadowStore
-	scanID   string
+	stopOnce     sync.Once
+	stopCh       chan struct{}
+	doneCh       chan struct{}
+	shadow       ShadowStore
+	scanID       string
+	resumeReader SQLiteResumeReader
 }
 
 func (m *Manager) AttachShadow(shadow ShadowStore, scanID string) {
@@ -81,6 +82,12 @@ type SQLiteAccessState struct {
 	FirstSeen, LastSeen        time.Time
 }
 
+type SQLiteResumeReader interface {
+	ResumeTargetComplete(string) (bool, error)
+	ResumeShareComplete(string, string) (bool, error)
+	LookupFile(string, string, string) (SQLiteFileState, bool, error)
+}
+
 func NewManagerFromSQLite(resume SQLiteResumeState, interval time.Duration) *Manager {
 	checkpoint := &Store{files: make(map[string]fileState), hosts: make(map[string]struct{}), shares: make(map[string]struct{})}
 	if resume.SemanticsMatch {
@@ -106,8 +113,15 @@ func NewManagerFromSQLite(resume SQLiteResumeState, interval time.Duration) *Man
 	return &Manager{store: checkpoint, interval: interval, pending: make(map[string]*shareProgress), stopCh: make(chan struct{}), doneCh: make(chan struct{})}
 }
 
+func NewManagerFromSQLiteReader(reader SQLiteResumeReader, interval time.Duration) *Manager {
+	if interval <= 0 {
+		interval = defaultSaveInterval
+	}
+	return &Manager{store: &Store{files: make(map[string]fileState), hosts: make(map[string]struct{}), shares: make(map[string]struct{})}, interval: interval, resumeReader: reader, pending: make(map[string]*shareProgress), stopCh: make(chan struct{}), doneCh: make(chan struct{})}
+}
+
 func (m *Manager) Enabled() bool {
-	return m != nil && m.store != nil && m.store.Enabled()
+	return m != nil && m.store != nil && (m.store.Enabled() || m.resumeReader != nil)
 }
 
 func (m *Manager) Start(ctx context.Context) {

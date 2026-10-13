@@ -120,7 +120,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	if cfg.Scan.SQLiteResume {
 		var resumeState store.ResumeState
 		var resumeErr error
-		shadow, resumeState, resumeErr = store.OpenForResume(cfg.Scan.SQLiteStateFile, store.ResumeOptions{ExpectedSemantics: semantics})
+		shadow, resumeState, resumeErr = store.OpenForResume(cfg.Scan.SQLiteStateFile, store.ResumeOptions{ExpectedSemantics: semantics, MaterializeFiles: false})
 		if resumeErr != nil {
 			return fmt.Errorf("open SQLite resume state: %w", resumeErr)
 		}
@@ -134,11 +134,6 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	}
 
 	var sink scanner.FindingSink
-	var sqliteManagerState state.SQLiteResumeState
-	if sqliteResume != nil {
-		sqliteManagerState = sqliteResumeForState(*sqliteResume)
-	}
-
 	recorder := metrics.NewCollector()
 	totalTimer := recorder.StartPhase("total_scan")
 	defer func() {
@@ -150,7 +145,8 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 
 	var checkpoints *state.Manager
 	if sqliteResume != nil {
-		checkpoints = state.NewManagerFromSQLite(sqliteManagerState, 10*time.Second)
+		reader := sqliteResumeReader{shadow: shadow, semanticsMatch: sqliteResume.SemanticsMatch, expectedSemantics: semantics}
+		checkpoints = state.NewManagerFromSQLiteReader(reader, 10*time.Second)
 	} else {
 		checkpoints, err = state.NewManager(cfg.Scan.CheckpointFile, cfg.Scan.Resume, 10*time.Second)
 		if err != nil {
@@ -166,7 +162,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	var inventory *state.InventoryManager
 	if incrementalEnabled {
 		if sqliteResume != nil {
-			inventory = state.NewInventoryManagerFromSQLite(sqliteManagerState)
+			inventory = state.NewInventoryManagerFromSQLiteReader(sqliteResumeReader{shadow: shadow, semanticsMatch: sqliteResume.SemanticsMatch, expectedSemantics: semantics}, 10*time.Second)
 		} else {
 			inventoryPath := filepath.Join(cfg.Scan.StateDir, "inventory.json")
 			inventory, err = state.NewInventoryManager(inventoryPath, 10*time.Second)
@@ -473,21 +469,32 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	return nil
 }
 
-func sqliteResumeForState(resume store.ResumeState) state.SQLiteResumeState {
-	out := state.SQLiteResumeState{SemanticsMatch: resume.SemanticsMatch}
-	for _, target := range resume.Targets {
-		out.Targets = append(out.Targets, state.SQLiteTargetState{Host: target.Host, Status: target.Status})
+type sqliteResumeReader struct {
+	shadow            *store.ShadowStore
+	semanticsMatch    bool
+	expectedSemantics string
+}
+
+func (r sqliteResumeReader) ResumeTargetComplete(host string) (bool, error) {
+	if !r.semanticsMatch {
+		return false, nil
 	}
-	for _, share := range resume.Shares {
-		out.Shares = append(out.Shares, state.SQLiteShareState{Host: share.Host, Share: share.Share, Status: share.Status})
+	return r.shadow.ResumeTargetComplete(host)
+}
+
+func (r sqliteResumeReader) ResumeShareComplete(host, share string) (bool, error) {
+	if !r.semanticsMatch {
+		return false, nil
 	}
-	for _, file := range resume.Files {
-		out.Files = append(out.Files, state.SQLiteFileState{Key: file.Key, Host: file.Host, Share: file.Share, Path: file.Path, Status: file.Status, Semantics: file.Semantics, Size: file.Size, ModifiedAt: file.ModifiedAt, FirstSeen: file.FirstSeen, LastSeen: file.LastSeen, UpdatedAt: file.UpdatedAt})
+	return r.shadow.ResumeShareComplete(host, share)
+}
+
+func (r sqliteResumeReader) LookupFile(host, share, path string) (state.SQLiteFileState, bool, error) {
+	file, found, err := r.shadow.LookupFile(host, share, path)
+	if found && (r.expectedSemantics == "" || file.Semantics != r.expectedSemantics) {
+		file.Status = "partial"
 	}
-	for _, access := range resume.Access {
-		out.Access = append(out.Access, state.SQLiteAccessState{ContextID: access.ContextID, FileKey: access.FileKey, Result: access.Result, FirstSeen: access.FirstSeen, LastSeen: access.LastSeen})
-	}
-	return out
+	return state.SQLiteFileState{Key: file.Key, Host: file.Host, Share: file.Share, Path: file.Path, Status: file.Status, Semantics: file.Semantics, Size: file.Size, ModifiedAt: file.ModifiedAt, FirstSeen: file.FirstSeen, LastSeen: file.LastSeen, UpdatedAt: file.UpdatedAt}, found, err
 }
 
 func replaySQLiteState(sink scanner.FindingSink, resume store.ResumeState) error {

@@ -57,6 +57,9 @@ func TestShadowStorePersistsLogicalStateAndReopens(t *testing.T) {
 	if err := s.RecordCorrelation("corr-synthetic", map[string]string{"kind": "archive-credential"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.RecordCorrelation("corr-synthetic", map[string]string{"kind": "archive-credential"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.SetScanStatus(StatusInterrupted, storeTestTime.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +72,9 @@ func TestShadowStorePersistsLogicalStateAndReopens(t *testing.T) {
 	}
 	if snapshot.ScanStatus != string(StatusInterrupted) || snapshot.FileStatus[key] != "partial" || snapshot.MemberKeys[key+"\x00app/config.ini"] != "inspected" {
 		t.Fatalf("logical parity snapshot lost state: %#v", snapshot)
+	}
+	if len(snapshot.CorrelationKeys) != 1 {
+		t.Fatalf("correlation upsert is not idempotent: %#v", snapshot.CorrelationKeys)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
@@ -140,6 +146,76 @@ func TestShadowStorePermissionsAndSidecars(t *testing.T) {
 		if info, err := os.Stat(candidate); err == nil && info.Mode().Perm() != 0o600 {
 			t.Fatalf("%s permissions=%o, want 600", candidate, info.Mode().Perm())
 		}
+	}
+}
+
+func TestResumeFileLookupUsesIdentityIndex(t *testing.T) {
+	s, path := openTestStore(t)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`EXPLAIN QUERY PLAN SELECT file_key FROM files WHERE scan_id=? AND host=? AND share=? AND path=?`, "scan-synthetic", "synthetic-host.test", "SyntheticShare", "missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var detail string
+	used := false
+	for rows.Next() {
+		var id, parent, notused, text string
+		if err := rows.Scan(&id, &parent, &notused, &text); err != nil {
+			t.Fatal(err)
+		}
+		detail += text
+		if strings.Contains(text, "files_identity_idx") {
+			used = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !used {
+		t.Fatalf("resume lookup did not use identity index: %s", detail)
+	}
+}
+
+func TestRemainingWorkLookupUsesStatusIndex(t *testing.T) {
+	s, path := openTestStore(t)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`EXPLAIN QUERY PLAN SELECT COUNT(*) FROM files WHERE scan_id=? AND status NOT IN ('completed','skipped_unchanged')`, "scan-synthetic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var detail string
+	used := false
+	for rows.Next() {
+		var id, parent, notused, text string
+		if err := rows.Scan(&id, &parent, &notused, &text); err != nil {
+			t.Fatal(err)
+		}
+		detail += text
+		if strings.Contains(text, "files_status_idx") {
+			used = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !used {
+		t.Fatalf("remaining-work query did not use status index: %s", detail)
 	}
 }
 

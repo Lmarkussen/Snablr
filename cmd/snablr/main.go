@@ -136,10 +136,8 @@ func runScan(args []string) error {
 	seedManifest := fs.String("seed-manifest", "", "Path to a seeder manifest JSON file for in-report validation summary")
 	validationMode := fs.Bool("validation-mode", false, "Enable diagnostic validation logging and summary output")
 	maxScanTime := fs.String("max-scan-time", "", "Maximum total scan time, for example 30m or 2h")
-	checkpointFile := fs.String("checkpoint-file", "", "Path to persistent exact-resume checkpoint JSON (contains progress/path metadata)")
-	resume := fs.Bool("resume", false, "Resume from an existing persistent checkpoint file")
-	stateDir := fs.String("state-dir", "", "Directory for incremental metadata (target/share/path metadata; treat as sensitive engagement data)")
-	incremental := fs.Bool("incremental", false, "Reuse unchanged completed file inspections from --state-dir; persists inventory metadata")
+	resume := fs.Bool("resume", false, "Resume from the authoritative Snablr scan database")
+	sqliteStateFile := fs.String("sqlite-state-file", "", "Optional SQLite state file override (default: snablr.db in the output workspace)")
 	forceRescan := fs.Bool("force-rescan", false, "Ignore reusable completed objects in incremental state")
 	listShares := fs.Bool("list-shares", false, "List readable shares accessible to the authenticated user and exit")
 	skipReachability := fs.Bool("skip-reachability-check", false, "Skip TCP 445 reachability testing before scanning")
@@ -225,10 +223,8 @@ func runScan(args []string) error {
 		SeedManifest:               *seedManifest,
 		ValidationMode:             *validationMode,
 		MaxScanTime:                *maxScanTime,
-		CheckpointFile:             *checkpointFile,
 		Resume:                     *resume,
-		StateDir:                   *stateDir,
-		Incremental:                *incremental,
+		SQLiteStateFile:            *sqliteStateFile,
 		ForceRescan:                *forceRescan,
 		ListShares:                 *listShares,
 		SkipReachabilityCheck:      *skipReachability,
@@ -617,16 +613,13 @@ func printScanUsage(fs *flag.FlagSet) {
 	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --no-ldap --smb-auth password --username USER --password '<password>' --list-shares")
 	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --no-ldap --smb-auth ntlm-hash --username USER --nt-hash '<32-hex-nt-hash>' --list-shares")
 	fmt.Println("  KRB5CCNAME=/path/to/ccache snablr scan --targets FILE01.TEST.LOCAL --no-ldap --smb-auth kerberos --smb-hostname FILE01.TEST.LOCAL --list-shares")
-	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>' --state-dir ./state --incremental")
-	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth ntlm-hash --username USER --nt-hash '<32-hex-nt-hash>' --state-dir ./state --incremental")
-	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>' --state-dir ./state --force-rescan")
+	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>' --force-rescan")
 	fmt.Println("  snablr scan --username USER --password '<password>'")
 	fmt.Println("  snablr scan --domain TEST.LOCAL --dc DIRECTORY01.TEST.LOCAL --username USER --password '<password>'")
 	fmt.Println("  KRB5CCNAME=/path/to/ccache snablr scan --auth kerberos --domain TEST.LOCAL --dc DIRECTORY01.TEST.LOCAL --smb-auth kerberos --smb-hostname FILE01.TEST.LOCAL")
 	fmt.Println("  snablr scan --output-format all --json-out results.json --html-out report.html")
 	fmt.Println("  snablr scan --share Finance --path Reports/ --max-depth 4")
 	fmt.Println("  snablr scan --baseline previous-results.json --output-format all --json-out results.json --html-out report.html")
-	fmt.Println("  snablr scan --checkpoint-file state.json --resume")
 	fmt.Println("  snablr scan --wim-allow-large --wim-max-size 536870912")
 	fmt.Println("  snablr scan --output-format html --html-out report.html --report-backup-artifacts")
 	fmt.Println()

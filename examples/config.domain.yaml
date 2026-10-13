@@ -43,7 +43,6 @@ scan:
 
   # Long-running scans should be resumable.
   max_scan_time: "2h"
-  checkpoint_file: "state/domain-scan.json"
   resume: true
   state_dir: ""
   incremental: false

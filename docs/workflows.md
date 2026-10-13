@@ -130,20 +130,19 @@ Good fit for:
 
 ## Resume A Scan
 
-Use checkpoints for long-running scans or unstable environments.
+Use the scan database for long-running scans or unstable environments.
 
 Example:
 
 ```bash
 ./bin/snablr scan \
   --config examples/config.domain.yaml \
-  --checkpoint-file state/domain-scan.json \
   --resume
 ```
 
 Recommended workflow:
 
-1. start with checkpointing enabled
+1. start with the automatic scan database
 2. let the scan run until completion or time limit
 3. rerun with `--resume` to continue without rescanning completed work
 

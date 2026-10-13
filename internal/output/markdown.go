@@ -29,6 +29,7 @@ func NewMarkdownWriter(w io.Writer, closer io.Closer) *MarkdownWriter {
 }
 
 func (m *MarkdownWriter) WriteFinding(f scanner.Finding) error {
+	shadowFinding(m, f)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

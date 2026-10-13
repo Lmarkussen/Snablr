@@ -142,6 +142,7 @@ func (h *HTMLWriter) SetScanInterrupted(reason string) {
 }
 
 func (h *HTMLWriter) WriteFinding(f scanner.Finding) error {
+	shadowFinding(h, f)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -151,6 +152,7 @@ func (h *HTMLWriter) WriteFinding(f scanner.Finding) error {
 }
 
 func (h *HTMLWriter) RecordCredentialCandidate(candidate credentialanalysis.Candidate) error {
+	shadowCredential(h, candidate)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.candidates = append(h.candidates, candidate)

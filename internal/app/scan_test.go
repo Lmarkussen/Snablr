@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -65,23 +64,6 @@ func TestCredentialContextIDsExcludeSecretsAndSeparateAuthModes(t *testing.T) {
 	}
 	if len(password) != len("ctx-")+64 {
 		t.Fatalf("unexpected opaque context ID %q", password)
-	}
-}
-
-func TestIncrementalScanEnabledByStateDirectoryOrExplicitFlag(t *testing.T) {
-	t.Parallel()
-	if incrementalScanEnabled(config.Default()) {
-		t.Fatal("default scan must not enable incremental state")
-	}
-	cfg := config.Default()
-	cfg.Scan.StateDir = "./state"
-	if !incrementalScanEnabled(cfg) {
-		t.Fatal("state directory should enable incremental state")
-	}
-	cfg = config.Default()
-	cfg.Scan.Incremental = true
-	if !incrementalScanEnabled(cfg) {
-		t.Fatal("explicit incremental mode should be detected")
 	}
 }
 
@@ -216,11 +198,7 @@ func TestScanHostTransportDependencyFailureDoesNotReuseBundle(t *testing.T) {
 	}
 	security := testfixture.BuildSecurity(testfixture.SecuritySpec{BootKey: derived.BootKey, LSAKey: [32]byte{2}, Secrets: map[string][]byte{"NL$KM": make([]byte, 32)}})
 	files := map[string][]byte{"Windows/System32/config/SECURITY": security, "Windows/System32/config/SYSTEM": system}
-	root := t.TempDir()
-	inventory, err := state.NewInventoryManager(filepath.Join(root, "inventory.json"), time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
+	inventory := state.NewInMemoryInventoryManager()
 	defer inventory.Close()
 	oldClient := newScanClientFunc
 	defer func() { newScanClientFunc = oldClient }()

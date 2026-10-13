@@ -15,116 +15,99 @@ type shareProgress struct {
 }
 
 type Manager struct {
-	store    *Store
-	interval time.Duration
-
-	mu      sync.Mutex
-	pending map[string]*shareProgress
-	started bool
-
-	stopOnce sync.Once
-	stopCh   chan struct{}
-	doneCh   chan struct{}
+	store        *Store
+	mu           sync.Mutex
+	pending      map[string]*shareProgress
+	stateStore   SQLiteStateStore
+	scanID       string
+	resumeReader SQLiteResumeReader
 }
 
-func NewManager(path string, resume bool, interval time.Duration) (*Manager, error) {
-	store, err := Open(path, resume)
-	if err != nil {
-		return nil, err
-	}
-	if store == nil {
-		return nil, nil
-	}
-	if interval <= 0 {
-		interval = defaultSaveInterval
-	}
-	return &Manager{
-		store:    store,
-		interval: interval,
-		pending:  make(map[string]*shareProgress),
-		stopCh:   make(chan struct{}),
-		doneCh:   make(chan struct{}),
-	}, nil
-}
-
-func (m *Manager) Enabled() bool {
-	return m != nil && m.store != nil && m.store.Enabled()
-}
-
-func (m *Manager) Start(ctx context.Context) {
-	if !m.Enabled() {
+func (m *Manager) AttachStore(stateStore SQLiteStateStore, scanID string) {
+	if m == nil {
 		return
 	}
 	m.mu.Lock()
-	if m.started {
-		m.mu.Unlock()
-		return
-	}
-	m.started = true
+	m.stateStore, m.scanID = stateStore, scanID
 	m.mu.Unlock()
-
-	ticker := time.NewTicker(m.interval)
-	go func() {
-		defer func() {
-			ticker.Stop()
-			close(m.doneCh)
-		}()
-		for {
-			select {
-			case <-ctx.Done():
-				_ = m.Save()
-				return
-			case <-m.stopCh:
-				_ = m.Save()
-				return
-			case <-ticker.C:
-				_ = m.Save()
-			}
-		}
-	}()
 }
 
-func (m *Manager) Save() error {
-	if !m.Enabled() {
-		return nil
+type SQLiteResumeReader interface {
+	ResumeTargetComplete(string) (bool, error)
+	ResumeShareComplete(string, string) (bool, error)
+	LookupFile(string, string, string) (SQLiteFileState, bool, error)
+}
+
+type SQLiteFileState struct {
+	Key, Host, Share, Path, Status, Semantics  string
+	Size                                       int64
+	ModifiedAt, FirstSeen, LastSeen, UpdatedAt time.Time
+}
+
+func NewManagerFromSQLiteReader(reader SQLiteResumeReader, interval time.Duration) *Manager {
+	if interval <= 0 {
+		interval = defaultSaveInterval
 	}
-	return m.store.Save()
+	return &Manager{store: newStore(), resumeReader: reader, pending: make(map[string]*shareProgress)}
 }
 
-func (m *Manager) Close() error {
-	if m != nil {
-		m.stopOnce.Do(func() {
-			close(m.stopCh)
-			m.mu.Lock()
-			started := m.started
-			m.mu.Unlock()
-			if started {
-				<-m.doneCh
-			}
-		})
-	}
-	return m.Save()
+func (m *Manager) Enabled() bool {
+	return m != nil && m.store != nil && (m.store.Enabled() || m.resumeReader != nil)
 }
+
+func (m *Manager) Start(context.Context) {}
+
+func (m *Manager) Save() error { return nil }
+
+func (m *Manager) Close() error { return nil }
 
 func (m *Manager) ShouldSkipHost(host string) bool {
 	if !m.Enabled() {
 		return false
 	}
-	return m.store.IsHostComplete(host)
+	skip := false
+	if m.resumeReader != nil {
+		skip, _ = m.resumeReader.ResumeTargetComplete(host)
+	} else {
+		skip = m.store.IsHostComplete(host)
+	}
+	if skip && m.stateStore != nil {
+		_ = m.stateStore.RecordTarget(host, "completed", time.Now().UTC())
+	}
+	return skip
 }
 
 func (m *Manager) ShouldSkipShare(host, share string) bool {
 	if !m.Enabled() {
 		return false
 	}
-	return m.store.IsShareComplete(host, share)
+	skip := false
+	if m.resumeReader != nil {
+		skip, _ = m.resumeReader.ResumeShareComplete(host, share)
+	} else {
+		skip = m.store.IsShareComplete(host, share)
+	}
+	if skip && m.stateStore != nil {
+		_ = m.stateStore.RecordShare(host, share, "completed", time.Now().UTC())
+	}
+	return skip
 }
 
 func (m *Manager) ShouldSkipFile(host, share, path string, size int64, modifiedAt time.Time) bool {
 	if !m.Enabled() {
 		return false
 	}
-	return m.store.IsFileComplete(host, share, path, size, modifiedAt)
+	skip := false
+	if m.resumeReader != nil {
+		file, ok, _ := m.resumeReader.LookupFile(host, share, path)
+		skip = ok && (file.Status == "completed" || file.Status == "skipped_unchanged") && file.Size == size && file.ModifiedAt.Equal(modifiedAt)
+	} else {
+		skip = m.store.IsFileComplete(host, share, path, size, modifiedAt)
+	}
+	if skip && m.stateStore != nil {
+		_ = m.stateStore.RecordFile(FileKey(host, share, path), host, share, path, "completed", "", size, modifiedAt, time.Time{}, time.Time{}, time.Now().UTC())
+	}
+	return skip
 }
 
 func (m *Manager) BeginShare(host, share string, fileCount int) {
@@ -161,6 +144,9 @@ func (m *Manager) StartShare(host, share string) {
 		return
 	}
 	m.pending[key] = &shareProgress{}
+	if m.stateStore != nil {
+		_ = m.stateStore.RecordShare(host, share, "partial", time.Now().UTC())
+	}
 }
 
 func (m *Manager) AddPendingFiles(host, share string, fileCount int) {
@@ -202,6 +188,9 @@ func (m *Manager) FinishShareEnumeration(host, share string) {
 	}
 	if !progress.failed {
 		m.store.MarkShareComplete(host, share)
+		if m.stateStore != nil {
+			_ = m.stateStore.RecordShare(host, share, "completed", time.Now().UTC())
+		}
 	}
 	delete(m.pending, key)
 }
@@ -220,6 +209,9 @@ func (m *Manager) AbortShare(host, share string) {
 		progress.failed = true
 		delete(m.pending, key)
 	}
+	if m.stateStore != nil {
+		_ = m.stateStore.RecordShare(host, share, "failed", time.Now().UTC())
+	}
 }
 
 func (m *Manager) RecordFileResult(host, share, path string, size int64, modifiedAt time.Time, success bool) {
@@ -229,6 +221,13 @@ func (m *Manager) RecordFileResult(host, share, path string, size int64, modifie
 
 	if success {
 		m.store.MarkFileComplete(host, share, path, size, modifiedAt)
+	}
+	if m.stateStore != nil {
+		status := "failed"
+		if success {
+			status = "completed"
+		}
+		_ = m.stateStore.RecordFile(FileKey(host, share, path), host, share, path, status, "", size, modifiedAt, time.Time{}, time.Time{}, time.Now().UTC())
 	}
 
 	key := ShareKey(host, share)
@@ -262,4 +261,7 @@ func (m *Manager) MarkHostComplete(host string) {
 		return
 	}
 	m.store.MarkHostComplete(host)
+	if m.stateStore != nil {
+		_ = m.stateStore.RecordTarget(host, "completed", time.Now().UTC())
+	}
 }

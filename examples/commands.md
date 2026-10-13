@@ -79,15 +79,15 @@ is suppressed unless debug logging is enabled.
 ```bash
 ./bin/snablr scan --targets FILE01.example.com --no-ldap \
   --smb-auth password --username 'DOMAIN\\user-a' --password '<password-a>' \
-  --state-dir ./state --incremental
+  --resume
 
 ./bin/snablr scan --targets FILE01.example.com --no-ldap \
   --smb-auth ntlm-hash --username 'DOMAIN\\user-b' --nt-hash '<32-hex-nt-hash-b>' \
-  --state-dir ./state --incremental
+  --resume
 
 ./bin/snablr scan --targets FILE01.example.com --no-ldap \
   --smb-auth password --username 'DOMAIN\\user-b' --password '<password-b>' \
-  --state-dir ./state --force-rescan
+  --force-rescan
 ```
 
 The second scan re-enumerates access but can skip unchanged, successfully

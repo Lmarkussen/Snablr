@@ -33,10 +33,8 @@ type ScanOptions struct {
 	SeedManifest               string
 	ValidationMode             bool
 	MaxScanTime                string
-	CheckpointFile             string
 	Resume                     bool
-	StateDir                   string
-	Incremental                bool
+	SQLiteStateFile            string
 	ForceRescan                bool
 	ListShares                 bool
 	SkipReachabilityCheck      bool

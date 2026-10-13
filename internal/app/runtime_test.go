@@ -113,41 +113,6 @@ func TestApplyScanOverridesAppliesExplicitAdaptiveWorkerCount(t *testing.T) {
 	}
 }
 
-func TestApplyScanOverridesAppliesIncrementalStateOptions(t *testing.T) {
-	t.Parallel()
-	cfg := config.Default()
-	applyScanOverrides(&cfg, ScanOptions{
-		StateDir:    "./state",
-		Incremental: true,
-		ForceRescan: true,
-	})
-	if cfg.Scan.StateDir != "./state" || !cfg.Scan.Incremental || !cfg.Scan.ForceRescan {
-		t.Fatalf("incremental overrides not applied: %#v", cfg.Scan)
-	}
-}
-
-func TestValidateScanConfigRequiresIncrementalStateDirectory(t *testing.T) {
-	t.Parallel()
-	cfg := config.Default()
-	cfg.Scan.Username = "user"
-	cfg.Scan.Password = "pass"
-	cfg.Scan.Incremental = true
-	if err := validateScanConfig(cfg); err == nil || !strings.Contains(err.Error(), "state directory") {
-		t.Fatalf("expected state directory validation error, got %v", err)
-	}
-}
-
-func TestValidateScanConfigStateDirectoryEnablesIncrementalUse(t *testing.T) {
-	t.Parallel()
-	cfg := config.Default()
-	cfg.Scan.Username = "user"
-	cfg.Scan.Password = "pass"
-	cfg.Scan.StateDir = "./state"
-	if err := validateScanConfig(cfg); err != nil {
-		t.Fatalf("state_dir should enable incremental use: %v", err)
-	}
-}
-
 func TestValidateScanConfigRejectsInvalidWIMBounds(t *testing.T) {
 	t.Parallel()
 

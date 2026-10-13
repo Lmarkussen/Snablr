@@ -146,6 +146,7 @@ func NewTUIWriter(w io.Writer, closer io.Closer) (*TUIWriter, error) {
 }
 
 func (t *TUIWriter) WriteFinding(f scanner.Finding) error {
+	shadowFinding(t, f)
 	t.mu.Lock()
 	t.summary.RecordFinding(f)
 	t.findings = append(t.findings, f)

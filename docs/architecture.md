@@ -24,7 +24,7 @@ Responsibilities:
 
 - load config
 - apply CLI overrides
-- initialize logging, rules, output, checkpoints, metrics, and progress reporting
+- initialize logging, rules, output, scan database, metrics, and progress reporting
 - run the full scan flow
 
 ### `internal/config`
@@ -133,17 +133,17 @@ Responsibilities:
 
 ### `internal/state`
 
-Checkpoint/resume and credential-independent incremental scan state.
+Authoritative SQLite scan state and credential-independent object metadata.
 
 Responsibilities:
 
 - record completed hosts, shares, and files
-- write checkpoint JSON safely
+- write authoritative SQLite state safely
 - skip completed work on resumed runs
 - persist object status/metadata and opaque credential access observations
 - keep directory/share discovery independent from content-inspection reuse
 
-The incremental inventory is separate from exact checkpoint/resume state. Object records describe server/share/path metadata, scan semantics, and completion status; access observations associate an opaque credential context with an observed object. No credential secret is part of the persisted schema.
+The scan database stores exact resume state. Object records describe server/share/path metadata, scan semantics, and completion status; access observations associate an opaque credential context with an observed object. No credential secret is part of the persisted schema.
 
 ### `internal/metrics`
 
@@ -274,4 +274,4 @@ Snablr tries to preserve a few core principles:
   - missing metadata or unreachable discovery paths should not crash the scan
 
 - operator workflow
-  - progress, checkpoints, HTML reporting, and offline rule testing are first-class features
+  - progress, scan database, HTML reporting, and offline rule testing are first-class features

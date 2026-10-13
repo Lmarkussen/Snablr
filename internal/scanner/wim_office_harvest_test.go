@@ -238,10 +238,7 @@ func TestWIMOfficeIncrementalBehavior(t *testing.T) {
 	writeWIMOfficeSource(t, firstSource, wimOfficeImageOne())
 	captureWIM(t, wimlib, firstSource, wimPath, "Incremental")
 
-	inventory, err := state.OpenInventory(filepath.Join(workDir, "inventory.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	inventory := state.NewInMemoryInventory()
 	observation := func() state.FileObservation {
 		info, statErr := os.Stat(wimPath)
 		if statErr != nil {
@@ -263,9 +260,6 @@ func TestWIMOfficeIncrementalBehavior(t *testing.T) {
 		t.Fatalf("run 1 WIM Office credential missing: %#v", firstCandidates)
 	}
 	inventory.MarkCompleted(decision.Key)
-	if err := inventory.Save(); err != nil {
-		t.Fatal(err)
-	}
 
 	// RUN 2: unchanged WIM follows existing incremental behavior.
 	second, err := inventory.Prepare(observation(), "ctx-1", "wim-office-incremental", false)
@@ -311,17 +305,4 @@ func TestWIMOfficeIncrementalBehavior(t *testing.T) {
 		t.Fatalf("old WIM credential value was incorrectly reused: %#v", changedCandidates)
 	}
 	inventory.MarkCompleted(third.Key)
-	if err := inventory.Save(); err != nil {
-		t.Fatal(err)
-	}
-
-	raw, err := os.ReadFile(filepath.Join(workDir, "inventory.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, secret := range []string{"Wim-Word-Hemmelig-123!", "Wim-Word-CHANGED-999!", "Wim-Excel-Hemmelig-456!"} {
-		if strings.Contains(string(raw), secret) {
-			t.Fatalf("incremental state persisted a credential value: %s", secret)
-		}
-	}
 }

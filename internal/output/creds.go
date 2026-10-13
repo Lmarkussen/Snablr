@@ -73,6 +73,7 @@ func accountType(machine bool) string {
 }
 
 func (c *CredsWriter) RecordCredentialCandidate(candidate credentialanalysis.Candidate) error {
+	shadowCredential(c, candidate)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.candidates = append(c.candidates, candidate)
@@ -89,6 +90,7 @@ func (c *CredsWriter) RecordCredentialCandidate(candidate credentialanalysis.Can
 }
 
 func (c *CredsWriter) WriteFinding(f scanner.Finding) error {
+	shadowFinding(c, f)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.findings = append(c.findings, f)

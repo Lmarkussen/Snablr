@@ -8,10 +8,10 @@ import (
 
 func TestAnalyzeClassifiesAndDeduplicatesWithoutSerializingValues(t *testing.T) {
 	candidates := []Candidate{
-		{Verification: Confirmed, CredentialType: "nt_hash", Identity: " Administrator ", Domain: "LAB", Value: "0123456789abcdef0123456789abcdef", ValidationBasis: "cryptographic_ntds_recovery", Evidence: []Evidence{{RuleID: "ntds"}}},
-		{Verification: Confirmed, CredentialType: "nt_hash", Identity: "Administrator", Domain: "lab", Value: "0123456789abcdef0123456789abcdef", Evidence: []Evidence{{RuleID: "structured"}}},
-		{Verification: Review, CredentialType: "password", Value: "possible-secret", ReviewReasons: []string{"identity association ambiguous"}},
-		{Verification: Review, CredentialType: "token", Identity: "svc", Value: "possible-token", ReviewReasons: []string{"semantic validation unavailable"}},
+		{Verification: Confirmed, CredentialType: "nt_hash", Identity: " synthetic-admin ", Domain: "SYNTHETIC", Value: "00112233445566778899aabbccddeeff", ValidationBasis: "cryptographic_ntds_recovery", Evidence: []Evidence{{RuleID: "ntds"}}},
+		{Verification: Confirmed, CredentialType: "nt_hash", Identity: "synthetic-admin", Domain: "synthetic", Value: "00112233445566778899aabbccddeeff", Evidence: []Evidence{{RuleID: "structured"}}},
+		{Verification: Review, CredentialType: "password", Value: "SyntheticPossible482!", ReviewReasons: []string{"identity association ambiguous"}},
+		{Verification: Review, CredentialType: "token", Identity: "synthetic-service", Value: "SyntheticToken482!", ReviewReasons: []string{"semantic validation unavailable"}},
 		{CredentialType: "password", Value: ""},
 	}
 	report := Analyze(candidates)
@@ -25,7 +25,7 @@ func TestAnalyzeClassifiesAndDeduplicatesWithoutSerializingValues(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), "0123456789abcdef0123456789abcdef") || strings.Contains(string(encoded), "possible-secret") {
+	if strings.Contains(string(encoded), "00112233445566778899aabbccddeeff") || strings.Contains(string(encoded), "SyntheticPossible482!") {
 		t.Fatalf("sensitive candidate value serialized: %s", encoded)
 	}
 }

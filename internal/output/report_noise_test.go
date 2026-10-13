@@ -73,8 +73,8 @@ func renderSyntheticReport(t *testing.T, findings ...scanner.Finding) string {
 }
 
 // TestHTMLRedundantEvidenceIsRenderedOnce covers the duplicated-evidence case:
-// the raw fields must be gone, the context must be omitted when it only repeats
-// the evidence, and the unredacted secret must not survive anywhere in the HTML.
+// the canonical evidence remains visible, the context is omitted when it only
+// repeats the evidence, and no duplicate raw-evidence blocks are restored.
 func TestHTMLRedundantEvidenceIsRenderedOnce(t *testing.T) {
 	t.Parallel()
 
@@ -82,11 +82,11 @@ func TestHTMLRedundantEvidenceIsRenderedOnce(t *testing.T) {
 	finding.Snippet = "Password=" + syntheticEvidenceSecret
 	html := renderSyntheticReport(t, finding)
 
-	if !strings.Contains(html, syntheticRedactedEvidence) {
-		t.Fatalf("redacted evidence is missing from the report:\n%s", html)
+	if !strings.Contains(html, "Password="+syntheticEvidenceSecret) {
+		t.Fatalf("actual evidence is missing from the report:\n%s", html)
 	}
-	if strings.Contains(html, syntheticEvidenceSecret) {
-		t.Fatalf("unredacted secret leaked into the HTML report (rendered text, search index or hidden attribute)")
+	if strings.Contains(html, syntheticRedactedEvidence) {
+		t.Fatalf("masked evidence replaced the actual value in the HTML report")
 	}
 	for _, unwanted := range []string{"Raw Matched Text", "Raw Context", "Context / Snippet"} {
 		if strings.Contains(html, unwanted) {
@@ -99,8 +99,8 @@ func TestHTMLRedundantEvidenceIsRenderedOnce(t *testing.T) {
 }
 
 // TestHTMLUsefulContextIsPreservedOnce covers the case where surrounding text
-// genuinely adds information: evidence plus one redacted context block, and no
-// raw duplicates.
+// genuinely adds information: evidence plus one context block, and no raw
+// duplicates.
 func TestHTMLUsefulContextIsPreservedOnce(t *testing.T) {
 	t.Parallel()
 
@@ -114,8 +114,11 @@ func TestHTMLUsefulContextIsPreservedOnce(t *testing.T) {
 	if !strings.Contains(html, "synthetic-line-before") || !strings.Contains(html, "synthetic-line-after") {
 		t.Fatalf("useful context content is missing:\n%s", html)
 	}
-	if strings.Contains(html, syntheticEvidenceSecret) {
-		t.Fatalf("unredacted secret leaked through the context block")
+	if !strings.Contains(html, syntheticEvidenceSecret) {
+		t.Fatalf("actual secret disappeared from the context block")
+	}
+	if strings.Contains(html, syntheticRedactedEvidence) {
+		t.Fatalf("masked context replaced the actual value in the HTML report")
 	}
 	for _, unwanted := range []string{"Raw Matched Text", "Raw Context"} {
 		if strings.Contains(html, unwanted) {
@@ -169,9 +172,8 @@ func TestHTMLTechnicalDetailsAreCollapsedButPreserved(t *testing.T) {
 	}
 }
 
-// TestHTMLUnredactedSecretNeverRendersAcrossManyFindings measures the aggregate
-// effect: no raw blocks, no unredacted value in any attribute, and far fewer
-// evidence blocks than before.
+// TestHTMLRecoveredSecretRendersAcrossManyFindings measures the aggregate
+// effect: canonical values remain searchable and duplicate raw blocks stay out.
 func TestHTMLUnredactedSecretNeverRendersAcrossManyFindings(t *testing.T) {
 	t.Parallel()
 
@@ -185,8 +187,8 @@ func TestHTMLUnredactedSecretNeverRendersAcrossManyFindings(t *testing.T) {
 	}
 	html := renderSyntheticReport(t, findings...)
 
-	if strings.Contains(html, syntheticEvidenceSecret) {
-		t.Fatal("an unredacted secret reached the HTML report")
+	if !strings.Contains(html, syntheticEvidenceSecret) {
+		t.Fatal("a recovered secret was omitted from the HTML report")
 	}
 	if got := strings.Count(html, "Raw Matched Text"); got != 0 {
 		t.Fatalf("Raw Matched Text rendered %d times, want 0", got)

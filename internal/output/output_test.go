@@ -1433,8 +1433,8 @@ func TestCredsWriterFormatsBundleContextWithoutInventingUser(t *testing.T) {
 
 func TestCredentialAnalysisIsConsistentAcrossSafeReporters(t *testing.T) {
 	candidates := []credentialanalysis.Candidate{
-		{Verification: credentialanalysis.Confirmed, CredentialType: "nt_hash", Identity: "Administrator", Domain: "LAB", Value: "0123456789abcdef0123456789abcdef", ValidationBasis: "cryptographic_ntds_recovery", Path: "Windows/NTDS/ntds.dit"},
-		{Verification: credentialanalysis.Review, CredentialType: "password", Value: "review-only-secret", ReviewReasons: []string{"identity association ambiguous"}, Path: "notes.txt"},
+		{Verification: credentialanalysis.Confirmed, CredentialType: "nt_hash", Identity: "synthetic-admin", Domain: "SYNTHETIC", Value: "00112233445566778899aabbccddeeff", ValidationBasis: "cryptographic_ntds_recovery", Path: "Windows/NTDS/ntds.dit"},
+		{Verification: credentialanalysis.Review, CredentialType: "password", Value: "SyntheticReview482!", ReviewReasons: []string{"identity association ambiguous"}, Path: "notes.txt"},
 	}
 	var jsonBuf bytes.Buffer
 	jsonWriter := NewJSONWriter(&jsonBuf, nil, true)
@@ -1469,8 +1469,8 @@ func TestCredentialAnalysisIsConsistentAcrossSafeReporters(t *testing.T) {
 	if !strings.Contains(htmlBuf.String(), "Confirmed Credentials") || !strings.Contains(htmlBuf.String(), "Potential Credential Material") {
 		t.Fatalf("HTML classification sections missing")
 	}
-	if strings.Contains(htmlBuf.String(), "review-only-secret") || strings.Contains(htmlBuf.String(), "0123456789abcdef0123456789abcdef") {
-		t.Fatalf("safe HTML contains candidate value")
+	if !strings.Contains(htmlBuf.String(), "00112233445566778899aabbccddeeff") {
+		t.Fatalf("HTML omitted candidate value")
 	}
 }
 
@@ -1560,7 +1560,7 @@ func TestCredsWriterExportsRawPrivateKeyAndAdditionalProvenance(t *testing.T) {
 	}
 }
 
-func TestSafeReportersRedactPrivateKeyBodies(t *testing.T) {
+func TestSafeReportersKeepJSONPrivateKeyRedactionAndHTMLPrivateKeyVisibility(t *testing.T) {
 	key := "-----BEGIN RSA PRIVATE KEY-----\nUNIQUE-PRIVATE-KEY-BODY\n-----END RSA PRIVATE KEY-----\n"
 	finding := scanner.Finding{FilePath: "id_rsa.pem", MatchedText: key, Context: key, Snippet: key, Match: key}
 
@@ -1587,8 +1587,8 @@ func TestSafeReportersRedactPrivateKeyBodies(t *testing.T) {
 	if err := htmlWriter.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(htmlOut.String(), "UNIQUE-PRIVATE-KEY-BODY") {
-		t.Fatal("HTML safe report exposed private-key material")
+	if !strings.Contains(htmlOut.String(), "UNIQUE-PRIVATE-KEY-BODY") {
+		t.Fatal("HTML report omitted private-key material")
 	}
 }
 

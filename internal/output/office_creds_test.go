@@ -172,8 +172,8 @@ func TestOfficeSafeReportsKeepPrivacyAndEncoding(t *testing.T) {
 		t.Fatal(err)
 	}
 	htmlOut := htmlBuf.String()
-	if strings.Contains(htmlOut, "Påloggings-Hemmelighet-ÆØÅ-123!") {
-		t.Fatal("safe HTML leaked an Office credential value")
+	if !strings.Contains(htmlOut, "Påloggings-Hemmelighet-ÆØÅ-123!") {
+		t.Fatal("HTML omitted an Office credential value")
 	}
 	if !strings.Contains(htmlOut, "backup-tjeneste") {
 		t.Fatal("safe HTML lost Norwegian identity metadata")

@@ -53,6 +53,10 @@ Snablr is organized around a small set of focused modules:
   Applies filename, extension, and content rules to file metadata and content, including limited `.zip` member inspection.
 - `output`
   Renders findings to console, JSON, HTML, CSV, and Markdown.
+
+HTML reports may contain recovered passwords, tokens, hashes, keys, and other
+credential material for operator review. Protect report files accordingly;
+newly created output files use restrictive permissions.
 - `state`
   Stores exact-resume checkpoints and credential-independent incremental object/access inventory.
 - `metrics`

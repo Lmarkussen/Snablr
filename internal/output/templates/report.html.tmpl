@@ -1082,7 +1082,7 @@
     <section id="credential-analysis">
       <div class="section-head">
         <h2>Credential &amp; Secret Material</h2>
-        <span class="section-note">Recovered and explicit secret material only. Identity, path and artifact correlations are supporting evidence and are listed below the findings hierarchy; placeholders and templates are suppressed entirely. Values are intentionally omitted from this safe report.</span>
+        <span class="section-note">Recovered and explicit secret material only. Identity, path and artifact correlations are supporting evidence and are listed below the findings hierarchy; placeholders and templates are suppressed entirely. This sensitive report includes recovered values; protect the HTML file.</span>
       </div>
       <div class="summary-grid">
         <article class="card">
@@ -1117,12 +1117,13 @@
       <div class="table-card">
         <h3>Actionable Credentials</h3>
         <table>
-          <thead><tr><th>Identity</th><th>Secret Type</th><th>Host</th><th>Share</th><th>Source</th><th>Observations</th><th>Validation</th><th>Finding</th></tr></thead>
+          <thead><tr><th>Identity</th><th>Secret Type</th><th>Value / Secret</th><th>Host</th><th>Share</th><th>Source</th><th>Observations</th><th>Validation</th><th>Finding</th></tr></thead>
           <tbody>
           {{- range .CredentialView.Confirmed }}
             <tr class="credential-row confirmed-row">
               <td>{{ valueOrDash .Identity }}</td>
               <td>{{ .Type }}</td>
+              <td><pre class="credential-value">{{ .Value }}</pre></td>
               <td>{{ valueOrDash .Host }}</td>
               <td>{{ valueOrDash .Share }}</td>
               <td>{{ valueOrDash .Provenance }}

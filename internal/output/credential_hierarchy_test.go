@@ -206,6 +206,11 @@ func TestCredentialHierarchySplitsActionableFromSupporting(t *testing.T) {
 			t.Fatalf("non-secret row reached the actionable table: %v", row)
 		}
 	}
+	for _, candidate := range actionableCreditseeds() {
+		if !strings.Contains(top, candidate.Value) {
+			t.Fatalf("confirmed value %q is missing from the HTML credential table", candidate.Value)
+		}
+	}
 	for _, unwanted := range []string{
 		"application/deployment credential indicator",
 		"configuration credential correlation",
@@ -330,8 +335,8 @@ func TestCredentialHierarchyKeepsDuplicateRealCredentials(t *testing.T) {
 	if len(actionable) != 1 {
 		t.Fatalf("duplicate real credential rendered %d rows, want 1", len(actionable))
 	}
-	if actionable[0][5] != "3" {
-		t.Fatalf("observation count = %q, want 3", actionable[0][5])
+	if actionable[0][6] != "3" {
+		t.Fatalf("observation count = %q, want 3", actionable[0][6])
 	}
 	if !strings.Contains(sectionByID(html, "credential-analysis"), "Also found in 2 additional locations") {
 		t.Fatal("duplicate real credential lost its additional locations")

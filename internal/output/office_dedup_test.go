@@ -184,8 +184,8 @@ func TestOfficeDedupCountsAgreeAcrossReporters(t *testing.T) {
 	if htmlConfirmed != len(report.Confirmed) || htmlReview != len(report.Review) {
 		t.Fatalf("HTML counts %d/%d do not match model %d/%d", htmlConfirmed, htmlReview, len(report.Confirmed), len(report.Review))
 	}
-	if strings.Contains(string(htmlRaw), "Norsk-Hemmelig-123!") {
-		t.Fatal("safe HTML leaked a candidate value")
+	if !strings.Contains(string(htmlRaw), "Norsk-Hemmelig-123!") {
+		t.Fatal("HTML omitted a confirmed candidate value")
 	}
 }
 

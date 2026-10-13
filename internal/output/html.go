@@ -464,38 +464,30 @@ func signalMatchLabel(signal string) string {
 	}
 }
 
-// displayMatch renders the safe projection of the matched evidence. Raw
-// MatchedText is deliberately never used: when the scanner produced a redacted
-// variant, the evidence block must show the mask rather than the value.
+// displayMatch renders the canonical matched evidence. HTML reports are
+// sensitive operator artifacts, so recovered values remain visible.
 func displayMatch(f scanner.Finding) string {
-	if strings.TrimSpace(f.MatchedTextRedacted) != "" {
-		return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.MatchedTextRedacted)), 240)
+	if strings.TrimSpace(f.MatchedText) != "" {
+		return reportEvidenceText(f.MatchedText, 240)
 	}
-	return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.Match)), 160)
+	return reportEvidenceText(f.Match, 160)
 }
 
-// displayContext renders the safe projection of the surrounding context. It
-// falls back to the unredacted context fields only when the finding carries no
-// redaction at all, so a masked value is never accompanied by its plaintext.
+// displayContext renders canonical surrounding context while preserving the
+// duplicate suppression performed by contextAddsInformation.
 func displayContext(f scanner.Finding) string {
-	if strings.TrimSpace(f.ContextRedacted) != "" {
-		return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.ContextRedacted)), 320)
-	}
-	if findingRedactedEvidence(f) {
-		return ""
-	}
 	if strings.TrimSpace(f.Context) != "" {
-		return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.Context)), 320)
+		return reportEvidenceText(f.Context, 320)
 	}
-	return boundReportText(redactPrivateKeyMaterial(strings.TrimSpace(f.Snippet)), 240)
+	return reportEvidenceText(f.Snippet, 240)
 }
 
-// findingRedactedEvidence reports whether the finding carries a redacted
-// projection that differs from its raw text, which means the scanner withheld a
-// secret from this finding.
-func findingRedactedEvidence(f scanner.Finding) bool {
-	return strings.TrimSpace(f.MatchedTextRedacted) != strings.TrimSpace(f.MatchedText) ||
-		strings.TrimSpace(f.ContextRedacted) != strings.TrimSpace(f.Context)
+func reportEvidenceText(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, "BEGIN ") && strings.Contains(value, " PRIVATE KEY-----") {
+		return value
+	}
+	return boundReportText(value, limit)
 }
 
 // contextAddsInformation reports whether the context block adds anything beyond
@@ -551,12 +543,10 @@ func findingSearchText(f scanner.Finding, changedFields []string, diffStatus str
 		f.MatchReason,
 		f.RuleExplanation,
 		f.RuleRemediation,
-		// Search text is emitted into a hidden attribute, so it must use the
-		// same redacted projection as the visible evidence. Raw matched text and
-		// raw snippets are deliberately excluded: they can carry the unredacted
-		// value that the evidence block replaced with a mask.
-		boundReportText(redactPrivateKeyMaterial(f.ContextRedacted), 180),
-		boundReportText(redactPrivateKeyMaterial(firstNonEmpty(f.MatchedTextRedacted, f.Match)), 180),
+		// Search text mirrors the visible evidence, including recovered values,
+		// so the operator can find the credential in the report.
+		boundReportText(f.Context, 180),
+		boundReportText(firstNonEmpty(f.MatchedText, f.Match), 180),
 		f.PotentialAccount,
 		diffStatus,
 		joinListOrEmpty(changedFields),

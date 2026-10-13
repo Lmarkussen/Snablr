@@ -20,8 +20,8 @@ const maxReviewRows = 200
 const maxCredentialExtraLocations = 40
 
 // credentialReportView is the operator-facing projection of the credential
-// analysis. It carries only non-sensitive metadata (no secret values) and adds
-// the provenance and finding linkage the raw analysis model does not express.
+// analysis. It carries recovered values because the HTML report is a sensitive
+// security-assessment artifact.
 type credentialReportView struct {
 	Confirmed              []credentialRow
 	Supporting             []credentialRow
@@ -40,6 +40,7 @@ type credentialReportView struct {
 type credentialRow struct {
 	Identity           string
 	Type               string
+	Value              string
 	Host               string
 	Share              string
 	Provenance         string
@@ -64,7 +65,7 @@ func buildCredentialReportView(analysis credentialanalysis.Report, groups ...[]h
 		SuppressedTotal:        analysis.SuppressedPlaceholders + analysis.SuppressedWeakReview,
 	}
 	for _, candidate := range analysis.Confirmed {
-		row := credentialRowFromCandidate(candidate, index)
+		row := credentialRowFromCandidate(candidate, candidateValue(analysis.Candidates, candidate), index)
 		// Only records that carry real secret material belong in the actionable
 		// credential table. Credential-related records without a secret type stay
 		// in the supporting hierarchy below the findings.
@@ -84,16 +85,17 @@ func buildCredentialReportView(analysis credentialanalysis.Report, groups ...[]h
 			view.ReviewTruncated = true
 			break
 		}
-		view.Review = append(view.Review, credentialRowFromCandidate(candidate, index))
+		view.Review = append(view.Review, credentialRowFromCandidate(candidate, candidateValue(analysis.Candidates, candidate), index))
 	}
 	view.ReviewRendered = len(view.Review)
 	return view
 }
 
-func credentialRowFromCandidate(candidate credentialanalysis.SafeCandidate, index map[string]string) credentialRow {
+func credentialRowFromCandidate(candidate credentialanalysis.SafeCandidate, value string, index map[string]string) credentialRow {
 	row := credentialRow{
 		Identity:        candidate.Identity,
 		Type:            candidate.CredentialType,
+		Value:           credentialDisplayValue(value),
 		Host:            candidate.Host,
 		Share:           candidate.Share,
 		Occurrences:     candidate.Occurrences,
@@ -126,6 +128,31 @@ func credentialRowFromCandidate(candidate credentialanalysis.SafeCandidate, inde
 		row.Status = credentialStatusText(candidate)
 	}
 	return row
+}
+
+func candidateValue(candidates []credentialanalysis.Candidate, safe credentialanalysis.SafeCandidate) string {
+	for _, candidate := range candidates {
+		if !sameCredentialField(candidate.CredentialType, safe.CredentialType) ||
+			!sameCredentialField(candidate.Identity, safe.Identity) ||
+			!sameCredentialField(candidate.Domain, safe.Domain) ||
+			!sameCredentialField(candidate.Host, safe.Host) ||
+			!sameCredentialField(candidate.Share, safe.Share) ||
+			!sameCredentialField(candidate.Path, safe.Path) ||
+			!sameCredentialField(candidate.Container, safe.Container) ||
+			candidate.Value == "" {
+			continue
+		}
+		return candidate.Value
+	}
+	return ""
+}
+
+func sameCredentialField(left, right string) bool {
+	return strings.EqualFold(strings.TrimSpace(left), strings.TrimSpace(right))
+}
+
+func credentialDisplayValue(value string) string {
+	return strings.TrimSpace(strings.ReplaceAll(value, "\x00", "\n"))
 }
 
 func credentialStatusText(candidate credentialanalysis.SafeCandidate) string {

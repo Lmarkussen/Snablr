@@ -134,8 +134,8 @@ func TestSafeReportersRenderNorwegianUTF8(t *testing.T) {
 	}
 	htmlOut := htmlBuf.String()
 	for _, candidate := range candidates {
-		if strings.Contains(htmlOut, candidate.Value) {
-			t.Fatalf("safe HTML leaked the credential value")
+		if !strings.Contains(htmlOut, candidate.Value) {
+			t.Fatalf("HTML omitted the recovered credential value")
 		}
 	}
 	if !strings.Contains(htmlOut, "svc_backup") || !strings.Contains(htmlOut, "påloggingsbruker-æøå") {

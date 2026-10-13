@@ -38,7 +38,6 @@ scan:
   only_ad_shares: false
 
   max_scan_time: "30m"
-  checkpoint_file: ""
   resume: false
   state_dir: ""
   incremental: false

@@ -7,16 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"os"
 	"path"
-	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 )
-
-const inventoryVersion = 1
 
 // ObjectStatus describes the last known content-inspection state of an object.
 type ObjectStatus string
@@ -94,13 +89,6 @@ type AccessObservation struct {
 	AccessResult        string    `json:"access_result"`
 }
 
-type inventoryFile struct {
-	Version            int                 `json:"version"`
-	UpdatedAt          time.Time           `json:"updated_at"`
-	Objects            []ObjectRecord      `json:"objects,omitempty"`
-	AccessObservations []AccessObservation `json:"access_observations,omitempty"`
-}
-
 // InventoryStats are run-local counters and are not persisted.
 type InventoryStats struct {
 	Discovered         int64
@@ -121,163 +109,14 @@ type SkipDecision struct {
 	NewAccessObservation bool
 }
 
-// Inventory is a concurrent, atomically persisted content-scan inventory.
+// Inventory contains generic incremental identity, status, retry, and access
+// semantics. Authoritative persistence is handled by the SQLite store.
 type Inventory struct {
-	path         string
-	dirty        bool
 	mu           sync.RWMutex
 	objects      map[string]ObjectRecord
 	access       map[string]AccessObservation
 	stats        InventoryStats
 	resumeReader SQLiteResumeReader
-}
-
-// OpenInventory opens an existing inventory or creates an empty in-memory
-// inventory when the file does not yet exist. Corrupt or unknown-version data
-// is returned as an error so callers can fail open toward scanning.
-func OpenInventory(filePath string) (*Inventory, error) {
-	filePath = strings.TrimSpace(filePath)
-	if filePath == "" {
-		return nil, fmt.Errorf("incremental inventory path cannot be empty")
-	}
-	inventory := &Inventory{
-		path:    filePath,
-		objects: make(map[string]ObjectRecord),
-		access:  make(map[string]AccessObservation),
-	}
-
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return inventory, nil
-		}
-		return nil, fmt.Errorf("read incremental inventory %s: %w", filePath, err)
-	}
-	if err := os.Chmod(filePath, 0o600); err != nil {
-		return nil, fmt.Errorf("restrict incremental inventory %s: %w", filePath, err)
-	}
-
-	var stored inventoryFile
-	if err := json.Unmarshal(data, &stored); err != nil {
-		return nil, fmt.Errorf("parse incremental inventory %s: %w", filePath, err)
-	}
-	if stored.Version != inventoryVersion {
-		return nil, fmt.Errorf("incremental inventory %s uses unsupported version %d", filePath, stored.Version)
-	}
-	for _, object := range stored.Objects {
-		if err := validateObjectRecord(object); err != nil {
-			return nil, fmt.Errorf("validate incremental inventory %s: %w", filePath, err)
-		}
-		if _, exists := inventory.objects[object.Key]; exists {
-			return nil, fmt.Errorf("validate incremental inventory %s: duplicate object %s", filePath, object.Key)
-		}
-		inventory.objects[object.Key] = object
-	}
-	for _, observation := range stored.AccessObservations {
-		if strings.TrimSpace(observation.CredentialContextID) == "" || strings.TrimSpace(observation.ObjectKey) == "" {
-			return nil, fmt.Errorf("validate incremental inventory %s: access observation has empty identity", filePath)
-		}
-		key := accessKey(observation.CredentialContextID, observation.ObjectKey)
-		if _, exists := inventory.access[key]; exists {
-			return nil, fmt.Errorf("validate incremental inventory %s: duplicate access observation", filePath)
-		}
-		inventory.access[key] = observation
-	}
-	return inventory, nil
-}
-
-func validateObjectRecord(object ObjectRecord) error {
-	if object.Key == "" || object.Key != object.Identity.Key() {
-		return fmt.Errorf("object key does not match identity")
-	}
-	if !validObjectStatus(object.Status) {
-		return fmt.Errorf("object %s has unsupported status %q", object.Key, object.Status)
-	}
-	if object.Semantics == "" {
-		return fmt.Errorf("object %s has empty scan semantics", object.Key)
-	}
-	return nil
-}
-
-func validObjectStatus(status ObjectStatus) bool {
-	switch status {
-	case ObjectNeverSeen, ObjectQueued, ObjectScanning, ObjectCompleted,
-		ObjectFailed, ObjectPartial, ObjectSkippedUnchanged:
-		return true
-	default:
-		return false
-	}
-}
-
-// Save writes a complete snapshot through a same-directory rename. A failed
-// or interrupted write leaves the previous inventory intact.
-func (i *Inventory) Save() error {
-	if i == nil {
-		return nil
-	}
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	if !i.dirty && inventoryFileExists(i.path) {
-		return nil
-	}
-
-	objects := make([]ObjectRecord, 0, len(i.objects))
-	for _, object := range i.objects {
-		objects = append(objects, object)
-	}
-	sort.Slice(objects, func(left, right int) bool { return objects[left].Key < objects[right].Key })
-	access := make([]AccessObservation, 0, len(i.access))
-	for _, observation := range i.access {
-		access = append(access, observation)
-	}
-	sort.Slice(access, func(left, right int) bool {
-		if access[left].ObjectKey == access[right].ObjectKey {
-			return access[left].CredentialContextID < access[right].CredentialContextID
-		}
-		return access[left].ObjectKey < access[right].ObjectKey
-	})
-
-	data, err := json.MarshalIndent(inventoryFile{
-		Version:            inventoryVersion,
-		UpdatedAt:          time.Now().UTC(),
-		Objects:            objects,
-		AccessObservations: access,
-	}, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal incremental inventory: %w", err)
-	}
-	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(i.path), 0o700); err != nil {
-		return fmt.Errorf("create incremental inventory directory: %w", err)
-	}
-	tmpPath := i.path + ".tmp"
-	keepTemp := false
-	defer func() {
-		if !keepTemp {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-	tmp, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return fmt.Errorf("open incremental inventory temp file: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write incremental inventory temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("sync incremental inventory temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close incremental inventory temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, i.path); err != nil {
-		return fmt.Errorf("replace incremental inventory: %w", err)
-	}
-	keepTemp = true
-	i.dirty = false
-	return nil
 }
 
 // Prepare records an accessible object and returns the content-inspection
@@ -323,7 +162,6 @@ func (i *Inventory) Prepare(observation FileObservation, credentialContextID, se
 			LastSeen:            now,
 			AccessResult:        "accessible",
 		}
-		i.dirty = true
 	}
 
 	prior, exists := i.objects[key]
@@ -337,7 +175,6 @@ func (i *Inventory) Prepare(observation FileObservation, credentialContextID, se
 		prior.UpdatedAt = now
 		i.objects[key] = prior
 		i.stats.SkippedUnchanged++
-		i.dirty = true
 		decision.Skip = true
 		decision.Reason = "unchanged completed object"
 		return decision, nil
@@ -366,7 +203,6 @@ func (i *Inventory) Prepare(observation FileObservation, credentialContextID, se
 	prior.LastSeen = now
 	prior.UpdatedAt = now
 	i.objects[key] = prior
-	i.dirty = true
 	return decision, nil
 }
 
@@ -443,7 +279,6 @@ func (i *Inventory) markStatus(key string, status ObjectStatus, countInspection 
 	if countInspection {
 		i.stats.Inspected++
 	}
-	i.dirty = true
 }
 
 func (i *Inventory) Stats() InventoryStats {
@@ -453,13 +288,6 @@ func (i *Inventory) Stats() InventoryStats {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 	return i.stats
-}
-
-func (i *Inventory) Path() string {
-	if i == nil {
-		return ""
-	}
-	return i.path
 }
 
 func accessKey(contextID, objectKey string) string {
@@ -524,153 +352,44 @@ func NormalizePath(value string) string {
 	return strings.Trim(clean, "/")
 }
 
-func inventoryFileExists(filePath string) bool {
-	_, err := os.Stat(filePath)
-	return err == nil
-}
-
-// InventoryManager periodically persists an Inventory while a scan is
-// running. A queued or scanning object remains retryable if the process is
-// interrupted before its completion callback updates the inventory.
+// InventoryManager applies semantic transitions through the authoritative store.
 type InventoryManager struct {
 	inventory *Inventory
-	interval  time.Duration
-
-	mu            sync.Mutex
-	started       bool
-	authoritative bool
-	stopOnce      sync.Once
-	stopCh        chan struct{}
-	doneCh        chan struct{}
-	shadow        ShadowStore
-	scanID        string
+	store     SQLiteStateStore
 }
 
-func (m *InventoryManager) AttachShadow(shadow ShadowStore, scanID string) {
-	if m == nil {
-		return
+func (m *InventoryManager) AttachStore(store SQLiteStateStore, scanID string) {
+	if m != nil {
+		m.store = store
 	}
-	m.mu.Lock()
-	m.shadow, m.scanID = shadow, scanID
-	m.mu.Unlock()
-}
-
-func NewInventoryManager(filePath string, interval time.Duration) (*InventoryManager, error) {
-	inventory, err := OpenInventory(filePath)
-	if err != nil {
-		return nil, err
-	}
-	if interval <= 0 {
-		interval = defaultSaveInterval
-	}
-	return &InventoryManager{
-		inventory: inventory,
-		interval:  interval,
-		stopCh:    make(chan struct{}),
-		doneCh:    make(chan struct{}),
-	}, nil
-}
-
-// NewInventoryManagerFromSQLite constructs the compatibility inventory
-// decision engine from a validated SQLite logical state. Its empty path keeps
-// this manager in memory; the SQLite store owns persistence.
-func NewInventoryManagerFromSQLite(resume SQLiteResumeState) *InventoryManager {
-	inventory := &Inventory{objects: make(map[string]ObjectRecord), access: make(map[string]AccessObservation)}
-	if resume.SemanticsMatch {
-		for _, file := range resume.Files {
-			inventory.objects[file.Key] = ObjectRecord{Key: file.Key, Identity: ObjectIdentity{Server: file.Host, Share: file.Share, Path: file.Path}, Size: file.Size, ModifiedAt: file.ModifiedAt, Status: ObjectStatus(file.Status), Semantics: file.Semantics, FirstSeen: file.FirstSeen, LastSeen: file.LastSeen, UpdatedAt: file.UpdatedAt}
-		}
-		for _, access := range resume.Access {
-			observation := AccessObservation{CredentialContextID: access.ContextID, ObjectKey: access.FileKey, FirstSeen: access.FirstSeen, LastSeen: access.LastSeen, AccessResult: access.Result}
-			inventory.access[accessKey(access.ContextID, access.FileKey)] = observation
-		}
-	}
-	return &InventoryManager{inventory: inventory, interval: defaultSaveInterval, stopCh: make(chan struct{}), doneCh: make(chan struct{})}
 }
 
 func NewInventoryManagerFromSQLiteReader(reader SQLiteResumeReader, interval time.Duration) *InventoryManager {
-	if interval <= 0 {
-		interval = defaultSaveInterval
-	}
-	return &InventoryManager{inventory: &Inventory{objects: make(map[string]ObjectRecord), access: make(map[string]AccessObservation), resumeReader: reader}, interval: interval, authoritative: true, stopCh: make(chan struct{}), doneCh: make(chan struct{})}
+	return &InventoryManager{inventory: &Inventory{objects: make(map[string]ObjectRecord), access: make(map[string]AccessObservation), resumeReader: reader}}
 }
-
-func (m *InventoryManager) Enabled() bool {
-	return m != nil && m.inventory != nil
+func NewInMemoryInventory() *Inventory {
+	return &Inventory{objects: make(map[string]ObjectRecord), access: make(map[string]AccessObservation)}
 }
-
-func (m *InventoryManager) Start(ctx context.Context) {
-	if !m.Enabled() {
-		return
-	}
-	m.mu.Lock()
-	if m.started {
-		m.mu.Unlock()
-		return
-	}
-	m.started = true
-	m.mu.Unlock()
-
-	ticker := time.NewTicker(m.interval)
-	go func() {
-		defer func() {
-			ticker.Stop()
-			close(m.doneCh)
-		}()
-		for {
-			select {
-			case <-ctx.Done():
-				_ = m.Save()
-				return
-			case <-m.stopCh:
-				_ = m.Save()
-				return
-			case <-ticker.C:
-				_ = m.Save()
-			}
-		}
-	}()
+func NewInMemoryInventoryManager() *InventoryManager {
+	return &InventoryManager{inventory: NewInMemoryInventory()}
 }
-
-func (m *InventoryManager) Save() error {
-	if !m.Enabled() {
-		return nil
-	}
-	if m.authoritative {
-		return nil
-	}
-	return m.inventory.Save()
-}
-
-func (m *InventoryManager) Close() error {
-	if m == nil {
-		return nil
-	}
-	m.stopOnce.Do(func() {
-		close(m.stopCh)
-		m.mu.Lock()
-		started := m.started
-		m.mu.Unlock()
-		if started {
-			<-m.doneCh
-		}
-	})
-	return m.Save()
-}
+func (m *InventoryManager) Enabled() bool         { return m != nil && m.inventory != nil }
+func (m *InventoryManager) Start(context.Context) {}
+func (m *InventoryManager) Close() error          { return nil }
 
 func (m *InventoryManager) Prepare(observation FileObservation, credentialContextID, semantics string, forceRescan bool) (SkipDecision, error) {
 	if !m.Enabled() {
 		return SkipDecision{}, nil
 	}
 	decision, err := m.inventory.Prepare(observation, credentialContextID, semantics, forceRescan)
-	if err == nil && m.shadow != nil {
+	if err == nil && m.store != nil {
 		m.inventory.mu.RLock()
 		object, ok := m.inventory.objects[decision.Key]
 		m.inventory.mu.RUnlock()
 		if ok {
-			_ = m.shadow.RecordFile(object.Key, object.Identity.Server, object.Identity.Share, object.Identity.Path, string(object.Status), object.Semantics, object.Size, object.ModifiedAt, object.FirstSeen, object.LastSeen, object.UpdatedAt)
+			_ = m.store.RecordFile(object.Key, object.Identity.Server, object.Identity.Share, object.Identity.Path, string(object.Status), object.Semantics, object.Size, object.ModifiedAt, object.FirstSeen, object.LastSeen, object.UpdatedAt)
 		}
-		_ = m.shadow.RecordAccess(credentialContextID, decision.Key, "accessible", time.Now().UTC(), time.Now().UTC())
+		_ = m.store.RecordAccess(credentialContextID, decision.Key, "accessible", time.Now().UTC(), time.Now().UTC())
 	}
 	return decision, err
 }
@@ -678,40 +397,40 @@ func (m *InventoryManager) Prepare(observation FileObservation, credentialContex
 func (m *InventoryManager) MarkScanning(key string) {
 	if m.Enabled() {
 		m.inventory.MarkScanning(key)
-		m.shadowFile(key)
+		m.storeFile(key)
 	}
 }
 
 func (m *InventoryManager) MarkCompleted(key string) {
 	if m.Enabled() {
 		m.inventory.MarkCompleted(key)
-		m.shadowFile(key)
+		m.storeFile(key)
 	}
 }
 
 func (m *InventoryManager) MarkFailed(key string) {
 	if m.Enabled() {
 		m.inventory.MarkFailed(key)
-		m.shadowFile(key)
+		m.storeFile(key)
 	}
 }
 
 func (m *InventoryManager) MarkPartial(key string) {
 	if m.Enabled() {
 		m.inventory.MarkPartial(key)
-		m.shadowFile(key)
+		m.storeFile(key)
 	}
 }
 
-func (m *InventoryManager) shadowFile(key string) {
-	if m.shadow == nil {
+func (m *InventoryManager) storeFile(key string) {
+	if m.store == nil {
 		return
 	}
 	m.inventory.mu.RLock()
 	object, ok := m.inventory.objects[key]
 	m.inventory.mu.RUnlock()
 	if ok {
-		_ = m.shadow.RecordFile(object.Key, object.Identity.Server, object.Identity.Share, object.Identity.Path, string(object.Status), object.Semantics, object.Size, object.ModifiedAt, object.FirstSeen, object.LastSeen, object.UpdatedAt)
+		_ = m.store.RecordFile(object.Key, object.Identity.Server, object.Identity.Share, object.Identity.Path, string(object.Status), object.Semantics, object.Size, object.ModifiedAt, object.FirstSeen, object.LastSeen, object.UpdatedAt)
 	}
 }
 
@@ -720,11 +439,4 @@ func (m *InventoryManager) Stats() InventoryStats {
 		return InventoryStats{}
 	}
 	return m.inventory.Stats()
-}
-
-func (m *InventoryManager) Path() string {
-	if !m.Enabled() {
-		return ""
-	}
-	return m.inventory.Path()
 }

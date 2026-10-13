@@ -231,17 +231,10 @@ Larger values increase coverage but also increase I/O and memory pressure.
   Enable extra diagnostic tracking for skipped files, suppressed findings, downgraded findings, and validation metrics
 - `max_scan_time`
   Maximum total scan time, for example `30m` or `2h`
-- `checkpoint_file`
-  Path to the checkpoint JSON file
 - `resume`
-  Resume from a previous checkpoint
-
-- `state_dir`
-  Directory containing the persistent credential-independent incremental inventory. Setting this enables incremental content-scan reuse; share and directory enumeration still runs for every credential context.
-- `incremental`
-  Explicitly enable incremental inventory use. Requires `state_dir`.
+  Resume from the authoritative SQLite scan database
 - `force_rescan`
-  Ignore reusable completed objects for this run while updating the inventory. Requires incremental scanning.
+  Reinspect completed objects for this run
 
 Resume behavior:
 
@@ -249,21 +242,9 @@ Resume behavior:
 - resumed scans reprocess files whose size or modified timestamp changed
 - this avoids the earlier path-only skip behavior for changed files without adding heavy content hashing by default
 
-Incremental behavior:
-
-- use `--state-dir ./state` (or `scan.state_dir`) to persist `inventory.json`
-- every credential context enumerates shares and directories again
-- only unchanged, completed files with matching scan semantics are skipped
-- changed, failed, partial, interrupted, or semantically incompatible files are inspected again
-- credential context IDs are one-way hashes of auth mode and principal metadata; secrets are never persisted
-- a corrupt or unsupported inventory is ignored for that run so scanning fails open rather than silently suppressing content
-- incremental runs do not replay findings from earlier runs; unchanged files are simply absent from the new run's findings
-
 ### Assessment data and cleanup
 
-`state_dir` is an explicit persistence location, not a hidden cache. When incremental scanning is enabled, Snablr uses `<state_dir>/inventory.json` and prints its absolute path at startup. The inventory contains server/share/path metadata, file metadata, scan state, semantics, timestamps, and access observations. Credential-context IDs are opaque local correlation identifiers, not anonymization; they are derived from auth mode, username, and domain and do not contain passwords, NT hashes, Kerberos tickets, ccaches, session keys, or recovered secret values. Treat this metadata as sensitive assessment information and remove it when the pivot/rescan workflow is complete, for example `rm -rf -- /absolute/path/to/state`.
-
-Checkpoint/resume is separate. `checkpoint_file` is the exact operator-selected JSON path and is shown at startup when enabled. It stores completed host/share/file identifiers, file size/modification metadata, and checkpoint timestamps so an interrupted scan can resume. It does not store findings, evidence snippets, file contents, or credential material. Remove it with `rm -f -- /absolute/path/to/checkpoint.json` after resume is no longer needed.
+Snablr automatically stores authoritative scan state in `snablr.db` in the selected output workspace. Use `scan.sqlite_state_file` only when an explicit database location is required. The database contains scan progress, findings, credentials, provenance, and resume metadata; protect it as a sensitive assessment artifact.
 
 The default `scanned_targets_out` is `scanned_targets.txt` in the current directory. It is an assessment-sensitive target inventory and is written with restrictive file permissions. JSON/HTML reports, optional CSV/Markdown exports, and any `creds_out` file are written only to their configured paths; reports may contain findings and evidence, while `creds_out` is highly sensitive and may contain usable credential material. Snablr does not automatically delete these outputs. Temporary WIM/archive/SQLite workspaces and extracted artifacts are cleaned automatically; operator-provided Kerberos ccaches are external inputs and are not cleaned by Snablr.
 
@@ -661,7 +642,7 @@ File:
 
 Use it when:
 - you want LDAP discovery by default
-- you want checkpoints for longer runs
+- you want resumable scan databases for longer runs
 - you want console, JSON, HTML, CSV, and Markdown output together
 
 ### Targeted Triage

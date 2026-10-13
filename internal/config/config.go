@@ -62,9 +62,7 @@ type ScanConfig struct {
 	ValidationMode             bool     `yaml:"validation_mode"`
 	MaxScanTime                string   `yaml:"max_scan_time"`
 	Resume                     bool     `yaml:"resume"`
-	StateDir                   string   `yaml:"state_dir"`
 	SQLiteStateFile            string   `yaml:"sqlite_state_file"`
-	Incremental                bool     `yaml:"incremental"`
 	ForceRescan                bool     `yaml:"force_rescan"`
 	SkipReachabilityCheck      bool     `yaml:"skip_reachability_check"`
 	ReachabilityTimeoutSeconds int      `yaml:"reachability_timeout_seconds"`

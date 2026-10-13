@@ -56,7 +56,7 @@ type ResumeState struct {
 	Correlations                                            map[string]json.RawMessage
 }
 
-// OpenForResume validates and reopens an existing shadow scan. The returned
+// OpenForResume validates and reopens an existing SQLite scan. The returned
 // store writes to the same scan row; it never creates a new scan row.
 func OpenForResume(path string, options ResumeOptions) (*SQLiteStore, ResumeState, error) {
 	path = strings.TrimSpace(path)
@@ -85,15 +85,15 @@ func OpenForResume(path string, options ResumeOptions) (*SQLiteStore, ResumeStat
 	}
 	state.SemanticsMatch = strings.TrimSpace(options.ExpectedSemantics) == "" || state.Semantics == strings.TrimSpace(options.ExpectedSemantics)
 	_ = db.Close()
-	shadow, err := Open(path, Options{ScanID: state.ScanID, SnablrVersion: state.SnablrVersion, Semantics: state.Semantics, QueueSize: options.QueueSize, BatchSize: options.BatchSize, FlushEvery: options.FlushEvery})
+	stateStore, err := Open(path, Options{ScanID: state.ScanID, SnablrVersion: state.SnablrVersion, Semantics: state.Semantics, QueueSize: options.QueueSize, BatchSize: options.BatchSize, FlushEvery: options.FlushEvery})
 	if err != nil {
 		return nil, ResumeState{}, err
 	}
-	if err := shadow.SetScanStatus(StatusRunning, time.Now().UTC()); err != nil {
-		_ = shadow.Close()
+	if err := stateStore.SetScanStatus(StatusRunning, time.Now().UTC()); err != nil {
+		_ = stateStore.Close()
 		return nil, ResumeState{}, err
 	}
-	return shadow, state, nil
+	return stateStore, state, nil
 }
 
 func validateExistingSchema(db *sql.DB) error {
@@ -105,7 +105,7 @@ func validateExistingSchema(db *sql.DB) error {
 		return fmt.Errorf("read sqlite resume schema metadata: %w", err)
 	}
 	if version != fmt.Sprintf("%d", SchemaVersion) {
-		return fmt.Errorf("unsupported sqlite shadow schema version %s", version)
+		return fmt.Errorf("unsupported SQLite scan database schema version %s", version)
 	}
 	var integrity string
 	if err := db.QueryRow(`PRAGMA integrity_check`).Scan(&integrity); err != nil {

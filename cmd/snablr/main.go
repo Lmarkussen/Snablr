@@ -137,9 +137,7 @@ func runScan(args []string) error {
 	validationMode := fs.Bool("validation-mode", false, "Enable diagnostic validation logging and summary output")
 	maxScanTime := fs.String("max-scan-time", "", "Maximum total scan time, for example 30m or 2h")
 	resume := fs.Bool("resume", false, "Resume from the authoritative Snablr scan database")
-	stateDir := fs.String("state-dir", "", "Directory for incremental metadata (target/share/path metadata; treat as sensitive engagement data)")
 	sqliteStateFile := fs.String("sqlite-state-file", "", "Optional SQLite state file override (default: snablr.db in the output workspace)")
-	incremental := fs.Bool("incremental", false, "Reuse unchanged completed file inspections from --state-dir; persists inventory metadata")
 	forceRescan := fs.Bool("force-rescan", false, "Ignore reusable completed objects in incremental state")
 	listShares := fs.Bool("list-shares", false, "List readable shares accessible to the authenticated user and exit")
 	skipReachability := fs.Bool("skip-reachability-check", false, "Skip TCP 445 reachability testing before scanning")
@@ -226,9 +224,7 @@ func runScan(args []string) error {
 		ValidationMode:             *validationMode,
 		MaxScanTime:                *maxScanTime,
 		Resume:                     *resume,
-		StateDir:                   *stateDir,
 		SQLiteStateFile:            *sqliteStateFile,
-		Incremental:                *incremental,
 		ForceRescan:                *forceRescan,
 		ListShares:                 *listShares,
 		SkipReachabilityCheck:      *skipReachability,
@@ -617,9 +613,7 @@ func printScanUsage(fs *flag.FlagSet) {
 	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --no-ldap --smb-auth password --username USER --password '<password>' --list-shares")
 	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --no-ldap --smb-auth ntlm-hash --username USER --nt-hash '<32-hex-nt-hash>' --list-shares")
 	fmt.Println("  KRB5CCNAME=/path/to/ccache snablr scan --targets FILE01.TEST.LOCAL --no-ldap --smb-auth kerberos --smb-hostname FILE01.TEST.LOCAL --list-shares")
-	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>' --state-dir ./state --incremental")
-	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth ntlm-hash --username USER --nt-hash '<32-hex-nt-hash>' --state-dir ./state --incremental")
-	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>' --state-dir ./state --force-rescan")
+	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>' --force-rescan")
 	fmt.Println("  snablr scan --username USER --password '<password>'")
 	fmt.Println("  snablr scan --domain TEST.LOCAL --dc DIRECTORY01.TEST.LOCAL --username USER --password '<password>'")
 	fmt.Println("  KRB5CCNAME=/path/to/ccache snablr scan --auth kerberos --domain TEST.LOCAL --dc DIRECTORY01.TEST.LOCAL --smb-auth kerberos --smb-hostname FILE01.TEST.LOCAL")

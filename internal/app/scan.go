@@ -179,21 +179,21 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		}
 	}()
 
-	var checkpoints *state.Manager
+	var stateManager *state.Manager
 	if sqliteAuthority {
 		semanticsMatch := true
 		if sqliteResume != nil {
 			semanticsMatch = sqliteResume.SemanticsMatch
 		}
 		reader := sqliteResumeReader{shadow: shadow, semanticsMatch: semanticsMatch, expectedSemantics: semantics}
-		checkpoints = state.NewManagerFromSQLiteReader(reader, 10*time.Second)
+		stateManager = state.NewManagerFromSQLiteReader(reader, 10*time.Second)
 	}
-	if checkpoints != nil {
-		checkpoints.Start(scanCtx)
-		defer checkpoints.Close()
+	if stateManager != nil {
+		stateManager.Start(scanCtx)
+		defer stateManager.Close()
 	}
 
-	incrementalEnabled := sqliteAuthority || incrementalScanEnabled(cfg)
+	incrementalEnabled := sqliteAuthority
 	var inventory *state.InventoryManager
 	if incrementalEnabled {
 		if sqliteAuthority {
@@ -202,30 +202,21 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 				semanticsMatch = sqliteResume.SemanticsMatch
 			}
 			inventory = state.NewInventoryManagerFromSQLiteReader(sqliteResumeReader{shadow: shadow, semanticsMatch: semanticsMatch, expectedSemantics: semantics}, 10*time.Second)
-		} else {
-			inventoryPath := filepath.Join(cfg.Scan.StateDir, "inventory.json")
-			inventory, err = state.NewInventoryManager(inventoryPath, 10*time.Second)
-			if err != nil {
-				logger.Warnf("incremental inventory unavailable; scanning without content skip state: %v", err)
-				inventory = nil
-			}
 		}
 		if inventory != nil {
 			inventory.Start(scanCtx)
 			defer func() {
-				if closeErr := inventory.Close(); closeErr != nil {
-					logger.Warnf("incremental inventory save failed: %v", closeErr)
-				}
+				_ = inventory.Close()
 			}()
 		}
 	}
 	credentialContextID := state.CredentialContextID(cfg.Scan.SMBAuth, cfg.Scan.Username, cfg.Scan.Domain)
 	if shadow != nil {
-		if checkpoints != nil {
-			checkpoints.AttachShadow(shadow, shadow.ScanID())
+		if stateManager != nil {
+			stateManager.AttachStore(shadow, shadow.ScanID())
 		}
 		if inventory != nil {
-			inventory.AttachShadow(shadow, shadow.ScanID())
+			inventory.AttachStore(shadow, shadow.ScanID())
 		}
 		defer func() {
 			status := store.StatusCompleted
@@ -459,7 +450,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			}
 			return err
 		}
-		if (sqliteAuthority || !incrementalEnabled) && checkpoints != nil && checkpoints.ShouldSkipHost(target.Host) {
+		if (sqliteAuthority || !incrementalEnabled) && stateManager != nil && stateManager.ShouldSkipHost(target.Host) {
 			logger.Infof("resume: skipping completed host %s", target.Host)
 			output.MarkTargetProcessed(sink)
 			if progress != nil {
@@ -471,7 +462,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		if progress != nil {
 			progress.SetCurrentHost(target.Host)
 		}
-		if err := scanHost(scanCtx, target.Host, target.Source, resolvedTargets.DFSTargets, checkpoints, inventory, credentialContextID, semantics, cfg.Scan.ForceRescan, recorder, cfg, engine, sink, logger); err != nil {
+		if err := scanHost(scanCtx, target.Host, target.Source, resolvedTargets.DFSTargets, stateManager, inventory, credentialContextID, semantics, cfg.Scan.ForceRescan, recorder, cfg, engine, sink, logger); err != nil {
 			if failure := authorityFailure(); failure != nil {
 				return failure
 			}
@@ -496,8 +487,8 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			}
 			continue
 		}
-		if checkpoints != nil {
-			checkpoints.MarkHostComplete(target.Host)
+		if stateManager != nil {
+			stateManager.MarkHostComplete(target.Host)
 		}
 		output.MarkTargetProcessed(sink)
 		if progress != nil {
@@ -581,7 +572,7 @@ func replaySQLiteState(sink scanner.FindingSink, resume store.ResumeState) error
 	return nil
 }
 
-func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.DFSTarget, checkpoints *state.Manager, inventory *state.InventoryManager, credentialContextID, semantics string, forceRescan bool, recorder metrics.Recorder, cfg config.Config, engine *scanner.Engine, sink scanner.FindingSink, logger *logx.Logger) error {
+func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.DFSTarget, stateManager *state.Manager, inventory *state.InventoryManager, credentialContextID, semantics string, forceRescan bool, recorder metrics.Recorder, cfg config.Config, engine *scanner.Engine, sink scanner.FindingSink, logger *logx.Logger) error {
 	logger.Infof("scanning host %s", host)
 	if observer, ok := sink.(scanner.ScanObserver); ok {
 		observer.RecordHost(host)
@@ -690,8 +681,7 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 
 	var walkErrs []error
 	for _, sharePlan := range plannedShares {
-		incrementalEnabled := incrementalScanEnabled(cfg)
-		if (true) && checkpoints != nil && checkpoints.ShouldSkipShare(host, sharePlan.Share) {
+		if stateManager != nil && stateManager.ShouldSkipShare(host, sharePlan.Share) {
 			logger.Infof("resume: skipping completed share %s/%s", host, sharePlan.Share)
 			continue
 		}
@@ -701,8 +691,8 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 			observer.RecordShare(host, shareName)
 		}
 		dfsHint, hasDFSHint := dfsHints[strings.ToLower(strings.TrimSpace(shareName))]
-		if checkpoints != nil {
-			checkpoints.StartShare(host, shareName)
+		if stateManager != nil {
+			stateManager.StartShare(host, shareName)
 		}
 
 		fileInputs := make([]planner.FileInput, 0, sharePlanningBatchSize)
@@ -744,8 +734,8 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 					if dependency {
 						return
 					}
-					if checkpoints != nil {
-						checkpoints.RecordFileResult(meta.Host, meta.Share, meta.FilePath, meta.Size, meta.ModifiedAt, err == nil)
+					if stateManager != nil {
+						stateManager.RecordFileResult(meta.Host, meta.Share, meta.FilePath, meta.Size, meta.ModifiedAt, err == nil)
 					}
 					if inventory == nil {
 						return
@@ -792,9 +782,9 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 						Size: remote.Size, ModifiedAt: remote.ModifiedAt,
 					}, credentialContextID, semantics, forceRescan)
 					if err != nil {
-						logger.Warnf("incremental inventory ignored for %s/%s/%s: %v", remote.Host, remote.Share, remote.Path, err)
+						logger.Warnf("scan-state lookup ignored for %s/%s/%s: %v", remote.Host, remote.Share, remote.Path, err)
 					} else if decision.Skip {
-						logger.Debugf("incremental: skipping unchanged file %s/%s/%s", remote.Host, remote.Share, remote.Path)
+						logger.Debugf("scan-state: skipping unchanged file %s/%s/%s", remote.Host, remote.Share, remote.Path)
 						if isBundleArtifact {
 							candidates := skippedBundleCandidates[bundleKey]
 							if candidates == nil {
@@ -807,7 +797,7 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 					} else {
 						inventoryKey = decision.Key
 					}
-				} else if !incrementalEnabled && checkpoints != nil && checkpoints.ShouldSkipFile(remote.Host, remote.Share, remote.Path, remote.Size, remote.ModifiedAt) {
+				} else if stateManager != nil && stateManager.ShouldSkipFile(remote.Host, remote.Share, remote.Path, remote.Size, remote.ModifiedAt) {
 					logger.Debugf("resume: skipping completed file %s/%s/%s", remote.Host, remote.Share, remote.Path)
 					continue
 				}
@@ -827,8 +817,8 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 					return err
 				}
 			}
-			if checkpoints != nil {
-				checkpoints.AddPendingFiles(host, shareName, queuedThisBatch)
+			if stateManager != nil {
+				stateManager.AddPendingFiles(host, shareName, queuedThisBatch)
 			}
 
 			clear(fileIndex)
@@ -864,21 +854,21 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		})
 		if err != nil {
 			logger.Warnf("walk failed for %s/%s: %v", host, shareName, err)
-			if checkpoints != nil {
-				checkpoints.AbortShare(host, shareName)
+			if stateManager != nil {
+				stateManager.AbortShare(host, shareName)
 			}
 			walkErrs = append(walkErrs, fmt.Errorf("%s/%s: %w", host, shareName, err))
 			continue
 		}
 		if err := flushBatch(); err != nil {
-			if checkpoints != nil {
-				checkpoints.AbortShare(host, shareName)
+			if stateManager != nil {
+				stateManager.AbortShare(host, shareName)
 			}
 			walkErrs = append(walkErrs, fmt.Errorf("%s/%s: %w", host, shareName, err))
 			continue
 		}
-		if checkpoints != nil {
-			checkpoints.FinishShareEnumeration(host, shareName)
+		if stateManager != nil {
+			stateManager.FinishShareEnumeration(host, shareName)
 		}
 	}
 
@@ -1011,16 +1001,9 @@ func scanSemanticsFingerprintWithVersion(cfg config.Config, manager *rules.Manag
 	})
 }
 
-func incrementalScanEnabled(cfg config.Config) bool {
-	return cfg.Scan.Incremental || strings.TrimSpace(cfg.Scan.StateDir) != ""
-}
-
 func sqliteStatePath(cfg config.Config) string {
 	if path := strings.TrimSpace(cfg.Scan.SQLiteStateFile); path != "" {
 		return path
-	}
-	if dir := strings.TrimSpace(cfg.Scan.StateDir); dir != "" {
-		return filepath.Join(dir, "snablr.db")
 	}
 	for _, candidate := range []string{cfg.Output.HTMLOut, cfg.Output.JSONOut, cfg.Output.MDOut, cfg.Output.CSVOut, cfg.Output.CredsOut, cfg.Output.ScannedTargetsOut} {
 		if candidate = strings.TrimSpace(candidate); candidate != "" && candidate != "-" {

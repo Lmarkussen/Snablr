@@ -127,7 +127,7 @@ func initializeSchema(db *sql.DB) error {
 	var storedVersion string
 	if err := db.QueryRow(`SELECT value FROM metadata WHERE key='schema_version'`).Scan(&storedVersion); err == nil {
 		if storedVersion != "1" {
-			return fmt.Errorf("unsupported sqlite shadow schema version %s", storedVersion)
+			return fmt.Errorf("unsupported SQLite scan database schema version %s", storedVersion)
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) && !strings.Contains(err.Error(), "no such table") {
 		return err
@@ -375,8 +375,8 @@ type SQLiteSink struct {
 	store      *SQLiteStore
 }
 
-func WrapSink(underlying scanner.FindingSink, shadow *SQLiteStore) *SQLiteSink {
-	return &SQLiteSink{underlying: underlying, store: shadow}
+func WrapSink(underlying scanner.FindingSink, stateStore *SQLiteStore) *SQLiteSink {
+	return &SQLiteSink{underlying: underlying, store: stateStore}
 }
 func (s *SQLiteSink) WriteFinding(f scanner.Finding) error {
 	if err := s.store.RecordFinding(f); err != nil {

@@ -15,71 +15,21 @@ type shareProgress struct {
 }
 
 type Manager struct {
-	store         *Store
-	interval      time.Duration
-	authoritative bool
-
-	mu      sync.Mutex
-	pending map[string]*shareProgress
-	started bool
-
-	stopOnce     sync.Once
-	stopCh       chan struct{}
-	doneCh       chan struct{}
-	shadow       ShadowStore
+	store        *Store
+	mu           sync.Mutex
+	pending      map[string]*shareProgress
+	stateStore   SQLiteStateStore
 	scanID       string
 	resumeReader SQLiteResumeReader
 }
 
-func (m *Manager) AttachShadow(shadow ShadowStore, scanID string) {
+func (m *Manager) AttachStore(stateStore SQLiteStateStore, scanID string) {
 	if m == nil {
 		return
 	}
 	m.mu.Lock()
-	m.shadow, m.scanID = shadow, scanID
+	m.stateStore, m.scanID = stateStore, scanID
 	m.mu.Unlock()
-}
-
-func NewManager(path string, resume bool, interval time.Duration) (*Manager, error) {
-	store, err := Open(path, resume)
-	if err != nil {
-		return nil, err
-	}
-	if store == nil {
-		return nil, nil
-	}
-	if interval <= 0 {
-		interval = defaultSaveInterval
-	}
-	return &Manager{
-		store:    store,
-		interval: interval,
-		pending:  make(map[string]*shareProgress),
-		stopCh:   make(chan struct{}),
-		doneCh:   make(chan struct{}),
-	}, nil
-}
-
-// NewManagerFromSQLite adapts validated SQLite logical state to checkpoint
-// decisions without creating a JSON checkpoint.
-type SQLiteResumeState struct {
-	SemanticsMatch bool
-	Targets        []SQLiteTargetState
-	Shares         []SQLiteShareState
-	Files          []SQLiteFileState
-	Access         []SQLiteAccessState
-}
-
-type SQLiteTargetState struct{ Host, Status string }
-type SQLiteShareState struct{ Host, Share, Status string }
-type SQLiteFileState struct {
-	Key, Host, Share, Path, Status, Semantics  string
-	Size                                       int64
-	ModifiedAt, FirstSeen, LastSeen, UpdatedAt time.Time
-}
-type SQLiteAccessState struct {
-	ContextID, FileKey, Result string
-	FirstSeen, LastSeen        time.Time
 }
 
 type SQLiteResumeReader interface {
@@ -88,99 +38,28 @@ type SQLiteResumeReader interface {
 	LookupFile(string, string, string) (SQLiteFileState, bool, error)
 }
 
-func NewManagerFromSQLite(resume SQLiteResumeState, interval time.Duration) *Manager {
-	checkpoint := &Store{files: make(map[string]fileState), hosts: make(map[string]struct{}), shares: make(map[string]struct{})}
-	if resume.SemanticsMatch {
-		for _, target := range resume.Targets {
-			if target.Status == "completed" {
-				checkpoint.hosts[HostKey(target.Host)] = struct{}{}
-			}
-		}
-		for _, share := range resume.Shares {
-			if share.Status == "completed" {
-				checkpoint.shares[ShareKey(share.Host, share.Share)] = struct{}{}
-			}
-		}
-		for _, file := range resume.Files {
-			if file.Status == "completed" || file.Status == "skipped_unchanged" {
-				checkpoint.files[normalizeKey(file.Key)] = fileState{Size: file.Size, ModifiedAt: file.ModifiedAt}
-			}
-		}
-	}
-	if interval <= 0 {
-		interval = defaultSaveInterval
-	}
-	return &Manager{store: checkpoint, interval: interval, pending: make(map[string]*shareProgress), stopCh: make(chan struct{}), doneCh: make(chan struct{})}
+type SQLiteFileState struct {
+	Key, Host, Share, Path, Status, Semantics  string
+	Size                                       int64
+	ModifiedAt, FirstSeen, LastSeen, UpdatedAt time.Time
 }
 
 func NewManagerFromSQLiteReader(reader SQLiteResumeReader, interval time.Duration) *Manager {
 	if interval <= 0 {
 		interval = defaultSaveInterval
 	}
-	return &Manager{store: &Store{files: make(map[string]fileState), hosts: make(map[string]struct{}), shares: make(map[string]struct{})}, interval: interval, resumeReader: reader, authoritative: true, pending: make(map[string]*shareProgress), stopCh: make(chan struct{}), doneCh: make(chan struct{})}
+	return &Manager{store: newStore(), resumeReader: reader, pending: make(map[string]*shareProgress)}
 }
 
 func (m *Manager) Enabled() bool {
 	return m != nil && m.store != nil && (m.store.Enabled() || m.resumeReader != nil)
 }
 
-func (m *Manager) Start(ctx context.Context) {
-	if !m.Enabled() {
-		return
-	}
-	m.mu.Lock()
-	if m.started {
-		m.mu.Unlock()
-		return
-	}
-	m.started = true
-	m.mu.Unlock()
+func (m *Manager) Start(context.Context) {}
 
-	ticker := time.NewTicker(m.interval)
-	go func() {
-		defer func() {
-			ticker.Stop()
-			close(m.doneCh)
-		}()
-		for {
-			select {
-			case <-ctx.Done():
-				_ = m.Save()
-				return
-			case <-m.stopCh:
-				_ = m.Save()
-				return
-			case <-ticker.C:
-				_ = m.Save()
-			}
-		}
-	}()
-}
+func (m *Manager) Save() error { return nil }
 
-func (m *Manager) Save() error {
-	if !m.Enabled() {
-		return nil
-	}
-	if m.authoritative {
-		return nil
-	}
-	return m.store.Save()
-}
-
-func (m *Manager) Close() error {
-	if m != nil {
-		m.stopOnce.Do(func() {
-			close(m.stopCh)
-			m.mu.Lock()
-			started := m.started
-			m.mu.Unlock()
-			if started {
-				<-m.doneCh
-			}
-		})
-	}
-	return m.Save()
-}
+func (m *Manager) Close() error { return nil }
 
 func (m *Manager) ShouldSkipHost(host string) bool {
 	if !m.Enabled() {
@@ -192,8 +71,8 @@ func (m *Manager) ShouldSkipHost(host string) bool {
 	} else {
 		skip = m.store.IsHostComplete(host)
 	}
-	if skip && m.shadow != nil {
-		_ = m.shadow.RecordTarget(host, "completed", time.Now().UTC())
+	if skip && m.stateStore != nil {
+		_ = m.stateStore.RecordTarget(host, "completed", time.Now().UTC())
 	}
 	return skip
 }
@@ -208,8 +87,8 @@ func (m *Manager) ShouldSkipShare(host, share string) bool {
 	} else {
 		skip = m.store.IsShareComplete(host, share)
 	}
-	if skip && m.shadow != nil {
-		_ = m.shadow.RecordShare(host, share, "completed", time.Now().UTC())
+	if skip && m.stateStore != nil {
+		_ = m.stateStore.RecordShare(host, share, "completed", time.Now().UTC())
 	}
 	return skip
 }
@@ -225,8 +104,8 @@ func (m *Manager) ShouldSkipFile(host, share, path string, size int64, modifiedA
 	} else {
 		skip = m.store.IsFileComplete(host, share, path, size, modifiedAt)
 	}
-	if skip && m.shadow != nil {
-		_ = m.shadow.RecordFile(FileKey(host, share, path), host, share, path, "completed", "", size, modifiedAt, time.Time{}, time.Time{}, time.Now().UTC())
+	if skip && m.stateStore != nil {
+		_ = m.stateStore.RecordFile(FileKey(host, share, path), host, share, path, "completed", "", size, modifiedAt, time.Time{}, time.Time{}, time.Now().UTC())
 	}
 	return skip
 }
@@ -265,8 +144,8 @@ func (m *Manager) StartShare(host, share string) {
 		return
 	}
 	m.pending[key] = &shareProgress{}
-	if m.shadow != nil {
-		_ = m.shadow.RecordShare(host, share, "partial", time.Now().UTC())
+	if m.stateStore != nil {
+		_ = m.stateStore.RecordShare(host, share, "partial", time.Now().UTC())
 	}
 }
 
@@ -309,8 +188,8 @@ func (m *Manager) FinishShareEnumeration(host, share string) {
 	}
 	if !progress.failed {
 		m.store.MarkShareComplete(host, share)
-		if m.shadow != nil {
-			_ = m.shadow.RecordShare(host, share, "completed", time.Now().UTC())
+		if m.stateStore != nil {
+			_ = m.stateStore.RecordShare(host, share, "completed", time.Now().UTC())
 		}
 	}
 	delete(m.pending, key)
@@ -330,8 +209,8 @@ func (m *Manager) AbortShare(host, share string) {
 		progress.failed = true
 		delete(m.pending, key)
 	}
-	if m.shadow != nil {
-		_ = m.shadow.RecordShare(host, share, "failed", time.Now().UTC())
+	if m.stateStore != nil {
+		_ = m.stateStore.RecordShare(host, share, "failed", time.Now().UTC())
 	}
 }
 
@@ -343,12 +222,12 @@ func (m *Manager) RecordFileResult(host, share, path string, size int64, modifie
 	if success {
 		m.store.MarkFileComplete(host, share, path, size, modifiedAt)
 	}
-	if m.shadow != nil {
+	if m.stateStore != nil {
 		status := "failed"
 		if success {
 			status = "completed"
 		}
-		_ = m.shadow.RecordFile(FileKey(host, share, path), host, share, path, status, "", size, modifiedAt, time.Time{}, time.Time{}, time.Now().UTC())
+		_ = m.stateStore.RecordFile(FileKey(host, share, path), host, share, path, status, "", size, modifiedAt, time.Time{}, time.Time{}, time.Now().UTC())
 	}
 
 	key := ShareKey(host, share)
@@ -382,7 +261,7 @@ func (m *Manager) MarkHostComplete(host string) {
 		return
 	}
 	m.store.MarkHostComplete(host)
-	if m.shadow != nil {
-		_ = m.shadow.RecordTarget(host, "completed", time.Now().UTC())
+	if m.stateStore != nil {
+		_ = m.stateStore.RecordTarget(host, "completed", time.Now().UTC())
 	}
 }

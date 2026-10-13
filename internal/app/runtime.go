@@ -157,14 +157,8 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if opts.Resume {
 		cfg.Scan.Resume = true
 	}
-	if strings.TrimSpace(opts.StateDir) != "" {
-		cfg.Scan.StateDir = opts.StateDir
-	}
 	if strings.TrimSpace(opts.SQLiteStateFile) != "" {
 		cfg.Scan.SQLiteStateFile = opts.SQLiteStateFile
-	}
-	if opts.Incremental {
-		cfg.Scan.Incremental = true
 	}
 	if opts.ForceRescan {
 		cfg.Scan.ForceRescan = true
@@ -360,12 +354,6 @@ func validateScanConfig(cfg config.Config) error {
 	}
 	if cfg.Scan.MaxDepth < 0 {
 		return fmt.Errorf("max_depth cannot be negative")
-	}
-	if cfg.Scan.Incremental && strings.TrimSpace(cfg.Scan.StateDir) == "" {
-		return fmt.Errorf("incremental scanning requires a state directory: set scan.state_dir or pass --state-dir")
-	}
-	if cfg.Scan.ForceRescan && !cfg.Scan.Incremental && strings.TrimSpace(cfg.Scan.StateDir) == "" {
-		return fmt.Errorf("force_rescan requires incremental scanning: set scan.incremental and scan.state_dir or pass --incremental --state-dir")
 	}
 	if cfg.Archives.AutoZIPMaxSize < 0 {
 		return fmt.Errorf("archives.auto_zip_max_size cannot be negative")

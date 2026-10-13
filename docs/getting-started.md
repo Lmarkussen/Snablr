@@ -353,5 +353,5 @@ After the first successful run:
 2. review `docs/rules.md`
 3. review `docs/reporting.md`
 4. add custom rules under `configs/rules/custom/`
-5. use checkpoints for long scans
+5. use the automatic scan database for long scans
 6. keep JSON output for later baseline comparisons

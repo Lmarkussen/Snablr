@@ -26,8 +26,6 @@ func Default() Config {
 			Baseline:                   "",
 			MaxScanTime:                "",
 			Resume:                     false,
-			StateDir:                   "",
-			Incremental:                false,
 			ForceRescan:                false,
 			SkipReachabilityCheck:      false,
 			ReachabilityTimeoutSeconds: 3,

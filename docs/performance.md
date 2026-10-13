@@ -29,7 +29,7 @@ Snablr includes a few default optimizations intended for larger environments wit
 - Leave `worker_count` at the default `15` in production unless you have measured capacity to raise it.
 - Keep `max_file_size` conservative for very large environments.
 - Use `--share`, `--exclude-share`, `--path`, `--exclude-path`, and `--max-depth` to reduce the search space early.
-- Use checkpoints for long-running scans so interrupted runs can resume without redoing completed work.
+- Use the scan database for long-running scans so interrupted runs can resume without redoing completed work.
 
 ## Tradeoffs
 

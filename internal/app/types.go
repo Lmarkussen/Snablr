@@ -34,9 +34,7 @@ type ScanOptions struct {
 	ValidationMode             bool
 	MaxScanTime                string
 	Resume                     bool
-	StateDir                   string
 	SQLiteStateFile            string
-	Incremental                bool
 	ForceRescan                bool
 	ListShares                 bool
 	SkipReachabilityCheck      bool

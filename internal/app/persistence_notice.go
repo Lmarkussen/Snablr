@@ -30,10 +30,6 @@ func logPersistenceNotice(cfg config.Config, logger *logx.Logger) {
 	}
 
 	add("scanned-target audit", cfg.Output.ScannedTargetsOut)
-	if incrementalScanEnabled(cfg) {
-		add("incremental state directory", cfg.Scan.StateDir)
-		add("incremental inventory", filepath.Join(cfg.Scan.StateDir, "inventory.json"))
-	}
 	add("authoritative SQLite state", sqliteStatePath(cfg))
 	selection, err := config.ParseOutputFormat(cfg.Output.Format)
 	if err == nil {

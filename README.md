@@ -58,11 +58,8 @@ HTML reports may contain recovered passwords, tokens, hashes, keys, and other
 credential material for operator review. Protect report files accordingly;
 newly created output files use restrictive permissions.
 
-The optional `--sqlite-state-file` scan database is documented in
-`docs/sqlite-shadow-store.md`; SQLite scan state database
-remain authoritative during this migration phase.
 - `state`
-  Stores authoritative SQLite scan state and credential-independent incremental object/access inventory.
+  Stores authoritative SQLite scan state and credential-independent object/access metadata.
 - `metrics`
   Tracks counters and phase timing for progress and reports.
 
@@ -109,9 +106,9 @@ WIM artifact detection/extraction also recognizes selected `SECURITY` and `NTDS.
 
 After scanning, Snablr analyzes extracted credential-like material as either `Confirmed Credentials` or `Potential Credential Material — Review`. Confirmed means that offline structure or cryptographic provenance validated the material; Review means it was retained for operator inspection but could not be conclusively validated. Broad discovery findings remain available, and filename/path matches alone are not credential records. Snablr never automatically tests recovered credentials against any system. The explicit `--creds-out` export is highly sensitive and is the only supported output intended to contain recovered credential values.
 
-## Incremental and Multi-Credential Pivot Scanning
+## Scan Database and Multi-Credential Pivot Scanning
 
-Use `--state-dir <directory>` with `--incremental` to retain a versioned `inventory.json` across scans. A typical pivot is:
+Snablr automatically retains scan state in an authoritative SQLite database. A typical pivot is:
 
 ```text
 USER-A scan -> obtain USER-B credentials -> USER-B scan with the same state
@@ -125,20 +122,20 @@ Share and directory enumeration runs for each credential context. Only content i
 # First credential context
 snablr scan --targets FILE01.example.com --no-ldap --share Finance \
   --smb-auth password --username 'DOMAIN\\user-a' --password '<password-a>' \
-  --state-dir ./state --incremental
+  --resume
 
 # Credential pivot: rediscover access, reuse unchanged successful inspections
 snablr scan --targets FILE01.example.com --no-ldap --share Finance \
   --smb-auth ntlm-hash --username 'DOMAIN\\user-b' --nt-hash '<32-hex-nt-hash-b>' \
-  --state-dir ./state --incremental
+  --resume
 
 # Explicitly inspect completed objects again
 snablr scan --targets FILE01.example.com --no-ldap \
   --smb-auth password --username 'DOMAIN\\user-b' --password '<password-b>' \
-  --state-dir ./state --force-rescan
+  --force-rescan
 ```
 
-`--force-rescan` ignores reusable completed-object state for that run while updating the inventory. Failed, partial, interrupted, changed, and semantically incompatible objects are retried automatically. Without `--state-dir` or `--incremental`, normal scan behavior is unchanged.
+`--force-rescan` ignores reusable completed-object state for that run. Failed, partial, interrupted, changed, and semantically incompatible objects are retried automatically.
 
 ## Assessment Data, State and Cleanup
 
@@ -146,16 +143,7 @@ Snablr does not create a hidden machine-global cache. Persistent paths are opera
 
 Pressing Ctrl-C during a scan gracefully stops new work, preserves completed findings, restores the terminal, and finalizes an HTML report marked `INTERRUPTED / PARTIAL SCAN`. An explicit `--html-out` path is honored. If no HTML path is supplied, the interrupted report is written to `snablr-interrupted.html`. After the report is finalized, Snablr exits with status `130`.
 
-Incremental state is opt-in with `--state-dir DIR` (and `--incremental` when explicitly requested). It retains `DIR/inventory.json`, including normalized server/share/path metadata, size and modification timestamps, scan status and semantics, and access observations. Access observations use an opaque local correlation identifier derived from authentication mode, username, and domain. This is not cryptographic anonymization and may be dictionary-testable. No passwords, NT hashes, Kerberos tickets/ccaches/session keys, or recovered secret values are intentionally stored in the inventory. Treat the entire state directory as sensitive engagement data because paths, share names, access observations, and timestamps may be confidential. Delete it when the pivot/rescan workflow no longer needs it:
-
-```bash
-rm -rf -- /absolute/path/to/snablr-state
-```
-
-
-```bash
-rm -f -- /absolute/path/to/checkpoint.json
-```
+The database contains progress, findings, credentials, provenance, and resume metadata. Treat `snablr.db`, reports, and exports as sensitive assessment data.
 
 Generated reports and scanned-target inventories are retained until the operator deletes them. They may expose hostnames, share names, paths, findings, snippets, access decisions, and timestamps. A `--creds-out` export is highly sensitive: it can contain usable credential material and must be protected and deleted as soon as it is no longer required:
 
@@ -164,9 +152,6 @@ rm -f -- /absolute/path/to/report.html /absolute/path/to/scanned_targets.txt /ab
 ```
 
 WIM, archive, SQLite, and other bounded artifact inspection is local and temporary during a scan. Temporary extracted images, hives, binary artifacts, archive members, database copies, and intermediate workspaces are cleaned automatically on successful completion, parse failure, and cancellation. No temporary extracted content is intentionally retained by Snablr; credential caches supplied by the operator, such as `KRB5CCNAME`, are external inputs and are not created or deleted by Snablr.
-
-### Checkpoint/Resume Versus Incremental State
-
 
 ## Installation
 
@@ -630,9 +615,9 @@ Once Snablr has a target list, it:
 4. enumerates accessible shares and share metadata
 5. walks files and directories with scope filters applied early
 6. loads file content only when content rules actually need it
-7. records findings, metrics, and optional checkpoint/incremental state
+7. records findings, metrics, and authoritative SQLite scan state
 
-With incremental state enabled, the walker still enumerates accessible directories and files for each credential. Completed unchanged files can skip the expensive content-inspection phase; discovery is never skipped solely because another credential traversed the directory before.
+The walker still enumerates accessible directories and files for each credential. Completed unchanged files can skip the expensive content-inspection phase; discovery is never skipped solely because another credential traversed the directory before.
 
 This separation matters:
 

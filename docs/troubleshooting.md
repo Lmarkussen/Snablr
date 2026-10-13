@@ -274,14 +274,14 @@ See also:
 
 ### Common Causes
 
-- the checkpoint file path changed between runs
+- the scan database path changed between runs
 - the first run did not finish enough work to mark some shares or files complete
-- the checkpoint file was removed or overwritten
+- the scan database was removed or overwritten
 - files changed size or modified timestamp between runs
 
 ### What To Check
 
-- inspect the checkpoint JSON directly
+- inspect the SQLite scan database with the store tooling
 - ensure the scan is not being restarted with a different host naming form
 - confirm the share/path filters are consistent between runs
 - confirm whether the files actually changed between runs
@@ -302,7 +302,7 @@ The scan stops earlier than expected.
 
 - the scan stops gracefully
 - partial results are still written
-- checkpoints remain usable
+- scan databases remain usable
 - progress output marks that the time limit was reached
 
 If this is expected, rerun with `--resume` to continue later. If it is not expected, check the loaded config and CLI overrides.

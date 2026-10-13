@@ -55,10 +55,7 @@ func TestHeaderRowTableIncrementalBehavior(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	inventory, err := state.OpenInventory(filepath.Join(dir, "inventory.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	inventory := state.NewInMemoryInventory()
 	observation := func() state.FileObservation {
 		info, statErr := os.Stat(docPath)
 		if statErr != nil {
@@ -89,9 +86,6 @@ func TestHeaderRowTableIncrementalBehavior(t *testing.T) {
 		t.Fatal("run 1 did not surface the table credential")
 	}
 	inventory.MarkCompleted(decision.Key)
-	if err := inventory.Save(); err != nil {
-		t.Fatal(err)
-	}
 
 	// RUN 2: unchanged file follows existing incremental policy.
 	second, err := inventory.Prepare(observation(), "ctx-1", "table-incremental", false)
@@ -129,18 +123,6 @@ func TestHeaderRowTableIncrementalBehavior(t *testing.T) {
 		t.Fatalf("stale table credential was reused: %#v", changed)
 	}
 	inventory.MarkCompleted(third.Key)
-	if err := inventory.Save(); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, "inventory.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, secret := range []string{"Old-123!", "New-456!"} {
-		if strings.Contains(string(raw), secret) {
-			t.Fatalf("incremental state persisted a credential value: %s", secret)
-		}
-	}
 }
 
 // TestHeaderRowTableInsideWIM proves the table semantics survive nested

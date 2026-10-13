@@ -63,6 +63,7 @@ type ScanConfig struct {
 	MaxScanTime                string   `yaml:"max_scan_time"`
 	CheckpointFile             string   `yaml:"checkpoint_file"`
 	Resume                     bool     `yaml:"resume"`
+	LegacyJSON                 bool     `yaml:"legacy_json"`
 	StateDir                   string   `yaml:"state_dir"`
 	SQLiteStateFile            string   `yaml:"sqlite_state_file"`
 	SQLiteResume               bool     `yaml:"sqlite_resume"`

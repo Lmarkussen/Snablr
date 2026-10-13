@@ -117,20 +117,55 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 
 	var shadow *store.ShadowStore
 	var sqliteResume *store.ResumeState
-	if cfg.Scan.SQLiteResume {
+	sqliteAuthority := !cfg.Scan.LegacyJSON
+	if sqliteAuthority {
+		sqlitePath := sqliteStatePath(cfg)
 		var resumeState store.ResumeState
 		var resumeErr error
-		shadow, resumeState, resumeErr = store.OpenForResume(cfg.Scan.SQLiteStateFile, store.ResumeOptions{ExpectedSemantics: semantics, MaterializeFiles: false})
-		if resumeErr != nil {
-			return fmt.Errorf("open SQLite resume state: %w", resumeErr)
+		if cfg.Scan.Resume || cfg.Scan.SQLiteResume {
+			shadow, resumeState, resumeErr = store.OpenForResume(sqlitePath, store.ResumeOptions{ExpectedSemantics: semantics, MaterializeFiles: false})
+			if resumeErr != nil {
+				return fmt.Errorf("open authoritative SQLite resume state: %w", resumeErr)
+			}
+			sqliteResume = &resumeState
+		} else {
+			shadow, err = store.Open(sqlitePath, store.Options{Semantics: semantics, SnablrVersion: version.String()})
+			if err != nil {
+				return fmt.Errorf("open authoritative SQLite state: %w", err)
+			}
 		}
-		sqliteResume = &resumeState
-	} else if strings.TrimSpace(cfg.Scan.SQLiteStateFile) != "" {
-		shadow, err = store.Open(cfg.Scan.SQLiteStateFile, store.Options{Semantics: semantics, SnablrVersion: version.String()})
-		if err != nil {
-			logger.Warnf("SQLite shadow state unavailable; continuing with JSON state: %v", err)
-			shadow = nil
+	}
+	var authorityMonitorStop chan struct{}
+	authorityFailure := func() error {
+		if !sqliteAuthority || shadow == nil {
+			return nil
 		}
+		if failure := shadow.Failure(); failure != nil {
+			return fmt.Errorf("authoritative SQLite state failed: %w", failure)
+		}
+		return nil
+	}
+	if sqliteAuthority {
+		authorityMonitorStop = make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(25 * time.Millisecond)
+			defer ticker.Stop()
+			failed := false
+			for {
+				select {
+				case <-ticker.C:
+					if shadow.Failure() != nil && !failed {
+						failed = true
+						scanCancel()
+					}
+				case <-authorityMonitorStop:
+					return
+				}
+			}
+		}()
+		defer func() {
+			close(authorityMonitorStop)
+		}()
 	}
 
 	var sink scanner.FindingSink
@@ -144,8 +179,12 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	}()
 
 	var checkpoints *state.Manager
-	if sqliteResume != nil {
-		reader := sqliteResumeReader{shadow: shadow, semanticsMatch: sqliteResume.SemanticsMatch, expectedSemantics: semantics}
+	if sqliteAuthority {
+		semanticsMatch := true
+		if sqliteResume != nil {
+			semanticsMatch = sqliteResume.SemanticsMatch
+		}
+		reader := sqliteResumeReader{shadow: shadow, semanticsMatch: semanticsMatch, expectedSemantics: semantics}
 		checkpoints = state.NewManagerFromSQLiteReader(reader, 10*time.Second)
 	} else {
 		checkpoints, err = state.NewManager(cfg.Scan.CheckpointFile, cfg.Scan.Resume, 10*time.Second)
@@ -158,16 +197,22 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		defer checkpoints.Close()
 	}
 
-	incrementalEnabled := incrementalScanEnabled(cfg)
+	incrementalEnabled := sqliteAuthority || incrementalScanEnabled(cfg)
 	var inventory *state.InventoryManager
 	if incrementalEnabled {
-		if sqliteResume != nil {
-			inventory = state.NewInventoryManagerFromSQLiteReader(sqliteResumeReader{shadow: shadow, semanticsMatch: sqliteResume.SemanticsMatch, expectedSemantics: semantics}, 10*time.Second)
+		if sqliteAuthority {
+			semanticsMatch := true
+			if sqliteResume != nil {
+				semanticsMatch = sqliteResume.SemanticsMatch
+			}
+			inventory = state.NewInventoryManagerFromSQLiteReader(sqliteResumeReader{shadow: shadow, semanticsMatch: semanticsMatch, expectedSemantics: semantics}, 10*time.Second)
 		} else {
 			inventoryPath := filepath.Join(cfg.Scan.StateDir, "inventory.json")
 			inventory, err = state.NewInventoryManager(inventoryPath, 10*time.Second)
 			if err != nil {
-				logger.Warnf("incremental inventory unavailable; scanning without content skip state: %v", err)
+				if cfg.Scan.LegacyJSON {
+					logger.Warnf("incremental inventory unavailable; scanning without content skip state: %v", err)
+				}
 				inventory = nil
 			}
 		}
@@ -195,12 +240,14 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			} else if ctx.Err() != nil || output.WasCanceledByUser(sink) {
 				status = store.StatusInterrupted
 			}
-			if err != nil {
+			if err != nil || shadow.Failure() != nil {
 				status = store.StatusFailed
 			}
-			_ = shadow.SetScanStatus(status, time.Now().UTC())
-			if closeErr := shadow.Close(); closeErr != nil {
-				logger.Warnf("SQLite shadow state flush failed: %v", closeErr)
+			if statusErr := shadow.SetScanStatus(status, time.Now().UTC()); statusErr != nil && err == nil {
+				err = fmt.Errorf("authoritative SQLite status update failed: %w", statusErr)
+			}
+			if closeErr := shadow.Close(); closeErr != nil && err == nil {
+				err = fmt.Errorf("authoritative SQLite state close failed: %w", closeErr)
 			}
 		}()
 	}
@@ -400,7 +447,13 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	timedOut := false
 	scanTimer := recorder.StartPhase("host_scanning")
 	for _, target := range plannedHosts {
+		if failure := authorityFailure(); failure != nil {
+			return failure
+		}
 		if err := scanCtx.Err(); err != nil {
+			if failure := authorityFailure(); failure != nil {
+				return failure
+			}
 			if errors.Is(err, context.Canceled) && output.WasCanceledByUser(sink) {
 				return nil
 			}
@@ -410,7 +463,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			}
 			return err
 		}
-		if !incrementalEnabled && checkpoints != nil && checkpoints.ShouldSkipHost(target.Host) {
+		if (sqliteAuthority || !incrementalEnabled) && checkpoints != nil && checkpoints.ShouldSkipHost(target.Host) {
 			logger.Infof("resume: skipping completed host %s", target.Host)
 			output.MarkTargetProcessed(sink)
 			if progress != nil {
@@ -423,6 +476,9 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			progress.SetCurrentHost(target.Host)
 		}
 		if err := scanHost(scanCtx, target.Host, target.Source, resolvedTargets.DFSTargets, checkpoints, inventory, credentialContextID, semantics, cfg.Scan.ForceRescan, recorder, cfg, engine, sink, logger); err != nil {
+			if failure := authorityFailure(); failure != nil {
+				return failure
+			}
 			if errors.Is(err, context.Canceled) && output.WasCanceledByUser(sink) {
 				return nil
 			}
@@ -461,10 +517,16 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		return nil
 	}
 	if len(errs) > 0 {
+		if failure := authorityFailure(); failure != nil {
+			return failure
+		}
 		if errors.Is(errors.Join(errs...), context.Canceled) && output.WasCanceledByUser(sink) {
 			return nil
 		}
 		return errors.Join(errs...)
+	}
+	if failure := authorityFailure(); failure != nil {
+		return failure
 	}
 	return nil
 }
@@ -631,7 +693,7 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 	var walkErrs []error
 	for _, sharePlan := range plannedShares {
 		incrementalEnabled := incrementalScanEnabled(cfg)
-		if !incrementalEnabled && checkpoints != nil && checkpoints.ShouldSkipShare(host, sharePlan.Share) {
+		if (!cfg.Scan.LegacyJSON || !incrementalEnabled) && checkpoints != nil && checkpoints.ShouldSkipShare(host, sharePlan.Share) {
 			logger.Infof("resume: skipping completed share %s/%s", host, sharePlan.Share)
 			continue
 		}
@@ -952,7 +1014,22 @@ func scanSemanticsFingerprintWithVersion(cfg config.Config, manager *rules.Manag
 }
 
 func incrementalScanEnabled(cfg config.Config) bool {
-	return cfg.Scan.Incremental || cfg.Scan.SQLiteResume || strings.TrimSpace(cfg.Scan.StateDir) != ""
+	return cfg.Scan.Incremental || strings.TrimSpace(cfg.Scan.StateDir) != ""
+}
+
+func sqliteStatePath(cfg config.Config) string {
+	if path := strings.TrimSpace(cfg.Scan.SQLiteStateFile); path != "" {
+		return path
+	}
+	if dir := strings.TrimSpace(cfg.Scan.StateDir); dir != "" {
+		return filepath.Join(dir, "snablr.db")
+	}
+	for _, candidate := range []string{cfg.Output.HTMLOut, cfg.Output.JSONOut, cfg.Output.MDOut, cfg.Output.CSVOut, cfg.Output.CredsOut, cfg.Output.ScannedTargetsOut} {
+		if candidate = strings.TrimSpace(candidate); candidate != "" && candidate != "-" {
+			return filepath.Join(filepath.Dir(candidate), "snablr.db")
+		}
+	}
+	return "snablr.db"
 }
 
 func resolveSMBSPN(target, hostname, override string) (string, error) {

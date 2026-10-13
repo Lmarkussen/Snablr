@@ -265,3 +265,46 @@ func TestShadowStoreScale100kFiles(t *testing.T) {
 }
 
 func intString(value int) string { return strconv.Itoa(value) }
+
+func TestAuthoritativeWriteFailureIsReportedWithoutCorruptingCommittedBatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	s, err := Open(path, Options{ScanID: "scan-failure", SnablrVersion: "test", Semantics: "semantics-synthetic", BatchSize: 1, FailAfterBatches: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordTarget("synthetic-host.test", "partial", storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordShare("synthetic-host.test", "SyntheticShare", "partial", storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(); err == nil {
+		t.Fatal("expected injected authoritative write failure")
+	}
+	if s.Failure() == nil {
+		t.Fatal("store did not retain authoritative failure")
+	}
+	if err := s.Close(); err == nil {
+		t.Fatal("close should report authoritative failure")
+	}
+
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var targets int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM targets WHERE scan_id='scan-failure'`).Scan(&targets); err != nil {
+		t.Fatal(err)
+	}
+	var shares int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM shares WHERE scan_id='scan-failure'`).Scan(&shares); err != nil {
+		t.Fatal(err)
+	}
+	if targets != 1 || shares != 0 {
+		t.Fatalf("committed batch integrity lost: targets=%d shares=%d", targets, shares)
+	}
+}

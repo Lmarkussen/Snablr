@@ -138,9 +138,10 @@ func runScan(args []string) error {
 	maxScanTime := fs.String("max-scan-time", "", "Maximum total scan time, for example 30m or 2h")
 	checkpointFile := fs.String("checkpoint-file", "", "Path to persistent exact-resume checkpoint JSON (contains progress/path metadata)")
 	resume := fs.Bool("resume", false, "Resume from an existing persistent checkpoint file")
+	legacyJSON := fs.Bool("legacy-json", false, "Use the legacy JSON checkpoint/inventory backend instead of authoritative SQLite")
 	stateDir := fs.String("state-dir", "", "Directory for incremental metadata (target/share/path metadata; treat as sensitive engagement data)")
-	sqliteStateFile := fs.String("sqlite-state-file", "", "Optional SQLite shadow state file; JSON checkpoint/inventory remain authoritative")
-	sqliteResume := fs.Bool("sqlite-resume", false, "EXPERIMENTAL: resume from SQLite shadow state; requires --resume and --sqlite-state-file")
+	sqliteStateFile := fs.String("sqlite-state-file", "", "Optional SQLite state file override (default: snablr.db in the output workspace)")
+	sqliteResume := fs.Bool("sqlite-resume", false, "Compatibility alias for SQLite-authoritative --resume")
 	incremental := fs.Bool("incremental", false, "Reuse unchanged completed file inspections from --state-dir; persists inventory metadata")
 	forceRescan := fs.Bool("force-rescan", false, "Ignore reusable completed objects in incremental state")
 	listShares := fs.Bool("list-shares", false, "List readable shares accessible to the authenticated user and exit")
@@ -229,6 +230,7 @@ func runScan(args []string) error {
 		MaxScanTime:                *maxScanTime,
 		CheckpointFile:             *checkpointFile,
 		Resume:                     *resume,
+		LegacyJSON:                 *legacyJSON,
 		StateDir:                   *stateDir,
 		SQLiteStateFile:            *sqliteStateFile,
 		SQLiteResume:               *sqliteResume,

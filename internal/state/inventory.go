@@ -536,13 +536,14 @@ type InventoryManager struct {
 	inventory *Inventory
 	interval  time.Duration
 
-	mu       sync.Mutex
-	started  bool
-	stopOnce sync.Once
-	stopCh   chan struct{}
-	doneCh   chan struct{}
-	shadow   ShadowStore
-	scanID   string
+	mu            sync.Mutex
+	started       bool
+	authoritative bool
+	stopOnce      sync.Once
+	stopCh        chan struct{}
+	doneCh        chan struct{}
+	shadow        ShadowStore
+	scanID        string
 }
 
 func (m *InventoryManager) AttachShadow(shadow ShadowStore, scanID string) {
@@ -570,9 +571,9 @@ func NewInventoryManager(filePath string, interval time.Duration) (*InventoryMan
 	}, nil
 }
 
-// NewInventoryManagerFromSQLite constructs the normal inventory decision
-// engine from a validated SQLite logical state. Its empty path keeps this
-// migration-only manager in memory; JSON remains the default persistence.
+// NewInventoryManagerFromSQLite constructs the compatibility inventory
+// decision engine from a validated SQLite logical state. Its empty path keeps
+// this manager in memory; the SQLite store owns persistence.
 func NewInventoryManagerFromSQLite(resume SQLiteResumeState) *InventoryManager {
 	inventory := &Inventory{objects: make(map[string]ObjectRecord), access: make(map[string]AccessObservation)}
 	if resume.SemanticsMatch {
@@ -591,7 +592,7 @@ func NewInventoryManagerFromSQLiteReader(reader SQLiteResumeReader, interval tim
 	if interval <= 0 {
 		interval = defaultSaveInterval
 	}
-	return &InventoryManager{inventory: &Inventory{objects: make(map[string]ObjectRecord), access: make(map[string]AccessObservation), resumeReader: reader}, interval: interval, stopCh: make(chan struct{}), doneCh: make(chan struct{})}
+	return &InventoryManager{inventory: &Inventory{objects: make(map[string]ObjectRecord), access: make(map[string]AccessObservation), resumeReader: reader}, interval: interval, authoritative: true, stopCh: make(chan struct{}), doneCh: make(chan struct{})}
 }
 
 func (m *InventoryManager) Enabled() bool {
@@ -633,6 +634,9 @@ func (m *InventoryManager) Start(ctx context.Context) {
 
 func (m *InventoryManager) Save() error {
 	if !m.Enabled() {
+		return nil
+	}
+	if m.authoritative {
 		return nil
 	}
 	return m.inventory.Save()

@@ -27,6 +27,8 @@ type Options struct {
 	QueueSize     int
 	BatchSize     int
 	FlushEvery    time.Duration
+	// FailAfterBatches is test-only fault injection. Zero disables it.
+	FailAfterBatches int
 }
 
 type Status string
@@ -46,18 +48,20 @@ type FileState struct {
 }
 
 type ShadowStore struct {
-	db        *sql.DB
-	path      string
-	scanID    string
-	queue     chan event
-	batch     int
-	interval  time.Duration
-	done      chan struct{}
-	closeOnce sync.Once
-	mu        sync.RWMutex
-	closed    bool
-	healthy   bool
-	firstErr  error
+	db               *sql.DB
+	path             string
+	scanID           string
+	queue            chan event
+	batch            int
+	interval         time.Duration
+	done             chan struct{}
+	closeOnce        sync.Once
+	mu               sync.RWMutex
+	closed           bool
+	healthy          bool
+	firstErr         error
+	committedBatches int
+	failAfterBatches int
 }
 
 func (s *ShadowStore) ScanID() string {
@@ -111,7 +115,7 @@ func Open(path string, options Options) (*ShadowStore, error) {
 		return cleanup(err)
 	}
 	_ = os.Chmod(path, 0o600)
-	s := &ShadowStore{db: db, path: path, scanID: options.ScanID, queue: make(chan event, options.QueueSize), batch: options.BatchSize, interval: options.FlushEvery, done: make(chan struct{}), healthy: true}
+	s := &ShadowStore{db: db, path: path, scanID: options.ScanID, queue: make(chan event, options.QueueSize), batch: options.BatchSize, interval: options.FlushEvery, done: make(chan struct{}), healthy: true, failAfterBatches: options.FailAfterBatches}
 	if err := s.BeginScan(options.ScanID, options.SnablrVersion, options.Semantics, time.Now().UTC()); err != nil {
 		return cleanup(err)
 	}
@@ -187,6 +191,9 @@ func (s *ShadowStore) run() {
 }
 
 func (s *ShadowStore) commit(events []event) error {
+	if s.failAfterBatches > 0 && s.committedBatches >= s.failAfterBatches {
+		return errors.New("synthetic authoritative SQLite write failure")
+	}
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return err
@@ -200,6 +207,7 @@ func (s *ShadowStore) commit(events []event) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	s.committedBatches++
 	return s.restrictSidecars()
 }
 
@@ -250,7 +258,11 @@ func (s *ShadowStore) Close() error {
 	return s.healthError()
 }
 
-func (s *ShadowStore) Healthy() bool      { return s != nil && s.healthError() == nil }
+func (s *ShadowStore) Healthy() bool { return s != nil && s.healthError() == nil }
+
+// Failure reports the first authoritative persistence error, if any.
+// Callers use this to stop scheduling work rather than silently continuing.
+func (s *ShadowStore) Failure() error     { return s.healthError() }
 func (s *ShadowStore) healthError() error { s.mu.RLock(); defer s.mu.RUnlock(); return s.firstErr }
 func (s *ShadowStore) markUnhealthy(err error) {
 	s.mu.Lock()
@@ -356,7 +368,8 @@ func timeString(t time.Time) any {
 	return t.UTC().Format(time.RFC3339Nano)
 }
 
-// ShadowSink forwards output events while making persistence failures non-fatal.
+// ShadowSink forwards output events while the owning scan monitors persistence
+// health and applies its authority-specific failure policy.
 type ShadowSink struct {
 	underlying scanner.FindingSink
 	store      *ShadowStore

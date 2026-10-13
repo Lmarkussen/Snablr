@@ -15,8 +15,9 @@ type shareProgress struct {
 }
 
 type Manager struct {
-	store    *Store
-	interval time.Duration
+	store         *Store
+	interval      time.Duration
+	authoritative bool
 
 	mu      sync.Mutex
 	pending map[string]*shareProgress
@@ -59,9 +60,8 @@ func NewManager(path string, resume bool, interval time.Duration) (*Manager, err
 	}, nil
 }
 
-// NewManagerFromSQLite adapts a validated SQLite logical state to the same
-// checkpoint decisions used by JSON. It is intentionally only used by the
-// experimental SQLite resume path.
+// NewManagerFromSQLite adapts validated SQLite logical state to checkpoint
+// decisions without creating a JSON checkpoint.
 type SQLiteResumeState struct {
 	SemanticsMatch bool
 	Targets        []SQLiteTargetState
@@ -117,7 +117,7 @@ func NewManagerFromSQLiteReader(reader SQLiteResumeReader, interval time.Duratio
 	if interval <= 0 {
 		interval = defaultSaveInterval
 	}
-	return &Manager{store: &Store{files: make(map[string]fileState), hosts: make(map[string]struct{}), shares: make(map[string]struct{})}, interval: interval, resumeReader: reader, pending: make(map[string]*shareProgress), stopCh: make(chan struct{}), doneCh: make(chan struct{})}
+	return &Manager{store: &Store{files: make(map[string]fileState), hosts: make(map[string]struct{}), shares: make(map[string]struct{})}, interval: interval, resumeReader: reader, authoritative: true, pending: make(map[string]*shareProgress), stopCh: make(chan struct{}), doneCh: make(chan struct{})}
 }
 
 func (m *Manager) Enabled() bool {
@@ -161,6 +161,9 @@ func (m *Manager) Save() error {
 	if !m.Enabled() {
 		return nil
 	}
+	if m.authoritative {
+		return nil
+	}
 	return m.store.Save()
 }
 
@@ -183,7 +186,12 @@ func (m *Manager) ShouldSkipHost(host string) bool {
 	if !m.Enabled() {
 		return false
 	}
-	skip := m.store.IsHostComplete(host)
+	skip := false
+	if m.resumeReader != nil {
+		skip, _ = m.resumeReader.ResumeTargetComplete(host)
+	} else {
+		skip = m.store.IsHostComplete(host)
+	}
 	if skip && m.shadow != nil {
 		_ = m.shadow.RecordTarget(host, "completed", time.Now().UTC())
 	}
@@ -194,7 +202,12 @@ func (m *Manager) ShouldSkipShare(host, share string) bool {
 	if !m.Enabled() {
 		return false
 	}
-	skip := m.store.IsShareComplete(host, share)
+	skip := false
+	if m.resumeReader != nil {
+		skip, _ = m.resumeReader.ResumeShareComplete(host, share)
+	} else {
+		skip = m.store.IsShareComplete(host, share)
+	}
 	if skip && m.shadow != nil {
 		_ = m.shadow.RecordShare(host, share, "completed", time.Now().UTC())
 	}
@@ -205,7 +218,13 @@ func (m *Manager) ShouldSkipFile(host, share, path string, size int64, modifiedA
 	if !m.Enabled() {
 		return false
 	}
-	skip := m.store.IsFileComplete(host, share, path, size, modifiedAt)
+	skip := false
+	if m.resumeReader != nil {
+		file, ok, _ := m.resumeReader.LookupFile(host, share, path)
+		skip = ok && (file.Status == "completed" || file.Status == "skipped_unchanged") && file.Size == size && file.ModifiedAt.Equal(modifiedAt)
+	} else {
+		skip = m.store.IsFileComplete(host, share, path, size, modifiedAt)
+	}
 	if skip && m.shadow != nil {
 		_ = m.shadow.RecordFile(FileKey(host, share, path), host, share, path, "completed", "", size, modifiedAt, time.Time{}, time.Time{}, time.Now().UTC())
 	}

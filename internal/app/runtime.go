@@ -166,6 +166,9 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if strings.TrimSpace(opts.SQLiteStateFile) != "" {
 		cfg.Scan.SQLiteStateFile = opts.SQLiteStateFile
 	}
+	if opts.SQLiteResume {
+		cfg.Scan.SQLiteResume = true
+	}
 	if opts.Incremental {
 		cfg.Scan.Incremental = true
 	}
@@ -364,8 +367,16 @@ func validateScanConfig(cfg config.Config) error {
 	if cfg.Scan.MaxDepth < 0 {
 		return fmt.Errorf("max_depth cannot be negative")
 	}
-	if cfg.Scan.Resume && strings.TrimSpace(cfg.Scan.CheckpointFile) == "" {
+	if cfg.Scan.Resume && !cfg.Scan.SQLiteResume && strings.TrimSpace(cfg.Scan.CheckpointFile) == "" {
 		return fmt.Errorf("resume requires a checkpoint file: set scan.checkpoint_file or pass --checkpoint-file")
+	}
+	if cfg.Scan.SQLiteResume {
+		if strings.TrimSpace(cfg.Scan.SQLiteStateFile) == "" {
+			return fmt.Errorf("sqlite resume requires a SQLite state file: set scan.sqlite_state_file or pass --sqlite-state-file")
+		}
+		if !cfg.Scan.Resume {
+			return fmt.Errorf("sqlite resume is experimental and requires --resume")
+		}
 	}
 	if cfg.Scan.Incremental && strings.TrimSpace(cfg.Scan.StateDir) == "" {
 		return fmt.Errorf("incremental scanning requires a state directory: set scan.state_dir or pass --state-dir")

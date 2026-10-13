@@ -60,6 +60,13 @@ type ShadowStore struct {
 	firstErr  error
 }
 
+func (s *ShadowStore) ScanID() string {
+	if s == nil {
+		return ""
+	}
+	return s.scanID
+}
+
 type event struct {
 	apply   func(*sql.Tx) error
 	barrier chan error
@@ -314,12 +321,25 @@ func (s *ShadowStore) RecordFinding(f scanner.Finding) error {
 	})
 }
 func (s *ShadowStore) RecordCredential(c credentialanalysis.Candidate) error {
-	payload, _ := json.Marshal(c)
+	payload, _ := credentialPayload(c)
 	key := fmt.Sprintf("%s|%s|%s|%s", c.CredentialType, c.Identity, c.Path, c.Value)
 	return s.enqueue(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO credentials(scan_id,credential_key,credential_type,identity,value,payload) VALUES(?,?,?,?,?,?) ON CONFLICT(scan_id,credential_key) DO UPDATE SET payload=excluded.payload,value=excluded.value`, s.scanID, key, c.CredentialType, c.Identity, c.Value, payload)
 		return err
 	})
+}
+
+func credentialPayload(c credentialanalysis.Candidate) ([]byte, error) {
+	data, err := json.Marshal(c)
+	if err != nil {
+		return nil, err
+	}
+	var object map[string]any
+	if err := json.Unmarshal(data, &object); err != nil {
+		return nil, err
+	}
+	object["value"] = c.Value
+	return json.Marshal(object)
 }
 func (s *ShadowStore) RecordCorrelation(key string, payload any) error {
 	data, _ := json.Marshal(payload)

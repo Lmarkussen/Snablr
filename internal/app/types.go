@@ -37,6 +37,7 @@ type ScanOptions struct {
 	Resume                     bool
 	StateDir                   string
 	SQLiteStateFile            string
+	SQLiteResume               bool
 	Incremental                bool
 	ForceRescan                bool
 	ListShares                 bool

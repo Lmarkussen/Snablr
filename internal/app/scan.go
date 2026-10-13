@@ -113,8 +113,31 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		}
 		return fmt.Errorf("rule validation failed with %d issue(s)", len(issues))
 	}
+	semantics := scanSemanticsFingerprint(cfg, manager)
+
+	var shadow *store.ShadowStore
+	var sqliteResume *store.ResumeState
+	if cfg.Scan.SQLiteResume {
+		var resumeState store.ResumeState
+		var resumeErr error
+		shadow, resumeState, resumeErr = store.OpenForResume(cfg.Scan.SQLiteStateFile, store.ResumeOptions{ExpectedSemantics: semantics})
+		if resumeErr != nil {
+			return fmt.Errorf("open SQLite resume state: %w", resumeErr)
+		}
+		sqliteResume = &resumeState
+	} else if strings.TrimSpace(cfg.Scan.SQLiteStateFile) != "" {
+		shadow, err = store.Open(cfg.Scan.SQLiteStateFile, store.Options{Semantics: semantics, SnablrVersion: version.String()})
+		if err != nil {
+			logger.Warnf("SQLite shadow state unavailable; continuing with JSON state: %v", err)
+			shadow = nil
+		}
+	}
 
 	var sink scanner.FindingSink
+	var sqliteManagerState state.SQLiteResumeState
+	if sqliteResume != nil {
+		sqliteManagerState = sqliteResumeForState(*sqliteResume)
+	}
 
 	recorder := metrics.NewCollector()
 	totalTimer := recorder.StartPhase("total_scan")
@@ -125,9 +148,14 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		}
 	}()
 
-	checkpoints, err := state.NewManager(cfg.Scan.CheckpointFile, cfg.Scan.Resume, 10*time.Second)
-	if err != nil {
-		return fmt.Errorf("open checkpoint state: %w", err)
+	var checkpoints *state.Manager
+	if sqliteResume != nil {
+		checkpoints = state.NewManagerFromSQLite(sqliteManagerState, 10*time.Second)
+	} else {
+		checkpoints, err = state.NewManager(cfg.Scan.CheckpointFile, cfg.Scan.Resume, 10*time.Second)
+		if err != nil {
+			return fmt.Errorf("open checkpoint state: %w", err)
+		}
 	}
 	if checkpoints != nil {
 		checkpoints.Start(scanCtx)
@@ -137,12 +165,17 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	incrementalEnabled := incrementalScanEnabled(cfg)
 	var inventory *state.InventoryManager
 	if incrementalEnabled {
-		inventoryPath := filepath.Join(cfg.Scan.StateDir, "inventory.json")
-		inventory, err = state.NewInventoryManager(inventoryPath, 10*time.Second)
-		if err != nil {
-			logger.Warnf("incremental inventory unavailable; scanning without content skip state: %v", err)
-			inventory = nil
+		if sqliteResume != nil {
+			inventory = state.NewInventoryManagerFromSQLite(sqliteManagerState)
 		} else {
+			inventoryPath := filepath.Join(cfg.Scan.StateDir, "inventory.json")
+			inventory, err = state.NewInventoryManager(inventoryPath, 10*time.Second)
+			if err != nil {
+				logger.Warnf("incremental inventory unavailable; scanning without content skip state: %v", err)
+				inventory = nil
+			}
+		}
+		if inventory != nil {
 			inventory.Start(scanCtx)
 			defer func() {
 				if closeErr := inventory.Close(); closeErr != nil {
@@ -151,37 +184,29 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			}()
 		}
 	}
-	semantics := scanSemanticsFingerprint(cfg, manager)
 	credentialContextID := state.CredentialContextID(cfg.Scan.SMBAuth, cfg.Scan.Username, cfg.Scan.Domain)
-	var shadow *store.ShadowStore
-	if strings.TrimSpace(cfg.Scan.SQLiteStateFile) != "" {
-		shadow, err = store.Open(cfg.Scan.SQLiteStateFile, store.Options{Semantics: semantics, SnablrVersion: version.String()})
-		if err != nil {
-			logger.Warnf("SQLite shadow state unavailable; continuing with JSON state: %v", err)
-			shadow = nil
-		} else {
-			if checkpoints != nil {
-				checkpoints.AttachShadow(shadow, "")
-			}
-			if inventory != nil {
-				inventory.AttachShadow(shadow, "")
-			}
-			defer func() {
-				status := store.StatusCompleted
-				if errors.Is(scanCtx.Err(), context.DeadlineExceeded) {
-					status = store.StatusTimedOut
-				} else if ctx.Err() != nil || output.WasCanceledByUser(sink) {
-					status = store.StatusInterrupted
-				}
-				if err != nil {
-					status = store.StatusFailed
-				}
-				_ = shadow.SetScanStatus(status, time.Now().UTC())
-				if closeErr := shadow.Close(); closeErr != nil {
-					logger.Warnf("SQLite shadow state flush failed: %v", closeErr)
-				}
-			}()
+	if shadow != nil {
+		if checkpoints != nil {
+			checkpoints.AttachShadow(shadow, shadow.ScanID())
 		}
+		if inventory != nil {
+			inventory.AttachShadow(shadow, shadow.ScanID())
+		}
+		defer func() {
+			status := store.StatusCompleted
+			if errors.Is(scanCtx.Err(), context.DeadlineExceeded) {
+				status = store.StatusTimedOut
+			} else if ctx.Err() != nil || output.WasCanceledByUser(sink) {
+				status = store.StatusInterrupted
+			}
+			if err != nil {
+				status = store.StatusFailed
+			}
+			_ = shadow.SetScanStatus(status, time.Now().UTC())
+			if closeErr := shadow.Close(); closeErr != nil {
+				logger.Warnf("SQLite shadow state flush failed: %v", closeErr)
+			}
+		}()
 	}
 
 	bundles := artifactbundle.New(artifactbundle.Options{})
@@ -308,6 +333,11 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	}
 	if recorder, ok := sink.(scanner.CredentialCandidateSink); ok {
 		engine.SetCredentialCandidateSink(recorder)
+	}
+	if sqliteResume != nil {
+		if err := replaySQLiteState(sink, *sqliteResume); err != nil {
+			return fmt.Errorf("rehydrate SQLite findings: %w", err)
+		}
 	}
 	output.SetCancelFunc(sink, scanCancel)
 	output.SetScanProfile(sink, strings.TrimSpace(cfg.Scan.Profile))
@@ -439,6 +469,47 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			return nil
 		}
 		return errors.Join(errs...)
+	}
+	return nil
+}
+
+func sqliteResumeForState(resume store.ResumeState) state.SQLiteResumeState {
+	out := state.SQLiteResumeState{SemanticsMatch: resume.SemanticsMatch}
+	for _, target := range resume.Targets {
+		out.Targets = append(out.Targets, state.SQLiteTargetState{Host: target.Host, Status: target.Status})
+	}
+	for _, share := range resume.Shares {
+		out.Shares = append(out.Shares, state.SQLiteShareState{Host: share.Host, Share: share.Share, Status: share.Status})
+	}
+	for _, file := range resume.Files {
+		out.Files = append(out.Files, state.SQLiteFileState{Key: file.Key, Host: file.Host, Share: file.Share, Path: file.Path, Status: file.Status, Semantics: file.Semantics, Size: file.Size, ModifiedAt: file.ModifiedAt, FirstSeen: file.FirstSeen, LastSeen: file.LastSeen, UpdatedAt: file.UpdatedAt})
+	}
+	for _, access := range resume.Access {
+		out.Access = append(out.Access, state.SQLiteAccessState{ContextID: access.ContextID, FileKey: access.FileKey, Result: access.Result, FirstSeen: access.FirstSeen, LastSeen: access.LastSeen})
+	}
+	return out
+}
+
+func replaySQLiteState(sink scanner.FindingSink, resume store.ResumeState) error {
+	for _, finding := range resume.Findings {
+		if !resume.FileWasCompleted(finding.Host, finding.Share, finding.FilePath) && finding.FilePath != "" {
+			continue
+		}
+		if err := sink.WriteFinding(finding); err != nil {
+			return err
+		}
+	}
+	recorder, ok := sink.(scanner.CredentialCandidateSink)
+	if !ok {
+		return nil
+	}
+	for _, candidate := range resume.Credentials {
+		if candidate.Path != "" && !resume.FileWasCompleted(candidate.Host, candidate.Share, candidate.Path) {
+			continue
+		}
+		if err := recorder.RecordCredentialCandidate(candidate); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -874,7 +945,7 @@ func scanSemanticsFingerprintWithVersion(cfg config.Config, manager *rules.Manag
 }
 
 func incrementalScanEnabled(cfg config.Config) bool {
-	return cfg.Scan.Incremental || strings.TrimSpace(cfg.Scan.StateDir) != ""
+	return cfg.Scan.Incremental || cfg.Scan.SQLiteResume || strings.TrimSpace(cfg.Scan.StateDir) != ""
 }
 
 func resolveSMBSPN(target, hostname, override string) (string, error) {

@@ -65,6 +65,7 @@ type ScanConfig struct {
 	Resume                     bool     `yaml:"resume"`
 	StateDir                   string   `yaml:"state_dir"`
 	SQLiteStateFile            string   `yaml:"sqlite_state_file"`
+	SQLiteResume               bool     `yaml:"sqlite_resume"`
 	Incremental                bool     `yaml:"incremental"`
 	ForceRescan                bool     `yaml:"force_rescan"`
 	SkipReachabilityCheck      bool     `yaml:"skip_reachability_check"`

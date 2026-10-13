@@ -564,6 +564,23 @@ func NewInventoryManager(filePath string, interval time.Duration) (*InventoryMan
 	}, nil
 }
 
+// NewInventoryManagerFromSQLite constructs the normal inventory decision
+// engine from a validated SQLite logical state. Its empty path keeps this
+// migration-only manager in memory; JSON remains the default persistence.
+func NewInventoryManagerFromSQLite(resume SQLiteResumeState) *InventoryManager {
+	inventory := &Inventory{objects: make(map[string]ObjectRecord), access: make(map[string]AccessObservation)}
+	if resume.SemanticsMatch {
+		for _, file := range resume.Files {
+			inventory.objects[file.Key] = ObjectRecord{Key: file.Key, Identity: ObjectIdentity{Server: file.Host, Share: file.Share, Path: file.Path}, Size: file.Size, ModifiedAt: file.ModifiedAt, Status: ObjectStatus(file.Status), Semantics: file.Semantics, FirstSeen: file.FirstSeen, LastSeen: file.LastSeen, UpdatedAt: file.UpdatedAt}
+		}
+		for _, access := range resume.Access {
+			observation := AccessObservation{CredentialContextID: access.ContextID, ObjectKey: access.FileKey, FirstSeen: access.FirstSeen, LastSeen: access.LastSeen, AccessResult: access.Result}
+			inventory.access[accessKey(access.ContextID, access.FileKey)] = observation
+		}
+	}
+	return &InventoryManager{inventory: inventory, interval: defaultSaveInterval, stopCh: make(chan struct{}), doneCh: make(chan struct{})}
+}
+
 func (m *InventoryManager) Enabled() bool {
 	return m != nil && m.inventory != nil
 }

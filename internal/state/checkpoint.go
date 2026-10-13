@@ -58,6 +58,54 @@ func NewManager(path string, resume bool, interval time.Duration) (*Manager, err
 	}, nil
 }
 
+// NewManagerFromSQLite adapts a validated SQLite logical state to the same
+// checkpoint decisions used by JSON. It is intentionally only used by the
+// experimental SQLite resume path.
+type SQLiteResumeState struct {
+	SemanticsMatch bool
+	Targets        []SQLiteTargetState
+	Shares         []SQLiteShareState
+	Files          []SQLiteFileState
+	Access         []SQLiteAccessState
+}
+
+type SQLiteTargetState struct{ Host, Status string }
+type SQLiteShareState struct{ Host, Share, Status string }
+type SQLiteFileState struct {
+	Key, Host, Share, Path, Status, Semantics  string
+	Size                                       int64
+	ModifiedAt, FirstSeen, LastSeen, UpdatedAt time.Time
+}
+type SQLiteAccessState struct {
+	ContextID, FileKey, Result string
+	FirstSeen, LastSeen        time.Time
+}
+
+func NewManagerFromSQLite(resume SQLiteResumeState, interval time.Duration) *Manager {
+	checkpoint := &Store{files: make(map[string]fileState), hosts: make(map[string]struct{}), shares: make(map[string]struct{})}
+	if resume.SemanticsMatch {
+		for _, target := range resume.Targets {
+			if target.Status == "completed" {
+				checkpoint.hosts[HostKey(target.Host)] = struct{}{}
+			}
+		}
+		for _, share := range resume.Shares {
+			if share.Status == "completed" {
+				checkpoint.shares[ShareKey(share.Host, share.Share)] = struct{}{}
+			}
+		}
+		for _, file := range resume.Files {
+			if file.Status == "completed" || file.Status == "skipped_unchanged" {
+				checkpoint.files[normalizeKey(file.Key)] = fileState{Size: file.Size, ModifiedAt: file.ModifiedAt}
+			}
+		}
+	}
+	if interval <= 0 {
+		interval = defaultSaveInterval
+	}
+	return &Manager{store: checkpoint, interval: interval, pending: make(map[string]*shareProgress), stopCh: make(chan struct{}), doneCh: make(chan struct{})}
+}
+
 func (m *Manager) Enabled() bool {
 	return m != nil && m.store != nil && m.store.Enabled()
 }

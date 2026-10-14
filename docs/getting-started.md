@@ -121,6 +121,26 @@ Where results go in this example:
 
 Open `report.html` in a browser after the scan finishes.
 
+## Interactive TUI Controls
+
+Interactive terminal scans open the two-pane TUI unless `--no-tui` is used.
+The left pane lists findings and the right pane shows wrapped, scrollable
+evidence and provenance.
+
+- `Ctrl-F` searches bounded SQLite-backed scan state across useful file/path,
+  host/share, finding, credential, and evidence fields.
+- `Ctrl-D` toggles a persistent file-centric bookmark; `Alt-D` opens bookmarks.
+- `Alt-L` defers the current share to the end; `Alt-Q` opens the Share Queue.
+- `Tab` switches pane focus. Use `Up`/`Down`, `j`/`k`, `PgUp`/`PgDn`, `g`/`G`,
+  `Enter`, and `Esc` according to the focused list or detail view.
+- `Ctrl-C` stops a foreground scan, leaves SQLite state resumable, and exits
+  with status `130`.
+
+Deferring a share does not skip it permanently. Safe in-flight work finishes,
+completed file state is reused, and the scanner eventually returns to the
+deferred share. Deferred queue order is not currently preserved across
+Ctrl-C/resume. Daemon/attach mode is not implemented.
+
 ## First Scan: Config-Driven
 
 For repeatable usage, start from one of the example configs.

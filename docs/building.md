@@ -76,7 +76,7 @@ make lint
 
 ## Release Binaries
 
-Snablr publishes release archives for:
+The tagged GitHub Actions workflow is configured to build release archives for:
 
 - `linux/amd64`
 - `linux/arm64`
@@ -84,7 +84,7 @@ Snablr publishes release archives for:
 - `darwin/arm64`
 - `windows/amd64`
 
-Artifact names follow this pattern:
+When a tagged release has actually been published, artifact names follow this pattern:
 
 - `snablr_vX.Y.Z_linux_amd64.tar.gz`
 - `snablr_vX.Y.Z_windows_amd64.zip`
@@ -92,6 +92,8 @@ Artifact names follow this pattern:
 ## How Releases Are Produced
 
 Release automation runs in GitHub Actions when a tag matching `v*` is pushed.
+This repository does not promise that a release asset exists for every commit;
+check GitHub Releases for the current published assets.
 
 Example:
 

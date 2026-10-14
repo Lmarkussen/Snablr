@@ -1597,14 +1597,14 @@ func TestCredsWriterExportsNTDSHashesOnlyInSensitiveOutput(t *testing.T) {
 	writer := NewCredsWriter(&buf, nopCloser{})
 	hashA := bytes.Repeat([]byte{0x01}, 16)
 	hashB := bytes.Repeat([]byte{0xab}, 16)
-	if err := writer.ExportNTDSCurrentHash("SCCM.LAB", "z-user", `\\fileserver01\WIM!Windows/NTDS/ntds.dit`, 1104, "S-1-5-21-1-2-3-1104", false, true, hashB); err != nil {
+	if err := writer.ExportNTDSCurrentHash("SYNTHETIC.LOCAL", "z-user", `\\synthetic-fileserver\WIM!Windows/NTDS/ntds.dit`, 1104, "S-1-5-21-1-2-3-1104", false, true, hashB); err != nil {
 		t.Fatalf("ExportNTDSCurrentHash returned error: %v", err)
 	}
-	if err := writer.ExportNTDSCurrentHash("SCCM.LAB", "CLIENT$", `\\fileserver01\WIM!Windows/NTDS/ntds.dit`, 1107, "S-1-5-21-1-2-3-1107", true, false, hashA); err != nil {
+	if err := writer.ExportNTDSCurrentHash("SYNTHETIC.LOCAL", "CLIENT$", `\\synthetic-fileserver\WIM!Windows/NTDS/ntds.dit`, 1107, "S-1-5-21-1-2-3-1107", true, false, hashA); err != nil {
 		t.Fatalf("ExportNTDSCurrentHash returned error: %v", err)
 	}
 	// Rehydration/repeated callbacks must not duplicate the sensitive record.
-	if err := writer.ExportNTDSCurrentHash("SCCM.LAB", "CLIENT$", `\\fileserver01\WIM!Windows/NTDS/ntds.dit`, 1107, "S-1-5-21-1-2-3-1107", true, false, hashA); err != nil {
+	if err := writer.ExportNTDSCurrentHash("SYNTHETIC.LOCAL", "CLIENT$", `\\synthetic-fileserver\WIM!Windows/NTDS/ntds.dit`, 1107, "S-1-5-21-1-2-3-1107", true, false, hashA); err != nil {
 		t.Fatalf("duplicate ExportNTDSCurrentHash returned error: %v", err)
 	}
 	if err := writer.Close(); err != nil {
@@ -1618,7 +1618,7 @@ func TestCredsWriterExportsNTDSHashesOnlyInSensitiveOutput(t *testing.T) {
 	if strings.Index(output, "Account: CLIENT$") > strings.Index(output, "Account: z-user") {
 		t.Fatalf("expected deterministic account ordering, got:\n%s", output)
 	}
-	for _, want := range []string{"Domain: SCCM.LAB", "RID: 1104", "Account type: machine", "Disabled: true", "Current NT hash: " + hex.EncodeToString(hashA)} {
+	for _, want := range []string{"Domain: SYNTHETIC.LOCAL", "RID: 1104", "Account type: machine", "Disabled: true", "Current NT hash: " + hex.EncodeToString(hashA)} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected NTDS export to contain %q, got:\n%s", want, output)
 		}

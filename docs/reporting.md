@@ -96,6 +96,11 @@ Controls:
 - `g` / `G`
 - `PgUp` / `PgDn`
 - `q` warns during an active scan
+- `Ctrl-F` searches bounded SQLite-backed scan state
+- `Ctrl-D` toggles a file-centric bookmark; `Alt-D` opens bookmarks
+- `Alt-L` defers the current share; `Alt-Q` opens the Share Queue
+- `Tab` switches pane focus; `Enter` opens a result; `Esc` goes back
+- `Ctrl-C` stops a foreground scan and leaves SQLite state resumable
 
 Implementation note:
 

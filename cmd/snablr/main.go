@@ -649,7 +649,8 @@ func printScanUsage(fs *flag.FlagSet) {
 	fmt.Println("Flags:")
 	fs.PrintDefaults()
 	fmt.Println()
-	fmt.Println("Ctrl-C gracefully stops a scan, finalizes accumulated outputs, and writes an INTERRUPTED / PARTIAL SCAN HTML report.")
+	fmt.Println("Ctrl-C gracefully stops a scan, finalizes explicitly selected outputs, and marks the SQLite scan state interrupted.")
+	fmt.Println("  No report is created unless its output was selected; interrupted reports are marked INTERRUPTED / PARTIAL SCAN.")
 	fmt.Println("Interrupted scans finalize only the output formats explicitly selected.")
 	fmt.Println("A successfully finalized interrupted scan exits with status 130.")
 }

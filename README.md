@@ -26,7 +26,7 @@ Snablr is intended for authorized defensive security work only. Run it only agai
 - Rule validation, fixture-based testing, and custom rule overlays
 - Prioritized scan planning for high-value targets, shares, and paths
 - Concurrent file scanning with a safe 15-worker production default; adaptive scaling remains available when explicitly requested
-- Checkpoint and resume support for longer scans, plus credential-independent incremental content state for credential pivots
+- SQLite-only authoritative checkpoint and resume support for longer scans, plus credential-independent incremental content state for credential pivots
 - Password, NTLM hash/pass-the-hash, and Kerberos FILE-ccache SMB authentication with signing verification
 - WIM inspection with bounded extraction and validated offline SAM+SYSTEM correlation
 - Bubble Tea live terminal UI for interactive console scans, plus JSON, HTML, CSV, and Markdown outputs
@@ -141,7 +141,7 @@ snablr scan --targets FILE01.example.com --no-ldap \
 
 Snablr does not create a hidden machine-global cache. Persistent paths are operator-controlled, and Snablr prints the resolved absolute paths at scan startup. The default scan writes `scanned_targets.txt` in the current directory; JSON/HTML output is written only when selected, and optional CSV, Markdown, and credential exports use the paths supplied in configuration or flags. Reports and exports can contain sensitive findings or evidence. Snablr creates these files with mode `0600` and creates output directories it owns with mode `0700`, subject to the operating system and existing parent-directory permissions.
 
-Pressing Ctrl-C during a scan gracefully stops new work, preserves completed findings, restores the terminal, and finalizes an HTML report marked `INTERRUPTED / PARTIAL SCAN`. An explicit `--html-out` path is honored. If no HTML path is supplied, the interrupted report is written to `snablr-interrupted.html`. After the report is finalized, Snablr exits with status `130`.
+Pressing Ctrl-C during a scan gracefully stops new work, preserves completed findings, restores the terminal, and marks the SQLite scan state `interrupted`. Any explicitly selected output is finalized with an `INTERRUPTED / PARTIAL SCAN` status; when no report/output was selected, no surprise report is created. Snablr exits with status `130`.
 
 The database contains progress, findings, credentials, provenance, and resume metadata. Treat `snablr.db`, reports, and exports as sensitive assessment data.
 
@@ -396,6 +396,39 @@ LDAP discovery is used only when you do not provide `--targets` or `--targets-fi
   Use before a live scan when you want to verify a rule against a known file.
 - `diff`
   Use after repeated scans when you want to focus on what changed since the last run.
+
+## Live TUI Workflow
+
+Interactive terminal scans use the two-pane TUI by default. The left pane lists
+findings and the right pane shows wrapped, scrollable evidence and provenance.
+Use `--no-tui` for plain console output.
+
+Important controls:
+
+- `Ctrl-F` — search the authoritative SQLite scan state. Search is bounded and
+  simple text search across useful file/path, host/share, finding, credential,
+  and evidence fields; it is not an advanced query language.
+- `Ctrl-D` — toggle a persistent, file-centric bookmark for the selected source.
+- `Alt-D` — open the bookmark browser.
+- `Alt-L` — defer the current share to the end of the remaining scan queue.
+- `Alt-Q` — open the share queue.
+- `Tab` — switch focus between findings and evidence panes.
+- `Up`/`Down`, `j`/`k`, `PgUp`/`PgDn`, `g`/`G`, `Enter`, and `Esc` navigate the
+  focused list or detail view.
+- `Ctrl-C` — stop a foreground scan. The SQLite state remains resumable.
+
+Bookmarks and share-queue actions operate on authoritative SQLite-backed scan
+state. Deferring a share does not skip it permanently: safe in-flight work is
+allowed to finish and the scanner eventually returns to the deferred share.
+Deferred queue order is currently not persisted across Ctrl-C/resume.
+
+Credential preflight distinguishes `Credentials are Valid`, `Credentials
+Invalid`, `Target Unreachable`, and other protocol/security errors. A network
+timeout is not reported as invalid credentials.
+
+Daemon/attach mode is not implemented in this release. Windows standalone
+release assets are produced only by the tagged release workflow; check GitHub
+Releases for an actual published asset rather than assuming one exists.
 
 ## Output Formats
 

@@ -1057,3 +1057,86 @@ func TestTUIBookmarkViewportFollowsSelection(t *testing.T) {
 		t.Fatalf("G did not move bookmark view to bottom: selected=%d start=%d", model.bookmarkSelected, model.bookmarkViewport)
 	}
 }
+
+func TestTUIAltLDefersCurrentShareAndAltQShowsQueue(t *testing.T) {
+	deferCalls := 0
+	queue := ShareQueueSnapshot{
+		CurrentHost:   "synthetic-host",
+		CurrentShare:  "HugeShare",
+		DeferredCount: 1,
+		Items: []ShareQueueItem{
+			{Host: "synthetic-host", Share: "Other", State: "pending"},
+			{Host: "synthetic-host", Share: "HugeShare", State: "deferred"},
+		},
+	}
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running", shareScheduler: ShareSchedulerHooks{
+		DeferCurrent: func() string {
+			deferCalls++
+			return "Deferred HugeShare to end of queue"
+		},
+		Snapshot: func() ShareQueueSnapshot { return queue },
+	}}
+	model := newTUIModel(writer)
+	model.windowLoaded = true
+	model.width = 100
+	model.height = 20
+	model.live = writer.liveState()
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}, Alt: true})
+	model = updated.(tuiModel)
+	if deferCalls != 1 || model.scheduleStatus != "Deferred HugeShare to end of queue" {
+		t.Fatalf("Alt-L did not defer current share: calls=%d status=%q", deferCalls, model.scheduleStatus)
+	}
+	if !strings.Contains(model.renderHeader(), "Current share:") || !strings.Contains(model.renderHeader(), "Deferred: 1") {
+		t.Fatal("header did not expose current share and deferred count")
+	}
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}, Alt: true})
+	model = updated.(tuiModel)
+	if !model.queueOpen {
+		t.Fatal("Alt-Q did not open share queue")
+	}
+	view := model.View()
+	if !strings.Contains(view, "HugeShare") || !strings.Contains(view, "DEFERRED") {
+		t.Fatalf("queue view missing deferred share: %q", view)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	if updated.(tuiModel).queueOpen {
+		t.Fatal("Esc did not close share queue")
+	}
+}
+
+func TestTUIShareQueueViewportFollowsSelection(t *testing.T) {
+	items := make([]ShareQueueItem, 0, 30)
+	for index := 0; index < 30; index++ {
+		items = append(items, ShareQueueItem{Host: "synthetic-host", Share: fmt.Sprintf("Share%02d", index), State: "pending"})
+	}
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"}
+	model := newTUIModel(writer)
+	model.windowLoaded = true
+	model.width = 80
+	model.height = 12
+	model.live.ShareQueue = ShareQueueSnapshot{Items: items}
+	model.queueOpen = true
+
+	for index := 0; index < 20; index++ {
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+		model = updated.(tuiModel)
+	}
+	if model.queueSelected != 20 || model.queueViewport == 0 {
+		t.Fatalf("queue viewport did not follow selection: selected=%d viewport=%d", model.queueSelected, model.queueViewport)
+	}
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	model = updated.(tuiModel)
+	if model.queueSelected != len(items)-1 {
+		t.Fatalf("G selected=%d, want %d", model.queueSelected, len(items)-1)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	model = updated.(tuiModel)
+	if model.queueSelected != 0 || model.queueViewport != 0 {
+		t.Fatalf("g did not return to queue top: selected=%d viewport=%d", model.queueSelected, model.queueViewport)
+	}
+	if lipgloss.Height(model.renderQueuePane(model.width, model.height)) > model.height {
+		t.Fatal("queue view exceeded terminal height")
+	}
+}

@@ -52,6 +52,7 @@ type TUIWriter struct {
 	targetsProcessed    int
 	currentHost         string
 	status              string
+	shareScheduler      ShareSchedulerHooks
 
 	events chan tea.Msg
 	done   chan struct{}
@@ -106,6 +107,25 @@ type tuiLiveState struct {
 	Status           string
 	Profile          string
 	Findings         []scanner.Finding
+	ShareQueue       ShareQueueSnapshot
+}
+
+type ShareQueueItem struct {
+	Host  string
+	Share string
+	State string
+}
+
+type ShareQueueSnapshot struct {
+	CurrentHost   string
+	CurrentShare  string
+	DeferredCount int
+	Items         []ShareQueueItem
+}
+
+type ShareSchedulerHooks struct {
+	DeferCurrent func() string
+	Snapshot     func() ShareQueueSnapshot
 }
 
 type tuiFindingRow struct {
@@ -156,6 +176,10 @@ type tuiModel struct {
 	bookmarkDetail       *store.BookmarkDetails
 	bookmarkDetailOffset int
 	bookmarkStatus       string
+	queueOpen            bool
+	queueSelected        int
+	queueViewport        int
+	scheduleStatus       string
 
 	styles tuiStyles
 }
@@ -309,6 +333,12 @@ func (t *TUIWriter) SetCurrentHost(host string) {
 	t.currentHost = strings.TrimSpace(host)
 }
 
+func (t *TUIWriter) SetShareScheduler(hooks ShareSchedulerHooks) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.shareScheduler = hooks
+}
+
 func (t *TUIWriter) MarkTargetProcessed() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -410,6 +440,10 @@ func (t *TUIWriter) liveState() tuiLiveState {
 	if len(findings) > tuiMaxVisibleRows {
 		findings = findings[len(findings)-tuiMaxVisibleRows:]
 	}
+	queue := ShareQueueSnapshot{}
+	if t.shareScheduler.Snapshot != nil {
+		queue = t.shareScheduler.Snapshot()
+	}
 	return tuiLiveState{
 		Summary:          t.summary.LiveSnapshot(),
 		TargetsTotal:     t.targetsTotal,
@@ -418,6 +452,7 @@ func (t *TUIWriter) liveState() tuiLiveState {
 		Status:           strings.TrimSpace(t.status),
 		Profile:          strings.TrimSpace(t.profile),
 		Findings:         cloneFindings(findings),
+		ShareQueue:       queue,
 	}
 }
 
@@ -576,6 +611,13 @@ func (m tuiModel) View() string {
 	if m.searchOpen {
 		return m.searchView()
 	}
+	if m.queueOpen {
+		header := m.renderHeader()
+		footer := m.renderFooter()
+		bodyHeight := max(3, m.height-lipgloss.Height(header)-lipgloss.Height(footer))
+		body := m.renderQueuePane(m.width, bodyHeight)
+		return fitScreenBlock(lipgloss.JoinVertical(lipgloss.Left, header, body, footer), m.width, m.height)
+	}
 
 	header := m.renderHeader()
 	footer := m.renderFooter()
@@ -604,6 +646,34 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	}
+	if isAltQueueKey(msg) {
+		m.searchOpen = false
+		m.bookmarkOpen = false
+		m.queueOpen = true
+		m.queueSelected = 0
+		m.queueViewport = 0
+		return m, nil
+	}
+	if m.queueOpen {
+		switch msg.String() {
+		case "esc":
+			m.queueOpen = false
+		case "up", "k":
+			m.moveQueueSelection(-1)
+		case "down", "j":
+			m.moveQueueSelection(1)
+		case "pgup":
+			m.moveQueueSelection(-max(1, m.height-4))
+		case "pgdown":
+			m.moveQueueSelection(max(1, m.height-4))
+		case "g":
+			m.queueSelected, m.queueViewport = 0, 0
+		case "G":
+			m.queueSelected = max(0, len(m.live.ShareQueue.Items)-1)
+			m.ensureQueueSelectionVisible()
+		}
+		return m, nil
+	}
 	if isAltBookmarkKey(msg) {
 		m.searchOpen = false
 		m.bookmarkOpen = true
@@ -615,6 +685,21 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.searchOpen {
 		return m.handleSearchKey(msg)
+	}
+	if isAltDeferKey(msg) {
+		if m.writer == nil {
+			m.scheduleStatus = "No active share to defer"
+		} else {
+			m.writer.mu.Lock()
+			hooks := m.writer.shareScheduler
+			m.writer.mu.Unlock()
+			if hooks.DeferCurrent == nil {
+				m.scheduleStatus = "No active share to defer"
+			} else {
+				m.scheduleStatus = hooks.DeferCurrent()
+			}
+		}
+		return m, nil
 	}
 	if isCtrlBookmarkKey(msg) {
 		if m.selected < 0 || m.selected >= len(m.findings) {
@@ -697,6 +782,21 @@ func isAltBookmarkKey(msg tea.KeyMsg) bool {
 		return false
 	}
 	return msg.Runes[0] == 'd' || msg.Runes[0] == 'D'
+}
+
+func isAltQueueKey(msg tea.KeyMsg) bool {
+	return isAltRuneKey(msg, 'q')
+}
+
+func isAltDeferKey(msg tea.KeyMsg) bool {
+	return isAltRuneKey(msg, 'l')
+}
+
+func isAltRuneKey(msg tea.KeyMsg, expected rune) bool {
+	if !msg.Alt || msg.Type != tea.KeyRunes || len(msg.Runes) != 1 {
+		return false
+	}
+	return msg.Runes[0] == expected || msg.Runes[0] == expected-('a'-'A')
 }
 
 func bookmarkPathKey(host, share, path string) string {
@@ -1230,6 +1330,12 @@ func (m *tuiModel) moveSelection(delta int) {
 func (m *tuiModel) syncLiveState(state tuiLiveState) {
 	previousSelected := m.selected
 	m.live = state
+	if len(m.live.ShareQueue.Items) == 0 {
+		m.queueSelected, m.queueViewport = 0, 0
+	} else {
+		m.queueSelected = max(0, min(m.queueSelected, len(m.live.ShareQueue.Items)-1))
+		m.ensureQueueSelectionVisible()
+	}
 	m.findings = cloneFindings(state.Findings)
 	if len(m.findings) == 0 {
 		m.selected = -1
@@ -1249,6 +1355,25 @@ func (m *tuiModel) syncLiveState(state tuiLiveState) {
 	}
 	m.ensureSelectionVisible()
 	m.refreshDetailContent(previousSelected != m.selected)
+}
+
+func (m *tuiModel) ensureQueueSelectionVisible() {
+	visible := max(1, m.height-4)
+	if m.queueSelected < m.queueViewport {
+		m.queueViewport = m.queueSelected
+	}
+	if m.queueSelected >= m.queueViewport+visible {
+		m.queueViewport = m.queueSelected - visible + 1
+	}
+	m.queueViewport = max(0, min(m.queueViewport, max(0, len(m.live.ShareQueue.Items)-visible)))
+}
+
+func (m *tuiModel) moveQueueSelection(delta int) {
+	if len(m.live.ShareQueue.Items) == 0 {
+		return
+	}
+	m.queueSelected = max(0, min(len(m.live.ShareQueue.Items)-1, m.queueSelected+delta))
+	m.ensureQueueSelectionVisible()
 }
 
 func (m *tuiModel) ensureSelectionVisible() {
@@ -1352,6 +1477,9 @@ func (m tuiModel) renderHeader() string {
 		)),
 		m.styles.headerMuted.Render(fmt.Sprintf("Host: %s  Elapsed: %s", valueOrDash(m.live.CurrentHost), elapsed)),
 	}
+	if current := strings.TrimSpace(m.live.ShareQueue.CurrentShare); current != "" {
+		lines = append(lines, m.styles.headerMuted.Render(fmt.Sprintf("Current share: \\\\%s\\%s  Deferred: %d", m.live.ShareQueue.CurrentHost, current, m.live.ShareQueue.DeferredCount)))
+	}
 	if m.completed && m.final != nil {
 		lines = append(lines, m.styles.headerMuted.Render(fmt.Sprintf("Completed. Access paths: %d  Performance: %.2f files/s",
 			len(m.final.AccessPaths),
@@ -1364,7 +1492,13 @@ func (m tuiModel) renderHeader() string {
 }
 
 func (m tuiModel) renderFooter() string {
-	message := "↑/↓ or j/k select • Tab switch pane • Ctrl-F search • Ctrl-D bookmark • Alt-D bookmarks • Ctrl-C stop"
+	message := "↑/↓ or j/k select • Tab switch pane • Ctrl-F search • Ctrl-D bookmark • Alt-D bookmarks • Alt-L defer • Alt-Q queue • Ctrl-C stop"
+	if m.queueOpen {
+		message = "↑/↓ or j/k move • PgUp/PgDn page • g/G top/bottom • Esc back"
+	}
+	if strings.TrimSpace(m.scheduleStatus) != "" {
+		message = m.scheduleStatus + " • " + message
+	}
 	if strings.TrimSpace(m.bookmarkStatus) != "" {
 		message = m.bookmarkStatus + " • " + message
 	}
@@ -1390,6 +1524,25 @@ func (m tuiModel) renderPanes(bodyHeight int) (string, string) {
 		rightWidth = m.width - leftWidth
 	}
 	return m.renderListPane(leftWidth, bodyHeight), m.renderDetailPane(rightWidth, bodyHeight)
+}
+
+func (m tuiModel) renderQueuePane(width, height int) string {
+	visible := max(1, height-4)
+	start := max(0, min(m.queueViewport, max(0, len(m.live.ShareQueue.Items)-visible)))
+	end := min(len(m.live.ShareQueue.Items), start+visible)
+	lines := make([]string, 0, end-start+1)
+	for index := start; index < end; index++ {
+		item := m.live.ShareQueue.Items[index]
+		marker := "  "
+		if index == m.queueSelected {
+			marker = "> "
+		}
+		lines = append(lines, fmt.Sprintf("%s[%s] \\\\%s\\%s", marker, strings.ToUpper(item.State), item.Host, item.Share))
+	}
+	if len(lines) == 0 {
+		lines = append(lines, "No share queue is available.")
+	}
+	return m.renderBoundedPane(fmt.Sprintf("Share Queue  (%d deferred)", m.live.ShareQueue.DeferredCount), strings.Join(lines, "\n"), width, height)
 }
 
 func (m tuiModel) renderListPane(width, height int) string {

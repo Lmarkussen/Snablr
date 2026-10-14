@@ -654,6 +654,8 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		})
 	}
 	plannedShares := planner.PlanShares(shareInputs, planFilters)
+	shareScheduler := newShareScheduler(plannedShares)
+	output.SetShareScheduler(sink, shareScheduler.hooks())
 	if recorder != nil {
 		recorder.AddSharesEnumerated(len(plannedShares))
 	}
@@ -676,9 +678,14 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 	}()
 
 	var walkErrs []error
-	for _, sharePlan := range plannedShares {
+	for {
+		sharePlan, ok := shareScheduler.next()
+		if !ok {
+			break
+		}
 		if stateManager != nil && stateManager.ShouldSkipShare(host, sharePlan.Share) {
 			logger.Infof("resume: skipping completed share %s/%s", host, sharePlan.Share)
+			shareScheduler.complete()
 			continue
 		}
 		logger.Infof("walking %s/%s [priority=%d reason=%s]", host, sharePlan.Share, sharePlan.Priority, sharePlan.Reason)
@@ -827,6 +834,9 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 			ExcludePaths: append([]string{}, cfg.Scan.ExcludePath...),
 			MaxDepth:     cfg.Scan.MaxDepth,
 		}, func(remote smb.RemoteFile) error {
+			if shareScheduler.consumeDefer(sharePlan) {
+				return errShareDeferred
+			}
 			if remote.IsDir {
 				return nil
 			}
@@ -849,11 +859,25 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 			return nil
 		})
 		if err != nil {
+			if errors.Is(err, errShareDeferred) {
+				logger.Infof("deferring remaining work for %s/%s", host, shareName)
+				continue
+			}
 			logger.Warnf("walk failed for %s/%s: %v", host, shareName, err)
 			if stateManager != nil {
 				stateManager.AbortShare(host, shareName)
 			}
 			walkErrs = append(walkErrs, fmt.Errorf("%s/%s: %w", host, shareName, err))
+			shareScheduler.complete()
+			continue
+		}
+		if shareScheduler.consumeDefer(sharePlan) {
+			if err := flushBatch(); err != nil {
+				walkErrs = append(walkErrs, fmt.Errorf("%s/%s: %w", host, shareName, err))
+				shareScheduler.complete()
+				continue
+			}
+			logger.Infof("deferring remaining work for %s/%s", host, shareName)
 			continue
 		}
 		if err := flushBatch(); err != nil {
@@ -861,11 +885,13 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 				stateManager.AbortShare(host, shareName)
 			}
 			walkErrs = append(walkErrs, fmt.Errorf("%s/%s: %w", host, shareName, err))
+			shareScheduler.complete()
 			continue
 		}
 		if stateManager != nil {
 			stateManager.FinishShareEnumeration(host, shareName)
 		}
+		shareScheduler.complete()
 	}
 
 	close(jobs)

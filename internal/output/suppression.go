@@ -124,6 +124,10 @@ func (s *suppressionWriter) RecordReadError(meta scanner.FileMetadata, err error
 	}
 }
 
+func (s *suppressionWriter) SetShareScheduler(hooks ShareSchedulerHooks) {
+	SetShareScheduler(s.inner, hooks)
+}
+
 func (s *suppressionWriter) SetMetricsSnapshot(snapshot metrics.Snapshot) {
 	if aware, ok := s.inner.(MetricsAware); ok {
 		aware.SetMetricsSnapshot(snapshot)

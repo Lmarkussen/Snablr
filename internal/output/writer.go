@@ -260,6 +260,12 @@ type MultiWriter struct {
 	sinks []scanner.FindingSink
 }
 
+func SetShareScheduler(sink scanner.FindingSink, hooks ShareSchedulerHooks) {
+	if aware, ok := sink.(interface{ SetShareScheduler(ShareSchedulerHooks) }); ok {
+		aware.SetShareScheduler(hooks)
+	}
+}
+
 func (w *MultiWriter) AttachSQLiteStore(shadow *store.SQLiteStore) {
 	if w == nil {
 		return
@@ -318,6 +324,14 @@ func (m *MultiWriter) RecordHost(host string) {
 
 func (m *MultiWriter) RecordShare(host, share string) {
 	m.broadcast(func(observer scanner.ScanObserver) { observer.RecordShare(host, share) })
+}
+
+func (m *MultiWriter) SetShareScheduler(hooks ShareSchedulerHooks) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sink := range m.sinks {
+		SetShareScheduler(sink, hooks)
+	}
 }
 
 func (m *MultiWriter) RecordFile(meta scanner.FileMetadata) {

@@ -192,6 +192,7 @@ type tuiStyles struct {
 	pane             lipgloss.Style
 	paneBorder       lipgloss.Style
 	paneTitle        lipgloss.Style
+	paneFocus        lipgloss.Style
 	selectedRow      lipgloss.Style
 	row              lipgloss.Style
 	rowMuted         lipgloss.Style
@@ -1620,7 +1621,7 @@ func (m tuiModel) renderBoundedPane(title, content string, outerWidth, outerHeig
 	innerHeight := max(1, outerHeight-2)
 	contentHeight := max(0, innerHeight-1)
 
-	titleLine := m.styles.paneTitle.Render(padDisplayWidth(truncateDisplayWidth(title, innerWidth), innerWidth))
+	titleLine := m.renderPaneTitle(title, innerWidth)
 	content = clampBlock(content, innerWidth, contentHeight)
 	contentLines := strings.Split(content, "\n")
 	if len(contentLines) == 1 && contentLines[0] == "" {
@@ -1644,6 +1645,19 @@ func (m tuiModel) renderBoundedPane(title, content string, outerWidth, outerHeig
 	bottom := border.BottomLeft + strings.Repeat(border.Bottom, max(0, outerWidth-2)) + border.BottomRight
 	lines = append(lines, m.styles.paneBorder.Render(bottom))
 	return strings.Join(lines, "\n")
+}
+
+func (m tuiModel) renderPaneTitle(title string, width int) string {
+	const focusSuffix = "  [FOCUS]"
+	if !strings.HasSuffix(title, focusSuffix) {
+		return m.styles.paneTitle.Render(padDisplayWidth(truncateDisplayWidth(title, width), width))
+	}
+
+	base := strings.TrimSuffix(title, focusSuffix)
+	baseWidth := max(0, width-lipgloss.Width(focusSuffix))
+	base = truncateDisplayWidth(base, baseWidth)
+	line := m.styles.paneTitle.Render(base) + m.styles.paneFocus.Render(focusSuffix)
+	return line + strings.Repeat(" ", max(0, width-lipgloss.Width(base)-lipgloss.Width(focusSuffix)))
 }
 
 func newTUIFindingRow(f scanner.Finding) tuiFindingRow {
@@ -1764,6 +1778,7 @@ func defaultTUIStyles() tuiStyles {
 		pane:             lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#3B82F6")).Padding(0, 1),
 		paneBorder:       lipgloss.NewStyle().Foreground(lipgloss.Color("#3B82F6")),
 		paneTitle:        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7CC4FF")),
+		paneFocus:        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD166")),
 		selectedRow:      lipgloss.NewStyle().Foreground(lipgloss.Color("#F8FBFF")).Background(lipgloss.Color("#1D4ED8")).Bold(true),
 		row:              lipgloss.NewStyle().Foreground(lipgloss.Color("#D7EAFE")),
 		rowMuted:         lipgloss.NewStyle().Foreground(lipgloss.Color("#7A9BB7")),

@@ -17,6 +17,7 @@ import (
 	"snablr/internal/diff"
 	"snablr/internal/metrics"
 	"snablr/internal/scanner"
+	"snablr/internal/store"
 	"snablr/internal/ui"
 )
 
@@ -257,6 +258,18 @@ func NewWriter(cfg config.OutputConfig) (scanner.FindingSink, error) {
 type MultiWriter struct {
 	mu    sync.Mutex
 	sinks []scanner.FindingSink
+}
+
+func (w *MultiWriter) AttachSQLiteStore(shadow *store.SQLiteStore) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	sinks := append([]scanner.FindingSink(nil), w.sinks...)
+	w.mu.Unlock()
+	for _, sink := range sinks {
+		AttachSQLiteStore(sink, shadow)
+	}
 }
 
 func (m *MultiWriter) WriteFinding(f scanner.Finding) error {

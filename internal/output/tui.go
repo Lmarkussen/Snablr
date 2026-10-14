@@ -15,6 +15,7 @@ import (
 	"snablr/internal/diff"
 	"snablr/internal/metrics"
 	"snablr/internal/scanner"
+	"snablr/internal/store"
 )
 
 const (
@@ -23,6 +24,7 @@ const (
 	tuiMinSplitWidth   = 100
 	tuiMinListWidth    = 36
 	tuiMinDetailWidth  = 32
+	tuiSearchPageSize  = 100
 )
 
 type TUIWriter struct {
@@ -50,6 +52,7 @@ type TUIWriter struct {
 	cancelMu         sync.Mutex
 	cancelScan       context.CancelFunc
 	userCanceledScan bool
+	searchStore      *store.SQLiteStore
 }
 
 type tuiFinalizeEvent struct {
@@ -64,6 +67,12 @@ type tuiFinalizeEvent struct {
 }
 
 type tuiTickMsg struct{}
+
+type tuiSearchCompletedMsg struct {
+	Query   string
+	Results []store.SearchResult
+	Err     error
+}
 
 type tuiLiveState struct {
 	Summary          summarySnapshot
@@ -90,18 +99,24 @@ type tuiModel struct {
 	width  int
 	height int
 
-	findings     []scanner.Finding
-	selected     int
-	followTail   bool
-	ready        bool
-	completed    bool
-	quitHint     string
-	live         tuiLiveState
-	final        *tuiFinalizeEvent
-	listPane     viewport.Model
-	detailPane   viewport.Model
-	useStacked   bool
-	windowLoaded bool
+	findings       []scanner.Finding
+	selected       int
+	followTail     bool
+	ready          bool
+	completed      bool
+	quitHint       string
+	live           tuiLiveState
+	final          *tuiFinalizeEvent
+	listPane       viewport.Model
+	detailPane     viewport.Model
+	useStacked     bool
+	windowLoaded   bool
+	searchQuery    string
+	searchOpen     bool
+	searchResults  []store.SearchResult
+	searchSelected int
+	searchDetail   *store.SearchResult
+	searchStatus   string
 
 	styles tuiStyles
 }
@@ -152,6 +167,12 @@ func (t *TUIWriter) WriteFinding(f scanner.Finding) error {
 	t.findings = append(t.findings, f)
 	t.mu.Unlock()
 	return nil
+}
+
+func (t *TUIWriter) AttachSQLiteStore(shadow *store.SQLiteStore) {
+	t.mu.Lock()
+	t.searchStore = shadow
+	t.mu.Unlock()
 }
 
 func (t *TUIWriter) RecordHost(host string) {
@@ -411,6 +432,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.refreshTick()
 		}
 		return m, nil
+	case tuiSearchCompletedMsg:
+		m.searchResults = msg.Results
+		m.searchSelected = 0
+		if msg.Err != nil {
+			m.searchStatus = "Search failed: " + msg.Err.Error()
+		} else if len(msg.Results) == 0 {
+			m.searchStatus = "No matches"
+		} else {
+			m.searchStatus = fmt.Sprintf("%d result(s)", len(msg.Results))
+		}
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -420,6 +452,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m tuiModel) View() string {
 	if !m.windowLoaded || m.width <= 0 || m.height <= 0 {
 		return "Loading scan UI..."
+	}
+	if m.searchOpen {
+		return m.searchView()
 	}
 
 	header := m.renderHeader()
@@ -438,6 +473,9 @@ func (m tuiModel) View() string {
 }
 
 func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.searchOpen {
+		return m.handleSearchKey(msg)
+	}
 	switch msg.String() {
 	case "up", "k":
 		m.moveSelection(-1)
@@ -449,7 +487,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.moveSelection(-max(1, m.listHeight()-1))
 		}
-	case "pgdown", "ctrl+f":
+	case "pgdown", "ctrl+d":
 		if m.detailPane.TotalLineCount() > 0 {
 			m.detailPane.LineDown(max(1, m.detailPane.Height-2))
 		} else {
@@ -485,8 +523,103 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.quitHint = "Stopping scan..."
 		}
 		return m, tea.Quit
+	case "ctrl+f":
+		m.searchOpen = true
+		m.searchResults = nil
+		m.searchDetail = nil
+		m.searchStatus = "Type a query and press Enter"
+		m.searchQuery = ""
+		return m, nil
 	}
 	return m, nil
+}
+
+func (m tuiModel) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.searchDetail != nil {
+		if msg.String() == "esc" {
+			m.searchDetail = nil
+		}
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc":
+		m.searchOpen = false
+		return m, nil
+	case "enter":
+		query := strings.TrimSpace(m.searchQuery)
+		if query == "" {
+			m.searchStatus = "Enter a search query"
+			return m, nil
+		}
+		m.searchStatus = "Searching..."
+		return m, m.searchCmd(query)
+	case "up", "ctrl+p":
+		m.searchSelected = max(0, m.searchSelected-1)
+	case "down", "ctrl+n":
+		m.searchSelected = min(max(0, len(m.searchResults)-1), m.searchSelected+1)
+	case "tab":
+		if len(m.searchResults) > 0 {
+			m.searchDetail = &m.searchResults[m.searchSelected]
+		}
+	default:
+		if msg.String() == "backspace" {
+			runes := []rune(m.searchQuery)
+			if len(runes) > 0 {
+				m.searchQuery = string(runes[:len(runes)-1])
+			}
+			return m, nil
+		}
+		if len(msg.Runes) > 0 && len([]rune(m.searchQuery))+len(msg.Runes) <= 256 {
+			m.searchQuery += string(msg.Runes)
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m tuiModel) searchCmd(query string) tea.Cmd {
+	writer := m.writer
+	return func() tea.Msg {
+		if writer == nil {
+			return tuiSearchCompletedMsg{Query: query, Err: fmt.Errorf("search is unavailable")}
+		}
+		writer.mu.Lock()
+		searchStore := writer.searchStore
+		writer.mu.Unlock()
+		if searchStore == nil {
+			return tuiSearchCompletedMsg{Query: query, Err: fmt.Errorf("authoritative SQLite store is unavailable")}
+		}
+		results, err := searchStore.Search(context.Background(), query, store.SearchOptions{Limit: tuiSearchPageSize})
+		return tuiSearchCompletedMsg{Query: query, Results: results, Err: err}
+	}
+}
+
+func (m tuiModel) searchView() string {
+	header := m.styles.header.Render("Snablr Search")
+	footer := m.styles.footer.Render("Enter search  •  Tab select  •  ↑/↓ move  •  Esc close")
+	if m.searchDetail != nil {
+		detail := m.searchDetail
+		body := strings.Join([]string{
+			fmt.Sprintf("[%s] %s", detail.Type, detail.Title),
+			"",
+			"Context: " + valueOrDash(detail.Context),
+			"Detail: " + valueOrDash(detail.Detail),
+			"",
+			"Esc returns to results.",
+		}, "\n")
+		return fitScreenBlock(lipgloss.JoinVertical(lipgloss.Left, header, m.renderBoundedPane("Search Result", body, m.width, max(3, m.height-2)), footer), m.width, m.height)
+	}
+	lines := []string{"Search: " + m.searchQuery, "", m.searchStatus}
+	for idx, result := range m.searchResults {
+		prefix := "  "
+		if idx == m.searchSelected {
+			prefix = "> "
+		}
+		line := fmt.Sprintf("%s[%s] %s — %s", prefix, result.Type, result.Title, firstNonEmpty(result.Context, result.Detail))
+		lines = append(lines, truncateDisplayWidth(line, max(1, m.width-4)))
+	}
+	body := strings.Join(lines, "\n")
+	return fitScreenBlock(lipgloss.JoinVertical(lipgloss.Left, header, m.renderBoundedPane("Database Search", body, m.width, max(3, m.height-2)), footer), m.width, m.height)
 }
 
 func (m *tuiModel) waitForExternalEvent() tea.Cmd {

@@ -15,6 +15,9 @@ func AttachSQLiteStore(sink scanner.FindingSink, shadow *store.SQLiteStore) {
 		return
 	}
 	shadowSinks.Store(sink, shadow)
+	if attachable, ok := sink.(interface{ AttachSQLiteStore(*store.SQLiteStore) }); ok {
+		attachable.AttachSQLiteStore(shadow)
+	}
 	if wrapped, ok := sink.(*suppressionWriter); ok {
 		AttachSQLiteStore(wrapped.inner, shadow)
 	}

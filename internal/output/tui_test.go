@@ -90,6 +90,22 @@ func TestTUISyncLiveStateKeepsBoundedTail(t *testing.T) {
 	}
 }
 
+func TestTUIControlFOpensDatabaseSearch(t *testing.T) {
+	writer := &TUIWriter{
+		summary:        newSummaryCollector(),
+		validationMode: newValidationModeCollector(),
+		status:         "running",
+	}
+	model := newTUIModel(writer)
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	if cmd != nil {
+		t.Fatalf("Ctrl-F should not start a blocking command")
+	}
+	if !updated.(tuiModel).searchOpen {
+		t.Fatalf("Ctrl-F did not open search")
+	}
+}
+
 func TestTUILiveStateFiltersSupportingFindings(t *testing.T) {
 	writer := &TUIWriter{
 		summary:        newSummaryCollector(),

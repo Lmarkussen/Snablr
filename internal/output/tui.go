@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	charmansi "github.com/charmbracelet/x/ansi"
 
 	"snablr/internal/diff"
 	"snablr/internal/metrics"
@@ -113,7 +114,6 @@ type tuiFindingRow struct {
 	Triage      string
 	Category    string
 	Path        string
-	FileName    string
 	HasEvidence bool
 	Bookmarked  bool
 }
@@ -857,15 +857,35 @@ func (m *tuiModel) ensureBookmarkSelectionVisible() {
 	m.bookmarkViewport = max(0, min(m.bookmarkViewport, maxStart))
 }
 
-func (m *tuiModel) bookmarkDetailVisibleRows() int { return max(1, m.height-5) }
+func (m *tuiModel) bookmarkDetailVisibleRows() int { return detailViewportVisibleRows(m.height) }
 
 func (m *tuiModel) clampBookmarkDetailOffset() {
 	if m.bookmarkDetail == nil {
 		m.bookmarkDetailOffset = 0
 		return
 	}
-	lines := strings.Split(clampMultiline(m.bookmarkDetailContent(), max(1, m.width-4)), "\n")
+	lines := detailViewportLines(m.bookmarkDetailContent(), detailViewportWidth(m.width))
 	m.bookmarkDetailOffset = max(0, min(m.bookmarkDetailOffset, max(0, len(lines)-m.bookmarkDetailVisibleRows())))
+}
+
+func detailViewportWidth(outerWidth int) int {
+	return max(1, outerWidth-4)
+}
+
+func detailViewportVisibleRows(height int) int {
+	return max(1, height-5)
+}
+
+func detailViewportLines(content string, width int) []string {
+	return strings.Split(clampMultiline(content, max(1, width)), "\n")
+}
+
+func detailViewport(content string, width, visible, offset int) (string, int) {
+	lines := detailViewportLines(content, width)
+	visible = max(1, visible)
+	offset = max(0, min(offset, max(0, len(lines)-visible)))
+	end := min(len(lines), offset+visible)
+	return strings.Join(lines[offset:end], "\n"), offset
 }
 
 func (m *tuiModel) togglePaneFocus() {
@@ -996,7 +1016,7 @@ func (m *tuiModel) searchResultVisibleRows() int {
 }
 
 func (m *tuiModel) searchDetailVisibleRows() int {
-	return max(1, m.height-5)
+	return detailViewportVisibleRows(m.height)
 }
 
 func (m *tuiModel) clampSearchDetailOffset() {
@@ -1004,7 +1024,7 @@ func (m *tuiModel) clampSearchDetailOffset() {
 		m.searchDetailOffset = 0
 		return
 	}
-	lines := strings.Split(clampMultiline(m.searchDetailContent(), max(1, m.width-4)), "\n")
+	lines := detailViewportLines(m.searchDetailContent(), detailViewportWidth(m.width))
 	maxOffset := max(0, len(lines)-m.searchDetailVisibleRows())
 	m.searchDetailOffset = max(0, min(m.searchDetailOffset, maxOffset))
 }
@@ -1042,11 +1062,8 @@ func (m tuiModel) searchView() string {
 	header := m.styles.header.Render("Snablr Search")
 	footer := m.styles.footer.Render("Enter search/open • ↑/↓ move • PgUp/PgDn • g/G • Esc back/close")
 	if m.searchDetail != nil {
-		lines := strings.Split(clampMultiline(m.searchDetailContent(), max(1, m.width-4)), "\n")
-		visible := m.searchDetailVisibleRows()
-		m.searchDetailOffset = max(0, min(m.searchDetailOffset, max(0, len(lines)-visible)))
-		end := min(len(lines), m.searchDetailOffset+visible)
-		body := strings.Join(lines[m.searchDetailOffset:end], "\n")
+		body, offset := detailViewport(m.searchDetailContent(), detailViewportWidth(m.width), m.searchDetailVisibleRows(), m.searchDetailOffset)
+		m.searchDetailOffset = offset
 		return fitScreenBlock(lipgloss.JoinVertical(lipgloss.Left, header, m.renderBoundedPane("Search Result", body, m.width, max(3, m.height-2)), footer), m.width, m.height)
 	}
 	lines := []string{"Search: " + m.searchQuery, "", m.searchStatus}
@@ -1074,10 +1091,8 @@ func (m tuiModel) bookmarkView() string {
 	header := m.styles.header.Render(fmt.Sprintf("Bookmarks  %d", len(m.bookmarks)))
 	footer := m.styles.footer.Render("Enter open • ↑/↓ or j/k move • PgUp/PgDn • g/G • Ctrl-D remove • Esc back")
 	if m.bookmarkDetail != nil {
-		lines := strings.Split(clampMultiline(m.bookmarkDetailContent(), max(1, m.width-4)), "\n")
-		visible := m.bookmarkDetailVisibleRows()
-		offset := max(0, min(m.bookmarkDetailOffset, max(0, len(lines)-visible)))
-		body := strings.Join(lines[offset:min(len(lines), offset+visible)], "\n")
+		body, offset := detailViewport(m.bookmarkDetailContent(), detailViewportWidth(m.width), m.bookmarkDetailVisibleRows(), m.bookmarkDetailOffset)
+		m.bookmarkDetailOffset = offset
 		return fitScreenBlock(lipgloss.JoinVertical(lipgloss.Left, header, m.renderBoundedPane("Bookmark Detail", body, m.width, max(3, m.height-2)), footer), m.width, m.height)
 	}
 	lines := []string{"Select a bookmarked file to inspect its findings and credentials."}
@@ -1487,7 +1502,6 @@ func newTUIFindingRow(f scanner.Finding) tuiFindingRow {
 		Triage:      firstNonEmpty(displayTriageClass(f.TriageClass), "review"),
 		Category:    firstNonEmpty(f.Category, f.RuleName),
 		Path:        findingDisplayPath(f),
-		FileName:    pathLeaf(findingDisplayPath(f)),
 		HasEvidence: hasTUIEvidence(f),
 	}
 }
@@ -1501,7 +1515,7 @@ func renderTUIFindingRow(row tuiFindingRow, width int, selected bool) string {
 	if row.HasEvidence {
 		meta += " *"
 	}
-	line := fmt.Sprintf("%s %-12s %-18s %-18s", meta, truncateDisplayWidth(strings.ToUpper(row.Triage), 12), truncateDisplayWidth(row.Category, 18), truncateDisplayWidth(row.FileName, 18))
+	line := fmt.Sprintf("%s %-12s %-18s", meta, truncateDisplayWidth(strings.ToUpper(row.Triage), 12), truncateDisplayWidth(row.Category, 18))
 	rowWidth := max(8, width)
 	if row.Bookmarked {
 		marker := lipgloss.NewStyle().Foreground(lipgloss.Color("#22C55E")).Render("*")
@@ -1686,7 +1700,17 @@ func fitScreenBlock(value string, width, height int) string {
 	if width <= 0 {
 		return ""
 	}
-	lines := strings.Split(clampMultiline(value, width), "\n")
+	lines := strings.Split(value, "\n")
+	for index, line := range lines {
+		if lipgloss.Width(line) <= width {
+			continue
+		}
+		if strings.Contains(line, "\x1b[") {
+			lines[index] = charmansi.Truncate(line, width, "")
+		} else {
+			lines[index] = truncateDisplayWidth(line, width)
+		}
+	}
 	if height > 0 {
 		if len(lines) > height {
 			lines = lines[:height]

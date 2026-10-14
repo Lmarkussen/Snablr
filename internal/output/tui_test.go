@@ -46,8 +46,8 @@ func TestTUIFindingRowBookmarkMarkerIsTrailingAndWidthSafe(t *testing.T) {
 	if strings.HasSuffix(unbookmarked, "*") {
 		t.Fatalf("unbookmarked row rendered a trailing bookmark marker: %q", unbookmarked)
 	}
-	if !strings.Contains(renderTUIFindingRow(row, 100, false), "Groups.xml") {
-		t.Fatal("finding row did not include a compact source filename")
+	if strings.Contains(renderTUIFindingRow(row, 100, false), "Groups.xml") {
+		t.Fatal("finding row should not include a source filename")
 	}
 }
 
@@ -128,8 +128,95 @@ func TestTUIFileCentricBookmarkMarkersUsePersistedFileKeys(t *testing.T) {
 	if strings.HasSuffix(strings.TrimRight(rows[0], " "), "*") {
 		t.Fatal("unrelated file retained a bookmark marker after findings reorder")
 	}
-	if !strings.Contains(model.listPane.View(), "config.txt") || !strings.Contains(model.listPane.View(), "other.txt") {
-		t.Fatal("compact filenames were not rendered in the finding rows")
+	if strings.Contains(model.listPane.View(), "config.txt") || strings.Contains(model.listPane.View(), "other.txt") {
+		t.Fatal("finding rows should not render source filenames")
+	}
+}
+
+func TestTUIBookmarkDetailWrapsInsideBoundedPane(t *testing.T) {
+	longSQL := strings.Repeat("SELECT very_long_identifier FROM synthetic_table WHERE connection_string='\\\\synthetic-host\\share\\config.db'; ", 4)
+	model := newTUIModel(&TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"})
+	model.windowLoaded = true
+	model.width = 64
+	model.height = 14
+	model.bookmarkOpen = true
+	model.bookmarks = []store.Bookmark{{FileKey: "file-1", Host: "synthetic-host", Share: "share", Path: "config.db"}}
+	model.bookmarkDetail = &store.BookmarkDetails{
+		Bookmark:    model.bookmarks[0],
+		Findings:    []scanner.Finding{{RuleID: "synthetic.sql", Category: "database", MatchedText: longSQL, Context: strings.Repeat("PowerShellContext ", 12)}},
+		Credentials: []store.BookmarkCredential{{Identity: "synthetic-user", Type: "password", Value: "SyntheticExample!42"}},
+	}
+
+	view := model.View()
+	for lineNumber, line := range strings.Split(view, "\n") {
+		if lipgloss.Width(line) != model.width {
+			t.Fatalf("bookmark detail line %d escaped screen width: got %d want %d: %q", lineNumber, lipgloss.Width(line), model.width, line)
+		}
+	}
+	if !strings.Contains(view, "Bookmark Detail") || !strings.Contains(model.bookmarkDetailContent(), "SyntheticExample!42") {
+		t.Fatalf("bookmark detail lost useful content:\n%s", view)
+	}
+	if len(detailViewportLines(model.bookmarkDetailContent(), detailViewportWidth(model.width))) <= model.bookmarkDetailVisibleRows() {
+		t.Fatal("synthetic bookmark detail did not exceed the viewport")
+	}
+}
+
+func TestTUIBookmarkDetailScrollPersistsAndClamps(t *testing.T) {
+	model := newTUIModel(&TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"})
+	model.windowLoaded = true
+	model.width = 70
+	model.height = 12
+	model.bookmarkOpen = true
+	model.bookmarks = []store.Bookmark{{FileKey: "file-1", Host: "host", Share: "share", Path: "long.sql"}}
+	model.bookmarkDetail = &store.BookmarkDetails{Bookmark: model.bookmarks[0]}
+	for index := 0; index < 30; index++ {
+		model.bookmarkDetail.Findings = append(model.bookmarkDetail.Findings, scanner.Finding{
+			RuleID:      fmt.Sprintf("rule-%02d", index),
+			Category:    "database",
+			MatchedText: strings.Repeat("X", 100),
+		})
+	}
+
+	if model.bookmarkDetailOffset != 0 {
+		t.Fatalf("detail did not start at top: %d", model.bookmarkDetailOffset)
+	}
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = updated.(tuiModel)
+	if model.bookmarkDetailOffset == 0 {
+		t.Fatal("Down did not scroll bookmark detail")
+	}
+	offset := model.bookmarkDetailOffset
+	updated, _ = model.Update(tuiTickMsg{})
+	model = updated.(tuiModel)
+	if model.bookmarkDetailOffset != offset {
+		t.Fatalf("ordinary refresh reset bookmark detail offset: got %d want %d", model.bookmarkDetailOffset, offset)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	model = updated.(tuiModel)
+	if model.bookmarkDetailOffset <= offset {
+		t.Fatal("PgDn did not advance bookmark detail")
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	model = updated.(tuiModel)
+	bottom := model.bookmarkDetailOffset
+	if bottom <= 0 {
+		t.Fatal("G did not reach bookmark detail bottom")
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	model = updated.(tuiModel)
+	if model.bookmarkDetailOffset != 0 {
+		t.Fatal("g did not return bookmark detail to top")
+	}
+	model.bookmarkDetailOffset = bottom
+	updated, _ = model.Update(tea.WindowSizeMsg{Width: 40, Height: 10})
+	model = updated.(tuiModel)
+	if model.bookmarkDetailOffset <= 0 {
+		t.Fatal("resize discarded valid bookmark detail offset")
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	model = updated.(tuiModel)
+	if model.bookmarkDetail != nil || !model.bookmarkOpen {
+		t.Fatal("Esc did not return from bookmark detail to bookmark list")
 	}
 }
 

@@ -1140,3 +1140,42 @@ func TestTUIShareQueueViewportFollowsSelection(t *testing.T) {
 		t.Fatal("queue view exceeded terminal height")
 	}
 }
+
+func TestTUIMainHeaderAndFooterKeepOnlyUsefulLiveControls(t *testing.T) {
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"}
+	model := newTUIModel(writer)
+	model.windowLoaded = true
+	model.width = 120
+	model.height = 24
+	model.live = writer.liveState()
+	model.live.Summary.MatchesFound = 7
+	model.live.Summary.SkippedFiles = 11
+	model.live.ShareQueue = ShareQueueSnapshot{
+		CurrentHost:   "synthetic-host",
+		CurrentShare:  "SyntheticShare",
+		DeferredCount: 1,
+	}
+
+	header := model.renderHeader()
+	if strings.Contains(header, "Primary:") || strings.Contains(header, "Skipped:") {
+		t.Fatalf("removed counters still rendered: %q", header)
+	}
+	if !strings.Contains(header, "Current share:") || !strings.Contains(header, "Deferred: 1") {
+		t.Fatalf("current share/deferred status missing: %q", header)
+	}
+	footer := model.renderFooter()
+	if strings.Contains(footer, "↑/↓ or j/k select") {
+		t.Fatalf("duplicate navigation help still rendered: %q", footer)
+	}
+	for _, shortcut := range []string{"Ctrl-F search", "Ctrl-D bookmark", "Alt-D bookmarks", "Alt-L defer", "Alt-Q queue", "Ctrl-C stop"} {
+		if !strings.Contains(footer, shortcut) {
+			t.Fatalf("footer missing %q: %q", shortcut, footer)
+		}
+	}
+	for _, width := range []int{40, 80, 120} {
+		model.width = width
+		if lipgloss.Width(model.renderFooter()) > width {
+			t.Fatalf("footer exceeds width %d", width)
+		}
+	}
+}

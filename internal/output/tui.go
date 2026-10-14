@@ -1464,15 +1464,13 @@ func (m tuiModel) renderHeader() string {
 	statusLine := m.styles.header.Render(statusText)
 	lines := []string{
 		statusLine,
-		m.styles.headerMuted.Render(fmt.Sprintf("Profile: %s  Targets: %d/%d  Shares: %d  Files: %d  Primary: %d  Matches: %d  Skipped: %d  Read errors: %d",
+		m.styles.headerMuted.Render(fmt.Sprintf("Profile: %s  Targets: %d/%d  Shares: %d  Files: %d  Matches: %d  Read errors: %d",
 			valueOrDash(m.live.Profile),
 			m.live.TargetsProcessed,
 			m.live.TargetsTotal,
 			m.live.Summary.SharesScanned,
 			m.live.Summary.FilesScanned,
-			len(m.findings),
 			m.live.Summary.MatchesFound,
-			m.live.Summary.SkippedFiles,
 			m.live.Summary.ReadErrors,
 		)),
 		m.styles.headerMuted.Render(fmt.Sprintf("Host: %s  Elapsed: %s", valueOrDash(m.live.CurrentHost), elapsed)),
@@ -1492,7 +1490,7 @@ func (m tuiModel) renderHeader() string {
 }
 
 func (m tuiModel) renderFooter() string {
-	message := "↑/↓ or j/k select • Tab switch pane • Ctrl-F search • Ctrl-D bookmark • Alt-D bookmarks • Alt-L defer • Alt-Q queue • Ctrl-C stop"
+	message := "Tab switch pane • Ctrl-F search • Ctrl-D bookmark • Alt-D bookmarks • Alt-L defer • Alt-Q queue • Ctrl-C stop"
 	if m.queueOpen {
 		message = "↑/↓ or j/k move • PgUp/PgDn page • g/G top/bottom • Esc back"
 	}

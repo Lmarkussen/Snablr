@@ -18,7 +18,7 @@ import (
 	"snablr/internal/scanner"
 )
 
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 type Options struct {
 	ScanID        string
@@ -126,7 +126,17 @@ func Open(path string, options Options) (*SQLiteStore, error) {
 func initializeSchema(db *sql.DB) error {
 	var storedVersion string
 	if err := db.QueryRow(`SELECT value FROM metadata WHERE key='schema_version'`).Scan(&storedVersion); err == nil {
-		if storedVersion != "1" {
+		if storedVersion == "1" {
+			if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS bookmarks (scan_id TEXT NOT NULL, file_key TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (scan_id, file_key), FOREIGN KEY (scan_id, file_key) REFERENCES files(scan_id, file_key));
+CREATE INDEX IF NOT EXISTS bookmarks_scan_created_idx ON bookmarks(scan_id, created_at, file_key);
+UPDATE metadata SET value='2' WHERE key='schema_version';
+`); err != nil {
+				return fmt.Errorf("migrate SQLite scan database schema: %w", err)
+			}
+			return nil
+		}
+		if storedVersion != "2" {
 			return fmt.Errorf("unsupported SQLite scan database schema version %s", storedVersion)
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) && !strings.Contains(err.Error(), "no such table") {
@@ -143,10 +153,12 @@ CREATE TABLE IF NOT EXISTS members (scan_id TEXT NOT NULL, parent_key TEXT NOT N
 CREATE TABLE IF NOT EXISTS findings (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, fingerprint TEXT NOT NULL, host TEXT, share TEXT, path TEXT, rule_id TEXT, category TEXT, payload TEXT NOT NULL, UNIQUE(scan_id, fingerprint), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS credentials (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, credential_key TEXT NOT NULL, credential_type TEXT, identity TEXT, value TEXT, payload TEXT NOT NULL, UNIQUE(scan_id, credential_key), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS correlations (scan_id TEXT NOT NULL, correlation_key TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY (scan_id, correlation_key), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
+CREATE TABLE IF NOT EXISTS bookmarks (scan_id TEXT NOT NULL, file_key TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (scan_id, file_key), FOREIGN KEY (scan_id, file_key) REFERENCES files(scan_id, file_key));
 CREATE INDEX IF NOT EXISTS files_status_idx ON files(scan_id, status);
 CREATE INDEX IF NOT EXISTS files_identity_idx ON files(scan_id, host, share, path);
 CREATE INDEX IF NOT EXISTS findings_path_idx ON findings(scan_id, path);
-INSERT INTO metadata(key, value) VALUES ('schema_version', '1') ON CONFLICT(key) DO UPDATE SET value=excluded.value;
+CREATE INDEX IF NOT EXISTS bookmarks_scan_created_idx ON bookmarks(scan_id, created_at, file_key);
+INSERT INTO metadata(key, value) VALUES ('schema_version', '2') ON CONFLICT(key) DO UPDATE SET value=excluded.value;
 `)
 	return err
 }

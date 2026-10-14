@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -627,5 +628,86 @@ func TestTUIHandleCtrlCAfterCompletionQuitsWithoutCanceling(t *testing.T) {
 	}
 	if updated.(tuiModel).quitHint != "Closing..." {
 		t.Fatalf("unexpected quit hint after completed ctrl+c: %q", updated.(tuiModel).quitHint)
+	}
+}
+
+func TestTUIBookmarkToggleAndBrowser(t *testing.T) {
+	state, err := store.Open(t.TempDir()+"/bookmarks.db", store.Options{ScanID: "tui-bookmark", BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	now := time.Now().UTC()
+	if err := state.RecordFile("file-1", "synthetic-host", "SyntheticShare", "lars.txt", "complete", "semantics", 1, now, now, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running", searchStore: state}
+	model := newTUIModel(writer)
+	model.findings = []scanner.Finding{{Host: "synthetic-host", Share: "SyntheticShare", FilePath: "lars.txt", Category: "credentials", Severity: "high"}}
+	model.selected = 0
+	model.windowLoaded = true
+	model.width = 100
+	model.height = 20
+	model.layout()
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	if cmd == nil {
+		t.Fatal("Ctrl-B did not start bookmark toggle")
+	}
+	model = updated.(tuiModel)
+	updated, _ = model.Update(cmd())
+	model = updated.(tuiModel)
+	if !strings.Contains(model.bookmarkStatus, "Bookmarked") || !strings.Contains(model.View(), "★") {
+		t.Fatalf("bookmark feedback/indicator missing: status=%q\n%s", model.bookmarkStatus, model.View())
+	}
+	selected := model.selected
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	model = updated.(tuiModel)
+	updated, _ = model.Update(cmd())
+	model = updated.(tuiModel)
+	if model.selected != selected || !strings.Contains(model.bookmarkStatus, "removed") {
+		t.Fatalf("unbookmark changed selection or missed feedback: selected=%d status=%q", model.selected, model.bookmarkStatus)
+	}
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true})
+	model = updated.(tuiModel)
+	if !model.bookmarkOpen || cmd == nil {
+		t.Fatal("Alt-B did not open bookmark browser")
+	}
+	updated, _ = model.Update(cmd())
+	model = updated.(tuiModel)
+	if !strings.Contains(model.View(), "No bookmarks yet") {
+		t.Fatalf("empty bookmark state missing:\n%s", model.View())
+	}
+}
+
+func TestTUIBookmarkViewportFollowsSelection(t *testing.T) {
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"}
+	model := newTUIModel(writer)
+	model.bookmarkOpen = true
+	model.width = 100
+	model.height = 12
+	model.windowLoaded = true
+	model.bookmarks = make([]store.Bookmark, 30)
+	for index := range model.bookmarks {
+		model.bookmarks[index] = store.Bookmark{FileKey: fmt.Sprintf("file-%02d", index), Path: fmt.Sprintf("file-%02d.txt", index), Host: "host", Share: "share"}
+	}
+	for index := 0; index < 29; index++ {
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+		model = updated.(tuiModel)
+	}
+	if model.bookmarkSelected != 29 || model.bookmarkViewport == 0 {
+		t.Fatalf("bookmark viewport did not follow selection: selected=%d start=%d", model.bookmarkSelected, model.bookmarkViewport)
+	}
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	model = updated.(tuiModel)
+	if model.bookmarkSelected != 0 || model.bookmarkViewport != 0 {
+		t.Fatalf("g did not return bookmark view to top: selected=%d start=%d", model.bookmarkSelected, model.bookmarkViewport)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	model = updated.(tuiModel)
+	if model.bookmarkSelected != 29 || model.bookmarkViewport == 0 {
+		t.Fatalf("G did not move bookmark view to bottom: selected=%d start=%d", model.bookmarkSelected, model.bookmarkViewport)
 	}
 }

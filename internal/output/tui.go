@@ -81,6 +81,22 @@ type tuiSearchCompletedMsg struct {
 	Err     error
 }
 
+type tuiBookmarkToggledMsg struct {
+	Bookmark   store.Bookmark
+	Bookmarked bool
+	Err        error
+}
+
+type tuiBookmarksLoadedMsg struct {
+	Bookmarks []store.Bookmark
+	Err       error
+}
+
+type tuiBookmarkDetailLoadedMsg struct {
+	Details store.BookmarkDetails
+	Err     error
+}
+
 type tuiLiveState struct {
 	Summary          summarySnapshot
 	TargetsTotal     int
@@ -98,6 +114,7 @@ type tuiFindingRow struct {
 	Category    string
 	Path        string
 	HasEvidence bool
+	Bookmarked  bool
 }
 
 type tuiModel struct {
@@ -106,28 +123,36 @@ type tuiModel struct {
 	width  int
 	height int
 
-	findings           []scanner.Finding
-	selected           int
-	followTail         bool
-	ready              bool
-	completed          bool
-	quitHint           string
-	live               tuiLiveState
-	final              *tuiFinalizeEvent
-	listPane           viewport.Model
-	detailPane         viewport.Model
-	useStacked         bool
-	windowLoaded       bool
-	searchQuery        string
-	searchOpen         bool
-	searchInputActive  bool
-	searchResults      []store.SearchResult
-	searchSelected     int
-	searchViewport     int
-	searchDetail       *store.SearchResult
-	searchDetailOffset int
-	searchStatus       string
-	focusedPane        tuiPane
+	findings             []scanner.Finding
+	selected             int
+	followTail           bool
+	ready                bool
+	completed            bool
+	quitHint             string
+	live                 tuiLiveState
+	final                *tuiFinalizeEvent
+	listPane             viewport.Model
+	detailPane           viewport.Model
+	useStacked           bool
+	windowLoaded         bool
+	searchQuery          string
+	searchOpen           bool
+	searchInputActive    bool
+	searchResults        []store.SearchResult
+	searchSelected       int
+	searchViewport       int
+	searchDetail         *store.SearchResult
+	searchDetailOffset   int
+	searchStatus         string
+	focusedPane          tuiPane
+	bookmarkedPaths      map[string]bool
+	bookmarkOpen         bool
+	bookmarks            []store.Bookmark
+	bookmarkSelected     int
+	bookmarkViewport     int
+	bookmarkDetail       *store.BookmarkDetails
+	bookmarkDetailOffset int
+	bookmarkStatus       string
 
 	styles tuiStyles
 }
@@ -395,12 +420,13 @@ func (t *TUIWriter) liveState() tuiLiveState {
 
 func newTUIModel(writer *TUIWriter) tuiModel {
 	model := tuiModel{
-		writer:      writer,
-		followTail:  true,
-		selected:    -1,
-		live:        writer.liveState(),
-		styles:      defaultTUIStyles(),
-		focusedPane: tuiPaneFindings,
+		writer:          writer,
+		followTail:      true,
+		selected:        -1,
+		live:            writer.liveState(),
+		styles:          defaultTUIStyles(),
+		focusedPane:     tuiPaneFindings,
+		bookmarkedPaths: make(map[string]bool),
 	}
 	model.listPane = viewport.New(0, 0)
 	model.listPane.MouseWheelEnabled = false
@@ -424,6 +450,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layout()
 		m.ensureSearchSelectionVisible()
 		m.clampSearchDetailOffset()
+		m.ensureBookmarkSelectionVisible()
+		m.clampBookmarkDetailOffset()
 		return m, nil
 	case tuiFinalizeEvent:
 		m.completed = true
@@ -461,6 +489,57 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchStatus = fmt.Sprintf("%d result(s)", len(msg.Results))
 		}
 		return m, nil
+	case tuiBookmarkToggledMsg:
+		if msg.Err != nil {
+			m.bookmarkStatus = "Bookmark unavailable: " + msg.Err.Error()
+		} else {
+			m.bookmarkedPaths[bookmarkPathKey(msg.Bookmark.Host, msg.Bookmark.Share, msg.Bookmark.Path)] = msg.Bookmarked
+			if m.bookmarkOpen && !msg.Bookmarked {
+				for index, bookmark := range m.bookmarks {
+					if bookmark.FileKey == msg.Bookmark.FileKey {
+						m.bookmarks = append(m.bookmarks[:index], m.bookmarks[index+1:]...)
+						break
+					}
+				}
+				m.bookmarkDetail = nil
+				if len(m.bookmarks) == 0 {
+					m.bookmarkSelected, m.bookmarkViewport = 0, 0
+				} else if m.bookmarkSelected >= len(m.bookmarks) {
+					m.bookmarkSelected = len(m.bookmarks) - 1
+					m.ensureBookmarkSelectionVisible()
+				}
+			}
+			if msg.Bookmarked {
+				m.bookmarkStatus = "★ Bookmarked"
+			} else {
+				m.bookmarkStatus = "Bookmark removed"
+			}
+		}
+		return m, nil
+	case tuiBookmarksLoadedMsg:
+		m.bookmarks = msg.Bookmarks
+		m.bookmarkSelected = 0
+		m.bookmarkViewport = 0
+		m.bookmarkDetail = nil
+		if msg.Err != nil {
+			m.bookmarkStatus = "Bookmarks unavailable: " + msg.Err.Error()
+		} else if len(msg.Bookmarks) == 0 {
+			m.bookmarkStatus = "No bookmarks yet. Press Ctrl-B on an interesting file."
+		} else {
+			m.bookmarkStatus = ""
+			for _, bookmark := range msg.Bookmarks {
+				m.bookmarkedPaths[bookmarkPathKey(bookmark.Host, bookmark.Share, bookmark.Path)] = true
+			}
+		}
+		return m, nil
+	case tuiBookmarkDetailLoadedMsg:
+		if msg.Err != nil {
+			m.bookmarkStatus = "Bookmark detail unavailable: " + msg.Err.Error()
+		} else {
+			m.bookmarkDetail = &msg.Details
+			m.bookmarkDetailOffset = 0
+		}
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -470,6 +549,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m tuiModel) View() string {
 	if !m.windowLoaded || m.width <= 0 || m.height <= 0 {
 		return "Loading scan UI..."
+	}
+	if m.bookmarkOpen {
+		return m.bookmarkView()
 	}
 	if m.searchOpen {
 		return m.searchView()
@@ -502,6 +584,15 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	}
+	if msg.String() == "alt+b" {
+		m.searchOpen = false
+		m.bookmarkOpen = true
+		m.bookmarkStatus = "Loading bookmarks..."
+		return m, m.bookmarkListCmd()
+	}
+	if m.bookmarkOpen {
+		return m.handleBookmarkKey(msg)
+	}
 	if m.searchOpen {
 		return m.handleSearchKey(msg)
 	}
@@ -520,7 +611,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.moveSelection(1)
 		}
-	case "pgup", "ctrl+b":
+	case "pgup":
 		if m.focusedPane == tuiPaneDetails {
 			m.detailPane.LineUp(max(1, m.detailPane.Height-2))
 		} else {
@@ -556,6 +647,13 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.quitHint = "Scan is still running. Use Ctrl-C to stop the scan."
 		}
+	case "ctrl+b":
+		if m.selected < 0 || m.selected >= len(m.findings) {
+			m.bookmarkStatus = "No file selected"
+			return m, nil
+		}
+		finding := m.findings[m.selected]
+		return m, m.toggleFindingBookmarkCmd(finding)
 	case "ctrl+f":
 		m.searchOpen = true
 		m.searchInputActive = true
@@ -567,6 +665,175 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+func bookmarkPathKey(host, share, path string) string {
+	return host + "\x00" + share + "\x00" + path
+}
+
+func (m tuiModel) bookmarkStore() *store.SQLiteStore {
+	if m.writer == nil {
+		return nil
+	}
+	m.writer.mu.Lock()
+	defer m.writer.mu.Unlock()
+	return m.writer.searchStore
+}
+
+func (m tuiModel) toggleFindingBookmarkCmd(finding scanner.Finding) tea.Cmd {
+	writer := m.writer
+	return func() tea.Msg {
+		if writer == nil {
+			return tuiBookmarkToggledMsg{Err: fmt.Errorf("bookmark store is unavailable")}
+		}
+		writer.mu.Lock()
+		bookmarkStore := writer.searchStore
+		writer.mu.Unlock()
+		if bookmarkStore == nil {
+			return tuiBookmarkToggledMsg{Err: fmt.Errorf("authoritative SQLite store is unavailable")}
+		}
+		bookmark, bookmarked, err := bookmarkStore.ToggleBookmark(context.Background(), finding.Host, finding.Share, finding.FilePath)
+		return tuiBookmarkToggledMsg{Bookmark: bookmark, Bookmarked: bookmarked, Err: err}
+	}
+}
+
+func (m tuiModel) toggleBookmarkKeyCmd(key string) tea.Cmd {
+	writer := m.writer
+	return func() tea.Msg {
+		if writer == nil {
+			return tuiBookmarkToggledMsg{Err: fmt.Errorf("bookmark store is unavailable")}
+		}
+		writer.mu.Lock()
+		bookmarkStore := writer.searchStore
+		writer.mu.Unlock()
+		if bookmarkStore == nil {
+			return tuiBookmarkToggledMsg{Err: fmt.Errorf("authoritative SQLite store is unavailable")}
+		}
+		bookmark, bookmarked, err := bookmarkStore.ToggleBookmarkKey(context.Background(), key)
+		return tuiBookmarkToggledMsg{Bookmark: bookmark, Bookmarked: bookmarked, Err: err}
+	}
+}
+
+func (m tuiModel) bookmarkListCmd() tea.Cmd {
+	writer := m.writer
+	return func() tea.Msg {
+		if writer == nil {
+			return tuiBookmarksLoadedMsg{Err: fmt.Errorf("bookmark store is unavailable")}
+		}
+		writer.mu.Lock()
+		bookmarkStore := writer.searchStore
+		writer.mu.Unlock()
+		if bookmarkStore == nil {
+			return tuiBookmarksLoadedMsg{Err: fmt.Errorf("authoritative SQLite store is unavailable")}
+		}
+		bookmarks, err := bookmarkStore.ListBookmarks(context.Background(), tuiSearchPageSize, 0)
+		return tuiBookmarksLoadedMsg{Bookmarks: bookmarks, Err: err}
+	}
+}
+
+func (m tuiModel) bookmarkDetailCmd(key string) tea.Cmd {
+	writer := m.writer
+	return func() tea.Msg {
+		if writer == nil {
+			return tuiBookmarkDetailLoadedMsg{Err: fmt.Errorf("bookmark store is unavailable")}
+		}
+		writer.mu.Lock()
+		bookmarkStore := writer.searchStore
+		writer.mu.Unlock()
+		if bookmarkStore == nil {
+			return tuiBookmarkDetailLoadedMsg{Err: fmt.Errorf("authoritative SQLite store is unavailable")}
+		}
+		details, err := bookmarkStore.BookmarkDetails(context.Background(), key)
+		return tuiBookmarkDetailLoadedMsg{Details: details, Err: err}
+	}
+}
+
+func (m tuiModel) handleBookmarkKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.bookmarkDetail != nil {
+		switch msg.String() {
+		case "esc":
+			m.bookmarkDetail = nil
+			m.bookmarkDetailOffset = 0
+		case "ctrl+b":
+			return m, m.toggleBookmarkKeyCmd(m.bookmarkDetail.Bookmark.FileKey)
+		case "up", "k":
+			m.bookmarkDetailOffset = max(0, m.bookmarkDetailOffset-1)
+		case "down", "j":
+			m.bookmarkDetailOffset++
+		case "pgup":
+			m.bookmarkDetailOffset = max(0, m.bookmarkDetailOffset-m.bookmarkDetailVisibleRows())
+		case "pgdown":
+			m.bookmarkDetailOffset += m.bookmarkDetailVisibleRows()
+		case "g":
+			m.bookmarkDetailOffset = 0
+		case "G":
+			m.bookmarkDetailOffset = 1 << 30
+		}
+		m.clampBookmarkDetailOffset()
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc":
+		m.bookmarkOpen = false
+		m.bookmarkStatus = ""
+	case "enter":
+		if len(m.bookmarks) > 0 {
+			m.bookmarkStatus = "Loading bookmark detail..."
+			return m, m.bookmarkDetailCmd(m.bookmarks[m.bookmarkSelected].FileKey)
+		}
+	case "ctrl+b":
+		if len(m.bookmarks) > 0 {
+			return m, m.toggleBookmarkKeyCmd(m.bookmarks[m.bookmarkSelected].FileKey)
+		}
+	case "up", "k":
+		m.moveBookmarkSelection(-1)
+	case "down", "j":
+		m.moveBookmarkSelection(1)
+	case "pgup":
+		m.moveBookmarkSelection(-m.bookmarkVisibleRows())
+	case "pgdown":
+		m.moveBookmarkSelection(m.bookmarkVisibleRows())
+	case "g":
+		m.bookmarkSelected = 0
+		m.bookmarkViewport = 0
+	case "G":
+		m.bookmarkSelected = max(0, len(m.bookmarks)-1)
+		m.ensureBookmarkSelectionVisible()
+	}
+	return m, nil
+}
+
+func (m *tuiModel) moveBookmarkSelection(delta int) {
+	if len(m.bookmarks) == 0 {
+		return
+	}
+	m.bookmarkSelected = max(0, min(len(m.bookmarks)-1, m.bookmarkSelected+delta))
+	m.ensureBookmarkSelectionVisible()
+}
+
+func (m *tuiModel) bookmarkVisibleRows() int { return max(1, m.height-8) }
+
+func (m *tuiModel) ensureBookmarkSelectionVisible() {
+	visible := m.bookmarkVisibleRows()
+	if m.bookmarkSelected < m.bookmarkViewport {
+		m.bookmarkViewport = m.bookmarkSelected
+	}
+	if m.bookmarkSelected >= m.bookmarkViewport+visible {
+		m.bookmarkViewport = m.bookmarkSelected - visible + 1
+	}
+	maxStart := max(0, len(m.bookmarks)-visible)
+	m.bookmarkViewport = max(0, min(m.bookmarkViewport, maxStart))
+}
+
+func (m *tuiModel) bookmarkDetailVisibleRows() int { return max(1, m.height-5) }
+
+func (m *tuiModel) clampBookmarkDetailOffset() {
+	if m.bookmarkDetail == nil {
+		m.bookmarkDetailOffset = 0
+		return
+	}
+	lines := strings.Split(clampMultiline(m.bookmarkDetailContent(), max(1, m.width-4)), "\n")
+	m.bookmarkDetailOffset = max(0, min(m.bookmarkDetailOffset, max(0, len(lines)-m.bookmarkDetailVisibleRows())))
 }
 
 func (m *tuiModel) togglePaneFocus() {
@@ -595,6 +862,12 @@ func (m tuiModel) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.searchDetailOffset = 0
 		case "G":
 			m.searchDetailOffset = 1 << 30
+		case "ctrl+b":
+			if m.searchDetail.BookmarkKey == "" {
+				m.searchStatus = "This search result has no bookmarkable file"
+				return m, nil
+			}
+			return m, m.toggleBookmarkKeyCmd(m.searchDetail.BookmarkKey)
 		}
 		m.clampSearchDetailOffset()
 		return m, nil
@@ -642,6 +915,12 @@ func (m tuiModel) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.searchStatus = "Searching..."
 		return m, m.searchCmd(query)
+	case "ctrl+b":
+		if len(m.searchResults) == 0 || m.searchResults[m.searchSelected].BookmarkKey == "" {
+			m.searchStatus = "This search result has no bookmarkable file"
+			return m, nil
+		}
+		return m, m.toggleBookmarkKeyCmd(m.searchResults[m.searchSelected].BookmarkKey)
 	case "up", "k", "ctrl+p":
 		m.moveSearchSelection(-1)
 	case "down", "j", "ctrl+n":
@@ -750,10 +1029,79 @@ func (m tuiModel) searchView() string {
 			prefix = "> "
 		}
 		line := prefix + formatSearchResult(result)
+		if result.BookmarkKey != "" && m.bookmarkedPathsForResult(result) {
+			line = prefix + "★ " + formatSearchResult(result)
+		}
 		lines = append(lines, truncateDisplayWidth(line, max(1, m.width-4)))
 	}
 	body := strings.Join(lines, "\n")
 	return fitScreenBlock(lipgloss.JoinVertical(lipgloss.Left, header, m.renderBoundedPane("Database Search", body, m.width, max(3, m.height-2)), footer), m.width, m.height)
+}
+
+func (m tuiModel) bookmarkView() string {
+	header := m.styles.header.Render(fmt.Sprintf("Bookmarks  %d", len(m.bookmarks)))
+	footer := m.styles.footer.Render("Enter open • ↑/↓ or j/k move • PgUp/PgDn • g/G • Ctrl-B remove • Esc back")
+	if m.bookmarkDetail != nil {
+		lines := strings.Split(clampMultiline(m.bookmarkDetailContent(), max(1, m.width-4)), "\n")
+		visible := m.bookmarkDetailVisibleRows()
+		offset := max(0, min(m.bookmarkDetailOffset, max(0, len(lines)-visible)))
+		body := strings.Join(lines[offset:min(len(lines), offset+visible)], "\n")
+		return fitScreenBlock(lipgloss.JoinVertical(lipgloss.Left, header, m.renderBoundedPane("Bookmark Detail", body, m.width, max(3, m.height-2)), footer), m.width, m.height)
+	}
+	lines := []string{"Select a bookmarked file to inspect its findings and credentials."}
+	if len(m.bookmarks) == 0 {
+		lines = []string{"No bookmarks yet.", "Press Ctrl-B on an interesting file to bookmark it."}
+	} else {
+		visible := m.bookmarkVisibleRows()
+		start := max(0, min(m.bookmarkViewport, max(0, len(m.bookmarks)-visible)))
+		end := min(len(m.bookmarks), start+visible)
+		for index := start; index < end; index++ {
+			bookmark := m.bookmarks[index]
+			prefix := "  "
+			if index == m.bookmarkSelected {
+				prefix = "> "
+			}
+			line := fmt.Sprintf("%s[FILE] %s | %s / %s", prefix, pathLeaf(bookmark.Path), valueOrDash(bookmark.Host), valueOrDash(bookmark.Share))
+			lines = append(lines, truncateDisplayWidth(line, max(1, m.width-4)))
+		}
+	}
+	if strings.TrimSpace(m.bookmarkStatus) != "" {
+		lines = append([]string{m.bookmarkStatus, ""}, lines...)
+	}
+	return fitScreenBlock(lipgloss.JoinVertical(lipgloss.Left, header, m.renderBoundedPane("Bookmarked Files", strings.Join(lines, "\n"), m.width, max(3, m.height-2)), footer), m.width, m.height)
+}
+
+func pathLeaf(path string) string {
+	path = strings.TrimRight(strings.ReplaceAll(path, "\\", "/"), "/")
+	if index := strings.LastIndex(path, "/"); index >= 0 {
+		return path[index+1:]
+	}
+	return path
+}
+
+func (m tuiModel) bookmarkDetailContent() string {
+	if m.bookmarkDetail == nil {
+		return ""
+	}
+	detail := m.bookmarkDetail
+	lines := []string{
+		"Path: " + valueOrDash(detail.Bookmark.Path),
+		"Host / Share: " + valueOrDash(detail.Bookmark.Host) + " / " + valueOrDash(detail.Bookmark.Share),
+		"File identity: " + valueOrDash(detail.Bookmark.FileKey),
+		"",
+		fmt.Sprintf("Related findings: %d", len(detail.Findings)),
+	}
+	for _, finding := range detail.Findings {
+		lines = append(lines, fmt.Sprintf("- %s | %s | %s", valueOrDash(finding.RuleID), valueOrDash(finding.Category), strings.ToUpper(valueOrDash(firstNonEmpty(finding.Confidence, finding.Severity)))))
+		for _, evidence := range consoleEvidenceLines(finding) {
+			lines = append(lines, "  "+evidence)
+		}
+	}
+	lines = append(lines, "", fmt.Sprintf("Credentials: %d", len(detail.Credentials)))
+	for _, credential := range detail.Credentials {
+		lines = append(lines, fmt.Sprintf("- %s | %s | %s", valueOrDash(credential.Identity), valueOrDash(credential.Type), valueOrDash(credential.Value)))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m tuiModel) searchDetailContent() string {
@@ -790,6 +1138,15 @@ func compactCredentialSource(source string) string {
 		return parts[2]
 	}
 	return source
+}
+
+func (m tuiModel) bookmarkedPathsForResult(result store.SearchResult) bool {
+	for _, bookmark := range m.bookmarks {
+		if bookmark.FileKey == result.BookmarkKey {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *tuiModel) waitForExternalEvent() tea.Cmd {
@@ -960,7 +1317,10 @@ func (m tuiModel) renderHeader() string {
 }
 
 func (m tuiModel) renderFooter() string {
-	message := "↑/↓ or j/k select • Tab switch pane • Ctrl-F search • Ctrl-C stop"
+	message := "↑/↓ or j/k select • Tab switch pane • Ctrl-F search • Ctrl-B bookmark • Alt-B bookmarks • Ctrl-C stop"
+	if strings.TrimSpace(m.bookmarkStatus) != "" {
+		message = m.bookmarkStatus + " • " + message
+	}
 	if strings.TrimSpace(m.quitHint) != "" {
 		message = m.quitHint
 	}
@@ -1108,6 +1468,9 @@ func renderTUIFindingRow(row tuiFindingRow, width int, selected bool) string {
 	if row.HasEvidence {
 		meta += " *"
 	}
+	if row.Bookmarked {
+		meta += " ★"
+	}
 	line := fmt.Sprintf("%s %-12s %-18s", meta, truncateDisplayWidth(strings.ToUpper(row.Triage), 12), truncateDisplayWidth(row.Category, 18))
 	line = padDisplayWidth(truncateDisplayWidth(line, max(8, width)), max(8, width))
 	style := defaultTUIStyles().row.Copy()
@@ -1150,7 +1513,9 @@ func (m *tuiModel) refreshListContent() {
 	}
 	rows := make([]string, 0, len(m.findings))
 	for idx := range m.findings {
-		rows = append(rows, renderTUIFindingRow(newTUIFindingRow(m.findings[idx]), m.listPane.Width, idx == m.selected))
+		row := newTUIFindingRow(m.findings[idx])
+		row.Bookmarked = m.bookmarkedPaths[bookmarkPathKey(m.findings[idx].Host, m.findings[idx].Share, m.findings[idx].FilePath)]
+		rows = append(rows, renderTUIFindingRow(row, m.listPane.Width, idx == m.selected))
 	}
 	m.listPane.SetContent(strings.Join(rows, "\n"))
 }

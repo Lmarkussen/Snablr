@@ -120,6 +120,7 @@ type tuiModel struct {
 	windowLoaded       bool
 	searchQuery        string
 	searchOpen         bool
+	searchInputActive  bool
 	searchResults      []store.SearchResult
 	searchSelected     int
 	searchViewport     int
@@ -447,6 +448,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tuiSearchCompletedMsg:
 		m.searchResults = msg.Results
+		m.searchInputActive = len(msg.Results) == 0
 		m.searchSelected = 0
 		m.searchViewport = 0
 		m.searchDetail = nil
@@ -556,6 +558,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "ctrl+f":
 		m.searchOpen = true
+		m.searchInputActive = true
 		m.searchResults = nil
 		m.searchDetail = nil
 		m.searchViewport = 0
@@ -594,6 +597,32 @@ func (m tuiModel) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.searchDetailOffset = 1 << 30
 		}
 		m.clampSearchDetailOffset()
+		return m, nil
+	}
+	if m.searchInputActive {
+		switch msg.String() {
+		case "esc":
+			m.searchOpen = false
+			return m, nil
+		case "enter":
+			query := strings.TrimSpace(m.searchQuery)
+			if query == "" {
+				m.searchStatus = "Enter a search query"
+				return m, nil
+			}
+			m.searchInputActive = false
+			m.searchStatus = "Searching..."
+			return m, m.searchCmd(query)
+		case "backspace":
+			runes := []rune(m.searchQuery)
+			if len(runes) > 0 {
+				m.searchQuery = string(runes[:len(runes)-1])
+			}
+			return m, nil
+		}
+		if len(msg.Runes) > 0 && len([]rune(m.searchQuery))+len(msg.Runes) <= 256 {
+			m.searchQuery += string(msg.Runes)
+		}
 		return m, nil
 	}
 	switch msg.String() {

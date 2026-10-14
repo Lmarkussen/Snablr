@@ -147,6 +147,56 @@ func TestTUIControlFOpensDatabaseSearch(t *testing.T) {
 	}
 }
 
+func TestTUISearchInputAcceptsNavigationLettersAndText(t *testing.T) {
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"}
+	model := newTUIModel(writer)
+	model.searchOpen = true
+	model.searchInputActive = true
+
+	for _, value := range []string{"g", "G", "j", "k", "config", "login", "staging", " ", "!", "ø"} {
+		for _, character := range []rune(value) {
+			updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{character}})
+			model = updated.(tuiModel)
+		}
+	}
+	if model.searchQuery != "gGjkconfigloginstaging !ø" {
+		t.Fatalf("search input did not preserve typed query: %q", model.searchQuery)
+	}
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	model = updated.(tuiModel)
+	if model.searchQuery != "gGjkconfigloginstaging !" {
+		t.Fatalf("backspace did not remove the last UTF-8 rune: %q", model.searchQuery)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	model = updated.(tuiModel)
+	if model.searchOpen {
+		t.Fatal("Esc did not close query-entry mode")
+	}
+}
+
+func TestTUISearchNavigationStartsAfterQueryEntry(t *testing.T) {
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"}
+	model := newTUIModel(writer)
+	model.searchOpen = true
+	model.searchInputActive = true
+	model.searchResults = []store.SearchResult{
+		{Type: store.SearchResultFile, Title: "first"},
+		{Type: store.SearchResultFile, Title: "second"},
+	}
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	model = updated.(tuiModel)
+	if model.searchQuery != "g" || model.searchSelected != 0 {
+		t.Fatalf("g was treated as navigation during query entry: query=%q selected=%d", model.searchQuery, model.searchSelected)
+	}
+	model.searchInputActive = false
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	model = updated.(tuiModel)
+	if model.searchSelected != 1 {
+		t.Fatalf("G did not navigate results after query entry: selected=%d", model.searchSelected)
+	}
+}
+
 func TestTUIViewAdvertisesDatabaseSearch(t *testing.T) {
 	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"}
 	model := newTUIModel(writer)

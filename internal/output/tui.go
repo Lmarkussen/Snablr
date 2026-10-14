@@ -435,7 +435,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.followTail = false
 		m.live = m.writer.liveState()
-		m.refreshDetailContent()
+		m.refreshDetailContent(true)
 		m.ensureSelectionVisible()
 		m.quitHint = "Scan complete. Press Ctrl-C to close."
 		return m, nil
@@ -537,7 +537,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selected = 0
 			m.followTail = false
 			m.ensureSelectionVisible()
-			m.refreshDetailContent()
+			m.refreshDetailContent(true)
 		}
 	case "G":
 		if m.focusedPane == tuiPaneDetails {
@@ -546,7 +546,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selected = len(m.findings) - 1
 			m.followTail = true
 			m.ensureSelectionVisible()
-			m.refreshDetailContent()
+			m.refreshDetailContent(true)
 		}
 	case "q":
 		if m.completed {
@@ -791,17 +791,18 @@ func (m *tuiModel) moveSelection(delta int) {
 	}
 	m.followTail = m.selected == len(m.findings)-1
 	m.ensureSelectionVisible()
-	m.refreshDetailContent()
+	m.refreshDetailContent(true)
 }
 
 func (m *tuiModel) syncLiveState(state tuiLiveState) {
+	previousSelected := m.selected
 	m.live = state
 	m.findings = cloneFindings(state.Findings)
 	if len(m.findings) == 0 {
 		m.selected = -1
 		m.listPane.SetContent("")
 		m.listPane.GotoTop()
-		m.refreshDetailContent()
+		m.refreshDetailContent(true)
 		return
 	}
 	if m.selected < 0 {
@@ -814,7 +815,7 @@ func (m *tuiModel) syncLiveState(state tuiLiveState) {
 		m.selected = len(m.findings) - 1
 	}
 	m.ensureSelectionVisible()
-	m.refreshDetailContent()
+	m.refreshDetailContent(previousSelected != m.selected)
 }
 
 func (m *tuiModel) ensureSelectionVisible() {
@@ -844,7 +845,8 @@ func (m *tuiModel) ensureSelectionVisible() {
 	}
 }
 
-func (m *tuiModel) refreshDetailContent() {
+func (m *tuiModel) refreshDetailContent(resetViewport bool) {
+	offset := m.detailPane.YOffset
 	content := m.placeholderDetails()
 	if m.selected >= 0 && m.selected < len(m.findings) {
 		content = buildTUIDetail(m.findings[m.selected])
@@ -853,7 +855,11 @@ func (m *tuiModel) refreshDetailContent() {
 		content = clampMultiline(content, m.detailPane.Width)
 	}
 	m.detailPane.SetContent(content)
-	m.detailPane.GotoTop()
+	if resetViewport {
+		offset = 0
+	}
+	maxOffset := max(0, m.detailPane.TotalLineCount()-m.detailPane.Height)
+	m.detailPane.YOffset = max(0, min(offset, maxOffset))
 }
 
 func (m tuiModel) placeholderDetails() string {
@@ -882,7 +888,7 @@ func (m *tuiModel) layout() {
 	m.detailPane.Width = max(10, m.detailContentWidth())
 	m.detailPane.Height = max(4, detailHeight)
 	m.refreshListContent()
-	m.refreshDetailContent()
+	m.refreshDetailContent(false)
 }
 
 func (m tuiModel) listHeight() int {

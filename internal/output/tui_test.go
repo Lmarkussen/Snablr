@@ -174,6 +174,78 @@ func TestTUIFocusSwitchAndCtrlCRemainDistinct(t *testing.T) {
 	}
 }
 
+func TestTUIDetailViewportPersistsAcrossRefreshesAndResizes(t *testing.T) {
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"}
+	model := newTUIModel(writer)
+	model.windowLoaded = true
+	model.width = 100
+	model.height = 16
+	model.findings = []scanner.Finding{sampleFinding(), sampleArchiveFinding()}
+	model.findings[0].Context = strings.Repeat("synthetic evidence line\n", 40)
+	model.selected = 0
+	model.followTail = false
+	model.layout()
+	model.refreshDetailContent(true)
+
+	model.focusedPane = tuiPaneDetails
+	for index := 0; index < 4; index++ {
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+		model = updated.(tuiModel)
+	}
+	if model.detailPane.YOffset == 0 {
+		t.Fatal("detail viewport did not scroll down")
+	}
+	offset := model.detailPane.YOffset
+
+	model.syncLiveState(tuiLiveState{Findings: model.findings, Status: "running"})
+	if model.detailPane.YOffset != offset {
+		t.Fatalf("ordinary scan refresh reset detail viewport: got %d want %d", model.detailPane.YOffset, offset)
+	}
+	model.refreshDetailContent(false)
+	if model.detailPane.YOffset != offset {
+		t.Fatalf("same-finding detail refresh reset viewport: got %d want %d", model.detailPane.YOffset, offset)
+	}
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	model = updated.(tuiModel)
+	if model.detailPane.YOffset <= offset {
+		t.Fatalf("PgDn did not advance detail viewport: got %d previous %d", model.detailPane.YOffset, offset)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	model = updated.(tuiModel)
+	if model.detailPane.YOffset != model.detailPane.TotalLineCount()-model.detailPane.Height {
+		t.Fatalf("G did not move detail viewport to bottom: got %d", model.detailPane.YOffset)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	model = updated.(tuiModel)
+	if model.detailPane.YOffset != 0 {
+		t.Fatalf("g did not move detail viewport to top: got %d", model.detailPane.YOffset)
+	}
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = updated.(tuiModel)
+	beforeResize := model.detailPane.YOffset
+	updated, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 12})
+	model = updated.(tuiModel)
+	maxOffset := max(0, model.detailPane.TotalLineCount()-model.detailPane.Height)
+	if model.detailPane.YOffset != min(beforeResize, maxOffset) {
+		t.Fatalf("resize did not preserve/clamp detail viewport: got %d want %d", model.detailPane.YOffset, min(beforeResize, maxOffset))
+	}
+	resizedOffset := model.detailPane.YOffset
+	updated, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	model = updated.(tuiModel)
+	if model.detailPane.YOffset != resizedOffset {
+		t.Fatalf("larger resize reset detail viewport: got %d want %d", model.detailPane.YOffset, resizedOffset)
+	}
+
+	model.selected = 1
+	model.followTail = false
+	model.syncLiveState(tuiLiveState{Findings: model.findings, Status: "running"})
+	if model.detailPane.YOffset != 0 {
+		t.Fatal("changing selected finding did not reset detail viewport")
+	}
+}
+
 func TestTUILiveStateFiltersSupportingFindings(t *testing.T) {
 	writer := &TUIWriter{
 		summary:        newSummaryCollector(),
@@ -216,7 +288,7 @@ func TestTUIViewLinesStayWithinTerminalWidth(t *testing.T) {
 	model.findings = []scanner.Finding{long, sampleArchiveFinding(), sampleSQLiteFinding()}
 	model.selected = 0
 	model.ensureSelectionVisible()
-	model.refreshDetailContent()
+	model.refreshDetailContent(true)
 
 	view := model.View()
 	for _, line := range strings.Split(view, "\n") {
@@ -242,7 +314,7 @@ func TestTUIViewDoesNotExceedTerminalHeight(t *testing.T) {
 	model.findings = []scanner.Finding{sampleFinding(), sampleArchiveFinding(), sampleSQLiteFinding()}
 	model.selected = len(model.findings) - 1
 	model.ensureSelectionVisible()
-	model.refreshDetailContent()
+	model.refreshDetailContent(true)
 
 	view := model.View()
 	if lines := len(strings.Split(view, "\n")); lines > model.height {

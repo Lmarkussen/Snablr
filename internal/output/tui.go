@@ -113,6 +113,7 @@ type tuiFindingRow struct {
 	Triage      string
 	Category    string
 	Path        string
+	FileName    string
 	HasEvidence bool
 	Bookmarked  bool
 }
@@ -146,6 +147,8 @@ type tuiModel struct {
 	searchStatus         string
 	focusedPane          tuiPane
 	bookmarkedPaths      map[string]bool
+	bookmarkedFileKeys   map[string]bool
+	bookmarkKeysByPath   map[string]string
 	bookmarkOpen         bool
 	bookmarks            []store.Bookmark
 	bookmarkSelected     int
@@ -420,13 +423,15 @@ func (t *TUIWriter) liveState() tuiLiveState {
 
 func newTUIModel(writer *TUIWriter) tuiModel {
 	model := tuiModel{
-		writer:          writer,
-		followTail:      true,
-		selected:        -1,
-		live:            writer.liveState(),
-		styles:          defaultTUIStyles(),
-		focusedPane:     tuiPaneFindings,
-		bookmarkedPaths: make(map[string]bool),
+		writer:             writer,
+		followTail:         true,
+		selected:           -1,
+		live:               writer.liveState(),
+		styles:             defaultTUIStyles(),
+		focusedPane:        tuiPaneFindings,
+		bookmarkedPaths:    make(map[string]bool),
+		bookmarkedFileKeys: make(map[string]bool),
+		bookmarkKeysByPath: make(map[string]string),
 	}
 	model.listPane = viewport.New(0, 0)
 	model.listPane.MouseWheelEnabled = false
@@ -493,7 +498,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			m.bookmarkStatus = "Bookmark unavailable: " + msg.Err.Error()
 		} else {
-			m.bookmarkedPaths[bookmarkPathKey(msg.Bookmark.Host, msg.Bookmark.Share, msg.Bookmark.Path)] = msg.Bookmarked
+			pathKey := bookmarkPathKey(msg.Bookmark.Host, msg.Bookmark.Share, msg.Bookmark.Path)
+			m.bookmarkedFileKeys[msg.Bookmark.FileKey] = msg.Bookmarked
+			if msg.Bookmarked {
+				m.bookmarkKeysByPath[pathKey] = msg.Bookmark.FileKey
+				m.bookmarkedPaths[pathKey] = true
+			} else {
+				delete(m.bookmarkKeysByPath, pathKey)
+				delete(m.bookmarkedPaths, pathKey)
+			}
 			if m.bookmarkOpen && !msg.Bookmarked {
 				for index, bookmark := range m.bookmarks {
 					if bookmark.FileKey == msg.Bookmark.FileKey {
@@ -514,10 +527,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.bookmarkStatus = "Bookmark removed"
 			}
+			m.refreshListContent()
 		}
 		return m, nil
 	case tuiBookmarksLoadedMsg:
 		m.bookmarks = msg.Bookmarks
+		m.bookmarkedPaths = make(map[string]bool, len(msg.Bookmarks))
+		m.bookmarkedFileKeys = make(map[string]bool, len(msg.Bookmarks))
+		m.bookmarkKeysByPath = make(map[string]string, len(msg.Bookmarks))
 		m.bookmarkSelected = 0
 		m.bookmarkViewport = 0
 		m.bookmarkDetail = nil
@@ -528,7 +545,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.bookmarkStatus = ""
 			for _, bookmark := range msg.Bookmarks {
-				m.bookmarkedPaths[bookmarkPathKey(bookmark.Host, bookmark.Share, bookmark.Path)] = true
+				pathKey := bookmarkPathKey(bookmark.Host, bookmark.Share, bookmark.Path)
+				m.bookmarkedPaths[pathKey] = true
+				m.bookmarkedFileKeys[bookmark.FileKey] = true
+				m.bookmarkKeysByPath[pathKey] = bookmark.FileKey
 			}
 		}
 		return m, nil
@@ -1467,6 +1487,7 @@ func newTUIFindingRow(f scanner.Finding) tuiFindingRow {
 		Triage:      firstNonEmpty(displayTriageClass(f.TriageClass), "review"),
 		Category:    firstNonEmpty(f.Category, f.RuleName),
 		Path:        findingDisplayPath(f),
+		FileName:    pathLeaf(findingDisplayPath(f)),
 		HasEvidence: hasTUIEvidence(f),
 	}
 }
@@ -1480,7 +1501,7 @@ func renderTUIFindingRow(row tuiFindingRow, width int, selected bool) string {
 	if row.HasEvidence {
 		meta += " *"
 	}
-	line := fmt.Sprintf("%s %-12s %-18s", meta, truncateDisplayWidth(strings.ToUpper(row.Triage), 12), truncateDisplayWidth(row.Category, 18))
+	line := fmt.Sprintf("%s %-12s %-18s %-18s", meta, truncateDisplayWidth(strings.ToUpper(row.Triage), 12), truncateDisplayWidth(row.Category, 18), truncateDisplayWidth(row.FileName, 18))
 	rowWidth := max(8, width)
 	if row.Bookmarked {
 		marker := lipgloss.NewStyle().Foreground(lipgloss.Color("#22C55E")).Render("*")
@@ -1528,7 +1549,9 @@ func (m *tuiModel) refreshListContent() {
 	rows := make([]string, 0, len(m.findings))
 	for idx := range m.findings {
 		row := newTUIFindingRow(m.findings[idx])
-		row.Bookmarked = m.bookmarkedPaths[bookmarkPathKey(m.findings[idx].Host, m.findings[idx].Share, m.findings[idx].FilePath)]
+		pathKey := bookmarkPathKey(m.findings[idx].Host, m.findings[idx].Share, m.findings[idx].FilePath)
+		fileKey := m.bookmarkKeysByPath[pathKey]
+		row.Bookmarked = fileKey != "" && m.bookmarkedFileKeys[fileKey]
 		rows = append(rows, renderTUIFindingRow(row, m.listPane.Width, idx == m.selected))
 	}
 	m.listPane.SetContent(strings.Join(rows, "\n"))

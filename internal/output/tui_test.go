@@ -46,6 +46,91 @@ func TestTUIFindingRowBookmarkMarkerIsTrailingAndWidthSafe(t *testing.T) {
 	if strings.HasSuffix(unbookmarked, "*") {
 		t.Fatalf("unbookmarked row rendered a trailing bookmark marker: %q", unbookmarked)
 	}
+	if !strings.Contains(renderTUIFindingRow(row, 100, false), "Groups.xml") {
+		t.Fatal("finding row did not include a compact source filename")
+	}
+}
+
+func TestTUIFileCentricBookmarkMarkersUsePersistedFileKeys(t *testing.T) {
+	state, err := store.Open(t.TempDir()+"/bookmark-mapping.db", store.Options{ScanID: "bookmark-mapping", BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	now := time.Now().UTC()
+	files := []struct {
+		key, share, path string
+	}{
+		{"file-a", "share-a", "config.txt"},
+		{"file-b", "share-b", "config.txt"},
+		{"file-c", "share-c", "other.txt"},
+	}
+	for _, file := range files {
+		if err := state.RecordFile(file.key, "synthetic-host", file.share, file.path, "complete", "semantics", 1, now, now, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running", searchStore: state}
+	model := newTUIModel(writer)
+	model.findings = []scanner.Finding{
+		{Host: "synthetic-host", Share: "share-a", FilePath: "config.txt", Category: "first"},
+		{Host: "synthetic-host", Share: "share-a", FilePath: "config.txt", Category: "second"},
+		{Host: "synthetic-host", Share: "share-b", FilePath: "config.txt", Category: "third"},
+		{Host: "synthetic-host", Share: "share-c", FilePath: "other.txt", Category: "unrelated"},
+	}
+	model.selected = 0
+	model.windowLoaded = true
+	model.width = 120
+	model.height = 20
+	model.layout()
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	model = updated.(tuiModel)
+	updated, _ = model.Update(cmd())
+	model = updated.(tuiModel)
+	if bookmarked, err := state.IsBookmarked(context.Background(), "file-a"); err != nil || !bookmarked {
+		t.Fatalf("file A was not persisted: bookmarked=%t err=%v", bookmarked, err)
+	}
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = updated.(tuiModel)
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = updated.(tuiModel)
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	model = updated.(tuiModel)
+	updated, _ = model.Update(cmd())
+	model = updated.(tuiModel)
+	if bookmarked, err := state.IsBookmarked(context.Background(), "file-b"); err != nil || !bookmarked {
+		t.Fatalf("file B was not persisted: bookmarked=%t err=%v", bookmarked, err)
+	}
+
+	rows := strings.Split(model.listPane.View(), "\n")
+	starred := 0
+	for _, row := range rows {
+		if strings.HasSuffix(strings.TrimRight(row, " "), "*") {
+			starred++
+		}
+	}
+	if starred != 3 {
+		t.Fatalf("expected three visible rows for two bookmarked files, got %d paths=%#v keys=%#v bookmarks=%#v:\n%s", starred, model.bookmarkKeysByPath, model.bookmarkedFileKeys, model.bookmarks, model.listPane.View())
+	}
+	bookmarks, err := state.ListBookmarks(context.Background(), 100, 0)
+	if err != nil || len(bookmarks) != 2 {
+		t.Fatalf("expected two unique persisted bookmarks, got %#v err=%v", bookmarks, err)
+	}
+
+	model.findings = []scanner.Finding{model.findings[3], model.findings[2], model.findings[0], model.findings[1]}
+	model.refreshListContent()
+	rows = strings.Split(model.listPane.View(), "\n")
+	if strings.HasSuffix(strings.TrimRight(rows[0], " "), "*") {
+		t.Fatal("unrelated file retained a bookmark marker after findings reorder")
+	}
+	if !strings.Contains(model.listPane.View(), "config.txt") || !strings.Contains(model.listPane.View(), "other.txt") {
+		t.Fatal("compact filenames were not rendered in the finding rows")
+	}
 }
 
 func TestTUIDetailRendersMinimalEvidencePane(t *testing.T) {

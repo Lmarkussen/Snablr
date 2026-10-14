@@ -510,7 +510,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if msg.Bookmarked {
-				m.bookmarkStatus = "★ Bookmarked"
+				m.bookmarkStatus = "Bookmarked"
 			} else {
 				m.bookmarkStatus = "Bookmark removed"
 			}
@@ -1480,11 +1480,13 @@ func renderTUIFindingRow(row tuiFindingRow, width int, selected bool) string {
 	if row.HasEvidence {
 		meta += " *"
 	}
-	if row.Bookmarked {
-		meta += " ★"
-	}
 	line := fmt.Sprintf("%s %-12s %-18s", meta, truncateDisplayWidth(strings.ToUpper(row.Triage), 12), truncateDisplayWidth(row.Category, 18))
-	line = padDisplayWidth(truncateDisplayWidth(line, max(8, width)), max(8, width))
+	rowWidth := max(8, width)
+	if row.Bookmarked {
+		marker := lipgloss.NewStyle().Foreground(lipgloss.Color("#22C55E")).Render("*")
+		line = truncateDisplayWidth(line, max(1, rowWidth-lipgloss.Width(marker)-1)) + " " + marker
+	}
+	line = padDisplayWidth(truncateDisplayWidth(line, rowWidth), rowWidth)
 	style := defaultTUIStyles().row.Copy()
 	if selected {
 		style = defaultTUIStyles().selectedRow.Copy()

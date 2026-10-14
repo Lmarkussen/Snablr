@@ -30,6 +30,24 @@ func TestTUIFindingRowDoesNotRenderEvidence(t *testing.T) {
 	}
 }
 
+func TestTUIFindingRowBookmarkMarkerIsTrailingAndWidthSafe(t *testing.T) {
+	row := newTUIFindingRow(sampleFinding())
+	row.Bookmarked = true
+	for _, width := range []int{8, 24, 48, 100} {
+		rendered := renderTUIFindingRow(row, width, false)
+		if lipgloss.Width(rendered) != width {
+			t.Fatalf("bookmark row width mismatch at %d: got %d", width, lipgloss.Width(rendered))
+		}
+		if !strings.HasSuffix(strings.TrimRight(rendered, " "), "*") {
+			t.Fatalf("bookmark marker was not trailing at width %d: %q", width, rendered)
+		}
+	}
+	unbookmarked := strings.TrimRight(renderTUIFindingRow(newTUIFindingRow(sampleFinding()), 48, false), " ")
+	if strings.HasSuffix(unbookmarked, "*") {
+		t.Fatalf("unbookmarked row rendered a trailing bookmark marker: %q", unbookmarked)
+	}
+}
+
 func TestTUIDetailRendersMinimalEvidencePane(t *testing.T) {
 	finding := sampleArchiveFinding()
 	detail := buildTUIDetail(finding)
@@ -660,7 +678,7 @@ func TestTUIBookmarkToggleAndBrowser(t *testing.T) {
 	model = updated.(tuiModel)
 	updated, _ = model.Update(cmd())
 	model = updated.(tuiModel)
-	if !strings.Contains(model.bookmarkStatus, "Bookmarked") || !strings.Contains(model.View(), "★") {
+	if !strings.Contains(model.bookmarkStatus, "Bookmarked") {
 		t.Fatalf("bookmark feedback/indicator missing: status=%q\n%s", model.bookmarkStatus, model.View())
 	}
 	selected := model.selected
@@ -721,7 +739,7 @@ func TestTUIBookmarkDoesNotStealFindingNavigation(t *testing.T) {
 	if model.bookmarkOpen || model.focusedPane != focus || model.selected != 0 {
 		t.Fatalf("bookmark changed navigation state: open=%t focus=%d selected=%d", model.bookmarkOpen, model.focusedPane, model.selected)
 	}
-	if !strings.Contains(model.View(), "★") {
+	if !strings.Contains(model.bookmarkStatus, "Bookmarked") {
 		t.Fatalf("confirmed bookmark indicator missing:\n%s", model.View())
 	}
 
@@ -796,7 +814,7 @@ func TestTUIBookmarkFailureDoesNotCreatePhantomState(t *testing.T) {
 	model = updated.(tuiModel)
 	updated, _ = model.Update(cmd())
 	model = updated.(tuiModel)
-	if len(model.bookmarkedPaths) != 0 || strings.Contains(model.View(), "★") || strings.Contains(model.bookmarkStatus, "Bookmarked") {
+	if len(model.bookmarkedPaths) != 0 || strings.Contains(model.bookmarkStatus, "Bookmarked") {
 		t.Fatalf("failed bookmark created phantom state: paths=%#v status=%q", model.bookmarkedPaths, model.bookmarkStatus)
 	}
 	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})

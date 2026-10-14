@@ -3,8 +3,11 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -89,11 +92,112 @@ func TestRunScanPreflightFailureAbortsWithoutSleep(t *testing.T) {
 		t.Fatalf("expected no preflight sleep on failure, got %d", sleepCalls)
 	}
 	output := buf.String()
-	if !strings.Contains(output, "Credentials Invalid") {
-		t.Fatalf("expected failure banner in preflight output, got %q", output)
+	if !strings.Contains(output, "Preflight Error") {
+		t.Fatalf("expected preflight error banner in preflight output, got %q", output)
 	}
-	if !strings.Contains(output, "ldap discovery: bind failed") {
-		t.Fatalf("expected concrete failure reason in preflight output, got %q", output)
+	if strings.Contains(output, "ldap discovery: bind failed") {
+		t.Fatalf("expected detail to be returned for the CLI, not printed twice, got %q", output)
+	}
+	if !strings.Contains(err.Error(), "ldap discovery: bind failed") {
+		t.Fatalf("expected concrete failure reason in returned error, got %v", err)
+	}
+}
+
+type timeoutPreflightError struct{}
+
+func (timeoutPreflightError) Error() string   { return "dial tcp synthetic.invalid:445: i/o timeout" }
+func (timeoutPreflightError) Timeout() bool   { return true }
+func (timeoutPreflightError) Temporary() bool { return true }
+
+var _ net.Error = timeoutPreflightError{}
+
+func TestClassifyPreflightFailures(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		err    error
+		kind   preflightFailureKind
+		status string
+		detail string
+	}{
+		{
+			name:   "timeout",
+			err:    &smbPreflightError{host: "synthetic-host", err: timeoutPreflightError{}},
+			kind:   preflightTargetUnreachable,
+			status: "Target Unreachable",
+			detail: "synthetic-host: SMB connection timed out",
+		},
+		{
+			name:   "wrapped transport timeout",
+			err:    &smbPreflightError{host: "synthetic-host", err: errors.New("connection error: dial tcp synthetic-host:445: i/o timeout")},
+			kind:   preflightTargetUnreachable,
+			status: "Target Unreachable",
+			detail: "synthetic-host: SMB connection timed out",
+		},
+		{
+			name:   "connection refused",
+			err:    &smbPreflightError{host: "synthetic-host", err: syscall.ECONNREFUSED},
+			kind:   preflightTargetUnreachable,
+			status: "Target Unreachable",
+			detail: "synthetic-host: SMB service is not reachable on port 445",
+		},
+		{
+			name:   "no route",
+			err:    &smbPreflightError{host: "synthetic-host", err: syscall.ENETUNREACH},
+			kind:   preflightTargetUnreachable,
+			status: "Target Unreachable",
+			detail: "synthetic-host: SMB service is not reachable on port 445",
+		},
+		{
+			name:   "rejected credentials",
+			err:    &smbPreflightError{host: "synthetic-host", err: errors.New("SMB error: STATUS_LOGON_FAILURE")},
+			kind:   preflightInvalidCredentials,
+			status: "Credentials Invalid",
+			detail: "synthetic-host: SMB credentials were rejected",
+		},
+		{
+			name:   "protocol failure",
+			err:    &smbPreflightError{host: "synthetic-host", err: errors.New("invalid SMB negotiate response")},
+			kind:   preflightProtocolError,
+			status: "Preflight Error",
+			detail: "synthetic-host: SMB protocol negotiation failed",
+		},
+		{
+			name:   "ldap stronger auth",
+			err:    errors.New("ldap discovery: strongerAuthRequired; integrity checking required"),
+			kind:   preflightSecurityRequirement,
+			status: "Preflight Error",
+			detail: "LDAP requires stronger authentication or signing",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			failure := classifyPreflightFailure(test.err)
+			if failure.kind != test.kind {
+				t.Fatalf("classification kind = %q, want %q", failure.kind, test.kind)
+			}
+			if got := preflightStatus(failure.kind); got != test.status {
+				t.Fatalf("status = %q, want %q", got, test.status)
+			}
+			if failure.Error() != test.detail {
+				t.Fatalf("detail = %q, want %q", failure.Error(), test.detail)
+			}
+		})
+	}
+}
+
+func TestPreflightFailureStatusDoesNotDuplicateDetail(t *testing.T) {
+	failure := classifyPreflightFailure(&smbPreflightError{
+		host: "synthetic-host",
+		err:  timeoutPreflightError{},
+	})
+	if strings.Count(failure.Error(), "synthetic-host") != 1 {
+		t.Fatalf("expected one concise target detail, got %q", failure.Error())
+	}
+	if strings.Contains(failure.Error(), "i/o timeout") {
+		t.Fatalf("expected raw dial detail to stay out of normal error text, got %q", failure.Error())
 	}
 }
 

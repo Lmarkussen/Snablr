@@ -82,7 +82,7 @@ func Default() Config {
 		Output: OutputConfig{
 			Format:            "console",
 			JSONOut:           "results.json",
-			HTMLOut:           "report.html",
+			HTMLOut:           "",
 			CSVOut:            "",
 			MDOut:             "",
 			CredsOut:          "",

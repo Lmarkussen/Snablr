@@ -21,6 +21,7 @@ type SearchResult struct {
 	Title   string
 	Context string
 	Detail  string
+	Source  string
 }
 
 type SearchOptions struct {
@@ -46,16 +47,16 @@ func (s *SQLiteStore) Search(ctx context.Context, query string, options SearchOp
 	// The LIKE predicates are intentionally bounded and run on the database
 	// connection. Search never materializes the scan inventory in Go memory.
 	const searchSQL = `
-SELECT result_type, result_id, title, context, detail FROM (
-  SELECT 'FILE' AS result_type, file_key AS result_id, path AS title, host || ' / ' || share AS context, path || '  [' || host || ' / ' || share || ']' AS detail
+SELECT result_type, result_id, title, context, detail, source FROM (
+  SELECT 'FILE' AS result_type, file_key AS result_id, path AS title, host || ' / ' || share AS context, path || '  [' || host || ' / ' || share || ']' AS detail, path AS source
     FROM files
    WHERE scan_id=? AND (path LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR host LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR share LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\')
   UNION ALL
-  SELECT 'FINDING' AS result_type, CAST(id AS TEXT) AS result_id, COALESCE(rule_id, category, 'finding') AS title, host || ' / ' || share AS context, path AS detail
+  SELECT 'FINDING' AS result_type, CAST(id AS TEXT) AS result_id, COALESCE(rule_id, category, 'finding') AS title, host || ' / ' || share AS context, path AS detail, path AS source
     FROM findings
    WHERE scan_id=? AND (rule_id LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR category LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR host LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR share LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR path LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\')
   UNION ALL
-  SELECT 'EVIDENCE' AS result_type, CAST(id AS TEXT) AS result_id, COALESCE(rule_id, 'evidence') AS title, path AS context, substr(payload, 1, 240) AS detail
+  SELECT 'EVIDENCE' AS result_type, CAST(id AS TEXT) AS result_id, COALESCE(rule_id, 'evidence') AS title, path AS context, substr(payload, 1, 240) AS detail, path AS source
     FROM findings
    WHERE scan_id=? AND payload LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\'
      AND rule_id NOT LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\'
@@ -64,7 +65,7 @@ SELECT result_type, result_id, title, context, detail FROM (
      AND share NOT LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\'
      AND path NOT LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\'
   UNION ALL
-  SELECT 'CREDENTIAL' AS result_type, CAST(id AS TEXT) AS result_id, COALESCE(identity, credential_type, 'credential') AS title, credential_type AS context, identity || ' = ' || value AS detail
+  SELECT 'CREDENTIAL' AS result_type, CAST(id AS TEXT) AS result_id, COALESCE(identity, credential_type, 'credential') AS title, credential_type AS context, COALESCE(identity, credential_type, 'credential') || ' | ' || COALESCE(value, '') AS detail, credential_key AS source
     FROM credentials
    WHERE scan_id=? AND (identity LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR value LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR credential_type LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR payload LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\')
 )
@@ -86,7 +87,7 @@ LIMIT ? OFFSET ?`
 	results := make([]SearchResult, 0, options.Limit)
 	for rows.Next() {
 		var result SearchResult
-		if err := rows.Scan(&result.Type, &result.ID, &result.Title, &result.Context, &result.Detail); err != nil {
+		if err := rows.Scan(&result.Type, &result.ID, &result.Title, &result.Context, &result.Detail, &result.Source); err != nil {
 			return nil, err
 		}
 		results = append(results, result)

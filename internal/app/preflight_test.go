@@ -58,10 +58,10 @@ func TestRunScanPreflightSuccessInteractiveSleepsBeforeTUI(t *testing.T) {
 		t.Fatalf("expected one preflight sleep call, got %d", sleepCalls)
 	}
 	output := buf.String()
-	if !strings.Contains(output, "Checking credentials...") {
+	if !strings.Contains(output, "Checking credentials ...") {
 		t.Fatalf("expected preflight output to contain credential check notice, got %q", output)
 	}
-	if !strings.Contains(output, "Credentials are valid!") {
+	if !strings.Contains(output, "Credentials are Valid") {
 		t.Fatalf("expected preflight output to contain success notice, got %q", output)
 	}
 }
@@ -89,7 +89,7 @@ func TestRunScanPreflightFailureAbortsWithoutSleep(t *testing.T) {
 		t.Fatalf("expected no preflight sleep on failure, got %d", sleepCalls)
 	}
 	output := buf.String()
-	if !strings.Contains(output, "Credential validation failed!") {
+	if !strings.Contains(output, "Credentials Invalid") {
 		t.Fatalf("expected failure banner in preflight output, got %q", output)
 	}
 	if !strings.Contains(output, "ldap discovery: bind failed") {
@@ -118,6 +118,41 @@ func TestRunScanPreflightNoTUISkipsDelay(t *testing.T) {
 	}
 	if sleepCalls != 0 {
 		t.Fatalf("expected no preflight delay when TUI is disabled, got %d", sleepCalls)
+	}
+}
+
+func TestRunScanPreflightNoColorPreservesStatusText(t *testing.T) {
+	var buf bytes.Buffer
+	err := runScanPreflightWithHooks(context.Background(), config.Config{Output: config.OutputConfig{NoColor: true}}, false, nil, preflightHooks{
+		out: &buf,
+		validators: func(config.Config, *logx.Logger) []preflightValidator {
+			return []preflightValidator{stubPreflightValidator{}}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "Checking credentials ...") || !strings.Contains(output, "Credentials are Valid") {
+		t.Fatalf("missing no-color preflight status: %q", output)
+	}
+	if strings.Contains(output, "\x1b[") {
+		t.Fatalf("no-color preflight emitted ANSI escape: %q", output)
+	}
+}
+
+func TestScanPreflightValidatorsIncludeSMBForExplicitTargets(t *testing.T) {
+	validators := scanPreflightValidators(config.Config{Scan: config.ScanConfig{
+		Targets:  []string{"fileserver.example.test"},
+		Username: "synthetic-user",
+		Password: "SyntheticPassword482!",
+		SMBAuth:  "password",
+	}}, nil)
+	if len(validators) != 1 {
+		t.Fatalf("expected one SMB preflight validator, got %d", len(validators))
+	}
+	if _, ok := validators[0].(smbPreflightValidator); !ok {
+		t.Fatalf("expected SMB preflight validator, got %T", validators[0])
 	}
 }
 

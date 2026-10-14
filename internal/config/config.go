@@ -141,6 +141,7 @@ type RulesConfig struct {
 type OutputConfig struct {
 	Format                string `yaml:"output_format"`
 	NoTUI                 bool   `yaml:"no_tui"`
+	NoColor               bool   `yaml:"no_color"`
 	JSONOut               string `yaml:"json_out"`
 	HTMLOut               string `yaml:"html_out"`
 	CSVOut                string `yaml:"csv_out"`
@@ -299,9 +300,6 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Output.JSONOut == "" {
 		cfg.Output.JSONOut = "results.json"
-	}
-	if cfg.Output.HTMLOut == "" {
-		cfg.Output.HTMLOut = "report.html"
 	}
 	if cfg.Output.CredsOut == "" {
 		cfg.Output.CredsOut = ""

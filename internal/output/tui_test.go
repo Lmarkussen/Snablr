@@ -1,6 +1,7 @@
 package output
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 
 	"snablr/internal/diff"
 	"snablr/internal/scanner"
+	"snablr/internal/store"
 )
 
 func TestTUIFindingRowDoesNotRenderEvidence(t *testing.T) {
@@ -21,8 +23,8 @@ func TestTUIFindingRowDoesNotRenderEvidence(t *testing.T) {
 	if !strings.Contains(row, "credentials") {
 		t.Fatalf("finding row missing category metadata: %q", row)
 	}
-	if !strings.Contains(row, `\\dc01\SYSVOL\Policies\Groups.xml`) {
-		t.Fatalf("finding row missing path metadata: %q", row)
+	if strings.Contains(row, `\\dc01\SYSVOL\Policies\Groups.xml`) {
+		t.Fatalf("finding row should not repeat full path: %q", row)
 	}
 }
 
@@ -103,6 +105,72 @@ func TestTUIControlFOpensDatabaseSearch(t *testing.T) {
 	}
 	if !updated.(tuiModel).searchOpen {
 		t.Fatalf("Ctrl-F did not open search")
+	}
+}
+
+func TestTUIViewAdvertisesDatabaseSearch(t *testing.T) {
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"}
+	model := newTUIModel(writer)
+	model.windowLoaded = true
+	model.width = 100
+	model.height = 20
+	model.layout()
+	if !strings.Contains(model.View(), "Ctrl-F search") {
+		t.Fatalf("normal TUI footer does not advertise Ctrl-F search:\n%s", model.View())
+	}
+}
+
+func TestTUIWrapsLongDetailTokens(t *testing.T) {
+	value := strings.Repeat("A", 80)
+	wrapped := clampMultiline(value, 20)
+	if strings.Contains(wrapped, "...") || len(strings.Split(wrapped, "\n")) < 4 {
+		t.Fatalf("long detail token was not hard-wrapped: %q", wrapped)
+	}
+}
+
+func TestTUISearchCredentialResultIsInformative(t *testing.T) {
+	row := formatSearchResult(store.SearchResult{Type: store.SearchResultCredential, Title: "synthetic-user", Context: "password", Detail: "synthetic-user | SyntheticActual482!", Source: "password|synthetic-user|app.config|SyntheticActual482!"})
+	for _, expected := range []string{"synthetic-user", "password", "SyntheticActual482!", "app.config"} {
+		if !strings.Contains(row, expected) {
+			t.Fatalf("credential result missing %q: %s", expected, row)
+		}
+	}
+}
+
+func TestTUISearchViewportFollowsSelection(t *testing.T) {
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"}
+	model := newTUIModel(writer)
+	model.windowLoaded = true
+	model.width = 100
+	model.height = 12
+	model.searchOpen = true
+	model.searchResults = make([]store.SearchResult, 100)
+	for index := range model.searchResults {
+		model.searchResults[index] = store.SearchResult{Type: store.SearchResultFile, Title: fmt.Sprintf("file-%03d.txt", index), Context: "synthetic", Source: "synthetic"}
+	}
+	for index := 0; index < 99; index++ {
+		model.moveSearchSelection(1)
+	}
+	if model.searchSelected != 99 || model.searchViewport == 0 {
+		t.Fatalf("search viewport did not follow selection: selected=%d start=%d", model.searchSelected, model.searchViewport)
+	}
+	start := model.searchViewport
+	model.moveSearchSelection(-99)
+	if model.searchSelected != 0 || model.searchViewport != 0 {
+		t.Fatalf("search viewport did not return to top: selected=%d start=%d (was %d)", model.searchSelected, model.searchViewport, start)
+	}
+}
+
+func TestTUIFocusSwitchAndCtrlCRemainDistinct(t *testing.T) {
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"}
+	model := newTUIModel(writer)
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if updated.(tuiModel).focusedPane != tuiPaneDetails {
+		t.Fatal("Tab did not move focus to detail pane")
+	}
+	updated, cmd := updated.(tuiModel).Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil || updated.(tuiModel).quitHint != "Stopping scan..." {
+		t.Fatal("Ctrl-C was not routed to scan cancellation")
 	}
 }
 

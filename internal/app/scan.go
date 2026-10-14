@@ -71,12 +71,8 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	if err := validateScanConfig(cfg); err != nil {
 		return err
 	}
-	selection, err := config.ParseOutputFormat(cfg.Output.Format)
-	if err != nil {
+	if _, err := config.ParseOutputFormat(cfg.Output.Format); err != nil {
 		return err
-	}
-	if !selection.HTML && strings.TrimSpace(opts.HTMLOut) == "" {
-		cfg.Output.HTMLOut = "snablr-interrupted.html"
 	}
 	if opts.ListShares {
 		return runListShares(ctx, cfg, logger)

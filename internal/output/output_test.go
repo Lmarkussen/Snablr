@@ -2575,6 +2575,33 @@ func TestInterruptedConsoleRunWritesPartialHTML(t *testing.T) {
 	}
 }
 
+func TestConsoleInterruptionWithoutHTMLSelectionDoesNotCreateReport(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	sink, err := NewWriter(config.OutputConfig{
+		Format: "console",
+		NoTUI:  true,
+	})
+	if err != nil {
+		t.Fatalf("NewWriter returned error: %v", err)
+	}
+	if err := sink.WriteFinding(sampleFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	SetScanInterrupted(sink, "operator interruption")
+	if err := sink.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatalf("ReadDir returned error: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("unexpected output files created without an explicit report selection: %v", entries)
+	}
+}
+
 func TestDetermineLiveSinkModeDefaultsToTUIForInteractiveHTML(t *testing.T) {
 	if got := determineLiveSinkMode("html", false, true); got != liveSinkTUI {
 		t.Fatalf("expected interactive html runs to use TUI, got %q", got)

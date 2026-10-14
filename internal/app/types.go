@@ -41,8 +41,10 @@ type ScanOptions struct {
 	ReachabilityTimeoutSeconds int
 	OutputFormat               string
 	NoTUI                      bool
+	NoColor                    bool
 	JSONOut                    string
 	HTMLOut                    string
+	HTMLOutSet                 bool
 	CSVOut                     string
 	MDOut                      string
 	CredsOut                   string

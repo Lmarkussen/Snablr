@@ -27,6 +27,13 @@ const (
 	tuiSearchPageSize  = 100
 )
 
+type tuiPane int
+
+const (
+	tuiPaneFindings tuiPane = iota
+	tuiPaneDetails
+)
+
 type TUIWriter struct {
 	w      io.Writer
 	closer io.Closer
@@ -99,24 +106,27 @@ type tuiModel struct {
 	width  int
 	height int
 
-	findings       []scanner.Finding
-	selected       int
-	followTail     bool
-	ready          bool
-	completed      bool
-	quitHint       string
-	live           tuiLiveState
-	final          *tuiFinalizeEvent
-	listPane       viewport.Model
-	detailPane     viewport.Model
-	useStacked     bool
-	windowLoaded   bool
-	searchQuery    string
-	searchOpen     bool
-	searchResults  []store.SearchResult
-	searchSelected int
-	searchDetail   *store.SearchResult
-	searchStatus   string
+	findings           []scanner.Finding
+	selected           int
+	followTail         bool
+	ready              bool
+	completed          bool
+	quitHint           string
+	live               tuiLiveState
+	final              *tuiFinalizeEvent
+	listPane           viewport.Model
+	detailPane         viewport.Model
+	useStacked         bool
+	windowLoaded       bool
+	searchQuery        string
+	searchOpen         bool
+	searchResults      []store.SearchResult
+	searchSelected     int
+	searchViewport     int
+	searchDetail       *store.SearchResult
+	searchDetailOffset int
+	searchStatus       string
+	focusedPane        tuiPane
 
 	styles tuiStyles
 }
@@ -384,11 +394,12 @@ func (t *TUIWriter) liveState() tuiLiveState {
 
 func newTUIModel(writer *TUIWriter) tuiModel {
 	model := tuiModel{
-		writer:     writer,
-		followTail: true,
-		selected:   -1,
-		live:       writer.liveState(),
-		styles:     defaultTUIStyles(),
+		writer:      writer,
+		followTail:  true,
+		selected:    -1,
+		live:        writer.liveState(),
+		styles:      defaultTUIStyles(),
+		focusedPane: tuiPaneFindings,
 	}
 	model.listPane = viewport.New(0, 0)
 	model.listPane.MouseWheelEnabled = false
@@ -410,6 +421,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.layout()
+		m.ensureSearchSelectionVisible()
+		m.clampSearchDetailOffset()
 		return m, nil
 	case tuiFinalizeEvent:
 		m.completed = true
@@ -435,6 +448,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiSearchCompletedMsg:
 		m.searchResults = msg.Results
 		m.searchSelected = 0
+		m.searchViewport = 0
+		m.searchDetail = nil
+		m.searchDetailOffset = 0
 		if msg.Err != nil {
 			m.searchStatus = "Search failed: " + msg.Err.Error()
 		} else if len(msg.Results) == 0 {
@@ -473,35 +489,60 @@ func (m tuiModel) View() string {
 }
 
 func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "ctrl+c" {
+		if m.writer != nil && !m.completed {
+			m.writer.CancelScan()
+		}
+		if m.completed {
+			m.quitHint = "Closing..."
+		} else {
+			m.quitHint = "Stopping scan..."
+		}
+		return m, tea.Quit
+	}
 	if m.searchOpen {
 		return m.handleSearchKey(msg)
 	}
 	switch msg.String() {
+	case "tab", "shift+tab":
+		m.togglePaneFocus()
 	case "up", "k":
-		m.moveSelection(-1)
+		if m.focusedPane == tuiPaneDetails {
+			m.detailPane.LineUp(1)
+		} else {
+			m.moveSelection(-1)
+		}
 	case "down", "j":
-		m.moveSelection(1)
+		if m.focusedPane == tuiPaneDetails {
+			m.detailPane.LineDown(1)
+		} else {
+			m.moveSelection(1)
+		}
 	case "pgup", "ctrl+b":
-		if m.detailPane.TotalLineCount() > 0 {
+		if m.focusedPane == tuiPaneDetails {
 			m.detailPane.LineUp(max(1, m.detailPane.Height-2))
 		} else {
 			m.moveSelection(-max(1, m.listHeight()-1))
 		}
 	case "pgdown", "ctrl+d":
-		if m.detailPane.TotalLineCount() > 0 {
+		if m.focusedPane == tuiPaneDetails {
 			m.detailPane.LineDown(max(1, m.detailPane.Height-2))
 		} else {
 			m.moveSelection(max(1, m.listHeight()-1))
 		}
 	case "g":
-		if len(m.findings) > 0 {
+		if m.focusedPane == tuiPaneDetails {
+			m.detailPane.GotoTop()
+		} else if len(m.findings) > 0 {
 			m.selected = 0
 			m.followTail = false
 			m.ensureSelectionVisible()
 			m.refreshDetailContent()
 		}
 	case "G":
-		if len(m.findings) > 0 {
+		if m.focusedPane == tuiPaneDetails {
+			m.detailPane.GotoBottom()
+		} else if len(m.findings) > 0 {
 			m.selected = len(m.findings) - 1
 			m.followTail = true
 			m.ensureSelectionVisible()
@@ -513,20 +554,11 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.quitHint = "Scan is still running. Use Ctrl-C to stop the scan."
 		}
-	case "ctrl+c":
-		if m.writer != nil && !m.completed {
-			m.writer.CancelScan()
-		}
-		if m.completed {
-			m.quitHint = "Closing..."
-		} else {
-			m.quitHint = "Stopping scan..."
-		}
-		return m, tea.Quit
 	case "ctrl+f":
 		m.searchOpen = true
 		m.searchResults = nil
 		m.searchDetail = nil
+		m.searchViewport = 0
 		m.searchStatus = "Type a query and press Enter"
 		m.searchQuery = ""
 		return m, nil
@@ -534,11 +566,34 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *tuiModel) togglePaneFocus() {
+	if m.focusedPane == tuiPaneFindings {
+		m.focusedPane = tuiPaneDetails
+	} else {
+		m.focusedPane = tuiPaneFindings
+	}
+}
+
 func (m tuiModel) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.searchDetail != nil {
-		if msg.String() == "esc" {
+		switch msg.String() {
+		case "esc":
 			m.searchDetail = nil
+			m.searchDetailOffset = 0
+		case "up", "k":
+			m.searchDetailOffset = max(0, m.searchDetailOffset-1)
+		case "down", "j":
+			m.searchDetailOffset++
+		case "pgup":
+			m.searchDetailOffset = max(0, m.searchDetailOffset-m.searchDetailVisibleRows())
+		case "pgdown":
+			m.searchDetailOffset += m.searchDetailVisibleRows()
+		case "g":
+			m.searchDetailOffset = 0
+		case "G":
+			m.searchDetailOffset = 1 << 30
 		}
+		m.clampSearchDetailOffset()
 		return m, nil
 	}
 	switch msg.String() {
@@ -546,6 +601,11 @@ func (m tuiModel) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchOpen = false
 		return m, nil
 	case "enter":
+		if len(m.searchResults) > 0 {
+			m.searchDetail = &m.searchResults[m.searchSelected]
+			m.searchDetailOffset = 0
+			return m, nil
+		}
 		query := strings.TrimSpace(m.searchQuery)
 		if query == "" {
 			m.searchStatus = "Enter a search query"
@@ -553,14 +613,20 @@ func (m tuiModel) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.searchStatus = "Searching..."
 		return m, m.searchCmd(query)
-	case "up", "ctrl+p":
-		m.searchSelected = max(0, m.searchSelected-1)
-	case "down", "ctrl+n":
-		m.searchSelected = min(max(0, len(m.searchResults)-1), m.searchSelected+1)
-	case "tab":
-		if len(m.searchResults) > 0 {
-			m.searchDetail = &m.searchResults[m.searchSelected]
-		}
+	case "up", "k", "ctrl+p":
+		m.moveSearchSelection(-1)
+	case "down", "j", "ctrl+n":
+		m.moveSearchSelection(1)
+	case "pgup":
+		m.moveSearchSelection(-m.searchResultVisibleRows())
+	case "pgdown":
+		m.moveSearchSelection(m.searchResultVisibleRows())
+	case "g":
+		m.searchSelected = 0
+		m.searchViewport = 0
+	case "G":
+		m.searchSelected = max(0, len(m.searchResults)-1)
+		m.ensureSearchSelectionVisible()
 	default:
 		if msg.String() == "backspace" {
 			runes := []rune(m.searchQuery)
@@ -575,6 +641,44 @@ func (m tuiModel) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+func (m *tuiModel) moveSearchSelection(delta int) {
+	if len(m.searchResults) == 0 {
+		return
+	}
+	m.searchSelected = max(0, min(len(m.searchResults)-1, m.searchSelected+delta))
+	m.ensureSearchSelectionVisible()
+}
+
+func (m *tuiModel) searchResultVisibleRows() int {
+	return max(1, m.height-8)
+}
+
+func (m *tuiModel) searchDetailVisibleRows() int {
+	return max(1, m.height-5)
+}
+
+func (m *tuiModel) clampSearchDetailOffset() {
+	if m.searchDetail == nil {
+		m.searchDetailOffset = 0
+		return
+	}
+	lines := strings.Split(clampMultiline(m.searchDetailContent(), max(1, m.width-4)), "\n")
+	maxOffset := max(0, len(lines)-m.searchDetailVisibleRows())
+	m.searchDetailOffset = max(0, min(m.searchDetailOffset, maxOffset))
+}
+
+func (m *tuiModel) ensureSearchSelectionVisible() {
+	visible := m.searchResultVisibleRows()
+	if m.searchSelected < m.searchViewport {
+		m.searchViewport = m.searchSelected
+	}
+	if m.searchSelected >= m.searchViewport+visible {
+		m.searchViewport = m.searchSelected - visible + 1
+	}
+	maxStart := max(0, len(m.searchResults)-visible)
+	m.searchViewport = max(0, min(m.searchViewport, maxStart))
 }
 
 func (m tuiModel) searchCmd(query string) tea.Cmd {
@@ -596,30 +700,67 @@ func (m tuiModel) searchCmd(query string) tea.Cmd {
 
 func (m tuiModel) searchView() string {
 	header := m.styles.header.Render("Snablr Search")
-	footer := m.styles.footer.Render("Enter search  •  Tab select  •  ↑/↓ move  •  Esc close")
+	footer := m.styles.footer.Render("Enter search/open • ↑/↓ move • PgUp/PgDn • g/G • Esc back/close")
 	if m.searchDetail != nil {
-		detail := m.searchDetail
-		body := strings.Join([]string{
-			fmt.Sprintf("[%s] %s", detail.Type, detail.Title),
-			"",
-			"Context: " + valueOrDash(detail.Context),
-			"Detail: " + valueOrDash(detail.Detail),
-			"",
-			"Esc returns to results.",
-		}, "\n")
+		lines := strings.Split(clampMultiline(m.searchDetailContent(), max(1, m.width-4)), "\n")
+		visible := m.searchDetailVisibleRows()
+		m.searchDetailOffset = max(0, min(m.searchDetailOffset, max(0, len(lines)-visible)))
+		end := min(len(lines), m.searchDetailOffset+visible)
+		body := strings.Join(lines[m.searchDetailOffset:end], "\n")
 		return fitScreenBlock(lipgloss.JoinVertical(lipgloss.Left, header, m.renderBoundedPane("Search Result", body, m.width, max(3, m.height-2)), footer), m.width, m.height)
 	}
 	lines := []string{"Search: " + m.searchQuery, "", m.searchStatus}
-	for idx, result := range m.searchResults {
+	visible := m.searchResultVisibleRows()
+	maxStart := max(0, len(m.searchResults)-visible)
+	start := max(0, min(m.searchViewport, maxStart))
+	end := min(len(m.searchResults), start+visible)
+	for idx := start; idx < end; idx++ {
+		result := m.searchResults[idx]
 		prefix := "  "
 		if idx == m.searchSelected {
 			prefix = "> "
 		}
-		line := fmt.Sprintf("%s[%s] %s — %s", prefix, result.Type, result.Title, firstNonEmpty(result.Context, result.Detail))
+		line := prefix + formatSearchResult(result)
 		lines = append(lines, truncateDisplayWidth(line, max(1, m.width-4)))
 	}
 	body := strings.Join(lines, "\n")
 	return fitScreenBlock(lipgloss.JoinVertical(lipgloss.Left, header, m.renderBoundedPane("Database Search", body, m.width, max(3, m.height-2)), footer), m.width, m.height)
+}
+
+func (m tuiModel) searchDetailContent() string {
+	result := m.searchDetail
+	return strings.Join([]string{
+		"Type: " + string(result.Type),
+		"Title: " + valueOrDash(result.Title),
+		"Context: " + valueOrDash(result.Context),
+		"Source: " + valueOrDash(result.Source),
+		"Detail: " + valueOrDash(result.Detail),
+		"",
+		"Esc returns to results.",
+	}, "\n")
+}
+
+func formatSearchResult(result store.SearchResult) string {
+	switch result.Type {
+	case store.SearchResultFile:
+		return fmt.Sprintf("[FILE] %s | %s | %s", valueOrDash(result.Title), valueOrDash(result.Context), valueOrDash(result.Source))
+	case store.SearchResultFinding:
+		return fmt.Sprintf("[FINDING] %s | %s | %s", valueOrDash(result.Title), valueOrDash(result.Source), valueOrDash(result.Context))
+	case store.SearchResultCredential:
+		return fmt.Sprintf("[CREDENTIAL] %s | %s | %s | %s", valueOrDash(result.Title), valueOrDash(result.Context), valueOrDash(result.Detail), compactCredentialSource(result.Source))
+	case store.SearchResultEvidence:
+		return fmt.Sprintf("[EVIDENCE] %s | %s | %s", valueOrDash(result.Title), valueOrDash(result.Source), valueOrDash(result.Detail))
+	default:
+		return fmt.Sprintf("[%s] %s | %s", result.Type, valueOrDash(result.Title), valueOrDash(result.Detail))
+	}
+}
+
+func compactCredentialSource(source string) string {
+	parts := strings.SplitN(source, "|", 4)
+	if len(parts) >= 3 && strings.TrimSpace(parts[2]) != "" {
+		return parts[2]
+	}
+	return source
 }
 
 func (m *tuiModel) waitForExternalEvent() tea.Cmd {
@@ -784,7 +925,7 @@ func (m tuiModel) renderHeader() string {
 }
 
 func (m tuiModel) renderFooter() string {
-	message := "Controls: up/down or j/k select, g/G jump, PgUp/PgDn scroll details, Ctrl-C cancels, q warns until scan completes"
+	message := "↑/↓ or j/k select • Tab switch pane • Ctrl-F search • Ctrl-C stop"
 	if strings.TrimSpace(m.quitHint) != "" {
 		message = m.quitHint
 	}
@@ -814,14 +955,22 @@ func (m tuiModel) renderListPane(width, height int) string {
 	m.listPane.Width = max(10, bodyWidth)
 	m.listPane.Height = max(1, bodyHeight-1)
 	m.refreshListContent()
-	return m.renderBoundedPane("Findings", m.listPane.View(), width, height)
+	title := "Findings"
+	if m.focusedPane == tuiPaneFindings {
+		title += "  [FOCUS]"
+	}
+	return m.renderBoundedPane(title, m.listPane.View(), width, height)
 }
 
 func (m tuiModel) renderDetailPane(width, height int) string {
 	bodyWidth, bodyHeight := m.paneContentSize(width, height)
 	m.detailPane.Width = max(10, bodyWidth)
 	m.detailPane.Height = max(4, bodyHeight-1)
-	return m.renderBoundedPane("Evidence / Details", m.detailPane.View(), width, height)
+	title := "Evidence / Details"
+	if m.focusedPane == tuiPaneDetails {
+		title += "  [FOCUS]"
+	}
+	return m.renderBoundedPane(title, m.detailPane.View(), width, height)
 }
 
 func (m tuiModel) paneContentSize(outerWidth, outerHeight int) (int, int) {
@@ -924,7 +1073,7 @@ func renderTUIFindingRow(row tuiFindingRow, width int, selected bool) string {
 	if row.HasEvidence {
 		meta += " *"
 	}
-	line := fmt.Sprintf("%s %-12s %-18s %s", meta, truncateDisplayWidth(strings.ToUpper(row.Triage), 12), truncateDisplayWidth(row.Category, 18), row.Path)
+	line := fmt.Sprintf("%s %-12s %-18s", meta, truncateDisplayWidth(strings.ToUpper(row.Triage), 12), truncateDisplayWidth(row.Category, 18))
 	line = padDisplayWidth(truncateDisplayWidth(line, max(8, width)), max(8, width))
 	style := defaultTUIStyles().row.Copy()
 	if selected {
@@ -1050,13 +1199,34 @@ func clampMultiline(value string, width int) string {
 		return ""
 	}
 	lines := strings.Split(value, "\n")
-	for idx, line := range lines {
-		if lipgloss.Width(line) <= width {
-			continue
-		}
-		lines[idx] = truncateDisplayWidth(line, width)
+	wrapped := make([]string, 0, len(lines))
+	for _, line := range lines {
+		wrapped = append(wrapped, wrapDisplayLine(line, width)...)
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(wrapped, "\n")
+}
+
+func wrapDisplayLine(value string, width int) []string {
+	if width <= 0 {
+		return []string{""}
+	}
+	if value == "" {
+		return []string{""}
+	}
+	result := make([]string, 0, 1)
+	var line strings.Builder
+	for _, r := range []rune(value) {
+		candidate := line.String() + string(r)
+		if line.Len() > 0 && lipgloss.Width(candidate) > width {
+			result = append(result, line.String())
+			line.Reset()
+		}
+		line.WriteRune(r)
+	}
+	if line.Len() > 0 {
+		result = append(result, line.String())
+	}
+	return result
 }
 
 func clampBlock(value string, width, height int) string {

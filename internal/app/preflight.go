@@ -25,6 +25,26 @@ type ldapPreflightValidator struct {
 	logger *logx.Logger
 }
 
+type smbPreflightValidator struct {
+	host   string
+	config config.ScanConfig
+}
+
+func (v smbPreflightValidator) Name() string { return "credentials" }
+
+func (v smbPreflightValidator) Validate(ctx context.Context) error {
+	client := newScanClientFunc()
+	defer client.Close()
+	auth, err := smbAuthForHost(v.host, v.config)
+	if err != nil {
+		return err
+	}
+	if err := client.ConnectWithAuth(v.host, auth); err != nil {
+		return fmt.Errorf("%s: SMB authentication failed: %w", v.host, err)
+	}
+	return ctx.Err()
+}
+
 func (v ldapPreflightValidator) Name() string {
 	return "credentials"
 }
@@ -63,15 +83,15 @@ func runScanPreflightWithHooks(ctx context.Context, cfg config.Config, useIntera
 		return nil
 	}
 
-	writePreflightLine(hooks.out, colorYellow("Checking credentials..."))
+	writePreflightLine(hooks.out, colorizePreflight("Checking credentials ...", "33", cfg.Output.NoColor))
 	for _, validator := range validators {
 		if err := validator.Validate(ctx); err != nil {
-			writePreflightLine(hooks.out, colorRed("Credential validation failed!"))
+			writePreflightLine(hooks.out, colorizePreflight("Credentials Invalid", "31", cfg.Output.NoColor))
 			writePreflightLine(hooks.out, err.Error())
 			return err
 		}
 	}
-	writePreflightLine(hooks.out, colorGreen("Credentials are valid!"))
+	writePreflightLine(hooks.out, colorizePreflight("Credentials are Valid", "32", cfg.Output.NoColor))
 
 	if !useInteractiveTUI {
 		return nil
@@ -96,6 +116,12 @@ func scanPreflightValidators(cfg config.Config, logger *logx.Logger) []preflight
 			},
 			logger: logger,
 		})
+	}
+	if len(cfg.Scan.Targets) > 0 {
+		host := strings.TrimSpace(cfg.Scan.Targets[0])
+		if host != "" {
+			validators = append(validators, smbPreflightValidator{host: host, config: cfg.Scan})
+		}
 	}
 	return validators
 }
@@ -138,6 +164,13 @@ func colorYellow(value string) string {
 
 func colorizeTerminalString(value, code string) string {
 	if !preflightColorEnabled() {
+		return value
+	}
+	return "\x1b[" + code + "m" + value + "\x1b[0m"
+}
+
+func colorizePreflight(value, code string, noColor bool) string {
+	if noColor || !preflightColorEnabled() {
 		return value
 	}
 	return "\x1b[" + code + "m" + value + "\x1b[0m"

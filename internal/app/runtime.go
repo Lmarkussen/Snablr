@@ -175,10 +175,13 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if opts.NoTUI {
 		cfg.Output.NoTUI = true
 	}
+	if opts.NoColor {
+		cfg.Output.NoColor = true
+	}
 	if strings.TrimSpace(opts.JSONOut) != "" {
 		cfg.Output.JSONOut = opts.JSONOut
 	}
-	if strings.TrimSpace(opts.HTMLOut) != "" {
+	if opts.HTMLOutSet || strings.TrimSpace(opts.HTMLOut) != "" {
 		cfg.Output.HTMLOut = opts.HTMLOut
 	}
 	if strings.TrimSpace(opts.CSVOut) != "" {

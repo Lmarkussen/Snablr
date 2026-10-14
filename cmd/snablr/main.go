@@ -144,6 +144,7 @@ func runScan(args []string) error {
 	reachabilityTimeout := fs.Int("reachability-timeout", 0, "Reachability timeout in seconds")
 	outputFormat := fs.String("output-format", "", "Output format: console, json, html, all, or a comma-separated combination like html,json")
 	noTUI := fs.Bool("no-tui", false, "Disable the Bubble Tea live console UI and use plain stdout console output")
+	noColor := fs.Bool("no-color", false, "Disable ANSI colors while preserving status text")
 	jsonOut := fs.String("json-out", "", "Path to JSON output file")
 	htmlOut := fs.String("html-out", "", "Path to HTML report file")
 	csvOut := fs.String("csv-out", "", "Path to CSV findings export file")
@@ -187,6 +188,12 @@ func runScan(args []string) error {
 		}
 		return err
 	}
+	htmlOutSet := false
+	fs.Visit(func(flag *flag.Flag) {
+		if flag.Name == "html-out" {
+			htmlOutSet = true
+		}
+	})
 
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stopSignals()
@@ -231,8 +238,10 @@ func runScan(args []string) error {
 		ReachabilityTimeoutSeconds: *reachabilityTimeout,
 		OutputFormat:               *outputFormat,
 		NoTUI:                      *noTUI,
+		NoColor:                    *noColor,
 		JSONOut:                    *jsonOut,
 		HTMLOut:                    *htmlOut,
+		HTMLOutSet:                 htmlOutSet,
 		CSVOut:                     *csvOut,
 		MDOut:                      *mdOut,
 		CredsOut:                   *credsOut,
@@ -641,7 +650,7 @@ func printScanUsage(fs *flag.FlagSet) {
 	fs.PrintDefaults()
 	fmt.Println()
 	fmt.Println("Ctrl-C gracefully stops a scan, finalizes accumulated outputs, and writes an INTERRUPTED / PARTIAL SCAN HTML report.")
-	fmt.Println("The --html-out path is honored when supplied; otherwise interrupted console scans write snablr-interrupted.html.")
+	fmt.Println("Interrupted scans finalize only the output formats explicitly selected.")
 	fmt.Println("A successfully finalized interrupted scan exits with status 130.")
 }
 

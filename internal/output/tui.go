@@ -1098,7 +1098,12 @@ func buildTUIDetail(f scanner.Finding) string {
 	evidence := consoleEvidenceLines(f)
 	if len(evidence) > 0 {
 		lines = append(lines, "", "Evidence:")
-		lines = append(lines, evidence...)
+		for index, line := range evidence {
+			if index > 0 && strings.TrimSpace(line) == "Context:" && strings.TrimSpace(evidence[index-1]) != "" {
+				lines = append(lines, "")
+			}
+			lines = append(lines, line)
+		}
 	} else {
 		lines = append(lines, "", "Evidence:", "No inline evidence captured for this finding.")
 	}

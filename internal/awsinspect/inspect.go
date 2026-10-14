@@ -50,7 +50,7 @@ func (Inspector) InspectMetadata(candidate Candidate) []Match {
 		Snippet:             normalized,
 		Context:             normalized,
 		ContextRedacted:     normalized,
-		LineNumber:          1,
+		LineNumber:          0,
 		Remediation:         "Restrict access to exposed AWS profile material, remove unnecessary copies from shared storage, and rotate AWS credentials if confirmed.",
 	}
 

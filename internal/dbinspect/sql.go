@@ -67,7 +67,7 @@ func dumpHeaderObservation(match, ecosystem string) stringObservation {
 		explanation: "This finding is based on dump-tool style SQL header markers rather than a generic .sql extension.",
 		remediation: "Review whether this SQL export belongs on the share, remove unnecessary copies, and restrict access to retained database dumps.",
 		match:       match,
-		lineNumber:  1,
+		lineNumber:  0,
 		tags: []string{
 			"database",
 			"db:source:local-artifact",
@@ -196,7 +196,7 @@ func inspectSQLDumpStructure(text string) (stringObservation, bool) {
 		explanation: "This finding is based on data-bearing SQL export structure rather than schema/DDL statements or a generic .sql extension.",
 		remediation: "Review whether this SQL export belongs on the share, remove unnecessary copies, and restrict access to retained database dumps.",
 		match:       evidence,
-		lineNumber:  1,
+		lineNumber:  0,
 		tags: []string{
 			"database",
 			"db:source:local-artifact",
@@ -250,7 +250,7 @@ func inspectSQLScriptArtifact(text string) (stringObservation, bool) {
 		explanation: "This finding is based on DDL, schema and script structure with no data-bearing export evidence, so it is reported for review rather than as a dump.",
 		remediation: "Review whether this SQL script belongs on the share, remove obsolete copies, and confirm it does not embed credentials or sensitive data.",
 		match:       strings.Join(parts, "; "),
-		lineNumber:  1,
+		lineNumber:  0,
 		tags: []string{
 			"database",
 			"db:source:local-artifact",

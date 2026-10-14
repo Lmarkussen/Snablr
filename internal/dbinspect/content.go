@@ -169,7 +169,7 @@ func inspectINISection(section string, values map[string]string) (stringObservat
 			explanation: "This finding comes from structured DSN-style configuration parsing with authentication fields present.",
 			remediation: "Remove embedded database credentials from DSN files, rotate exposed values, and store access details in managed secrets instead.",
 			match:       matchText,
-			lineNumber:  1,
+			lineNumber:  0,
 			tags:        append(tags, "db:type:config-credential"),
 		}, true
 	}
@@ -188,7 +188,7 @@ func inspectINISection(section string, values map[string]string) (stringObservat
 		explanation: "This finding comes from structured DSN-style configuration parsing.",
 		remediation: "Review whether this DSN configuration should be present in the share and restrict access to database client configuration files.",
 		match:       matchText,
-		lineNumber:  1,
+		lineNumber:  0,
 		tags:        append(tags, "db:type:server-indicator"),
 	}, true
 }

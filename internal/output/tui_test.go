@@ -44,6 +44,45 @@ func TestTUIDetailRendersMinimalEvidencePane(t *testing.T) {
 	}
 }
 
+func TestTUIDetailSeparatesEvidenceFromContext(t *testing.T) {
+	detail := buildTUIDetail(sampleFinding())
+	if !strings.Contains(detail, "Matched text: password = ReplaceMe123!\n\nContext:") {
+		t.Fatalf("expected a blank line before Context without losing evidence:\\n%s", detail)
+	}
+	if !strings.Contains(detail, "Context:\n  user = alice") {
+		t.Fatalf("context content was lost:\\n%s", detail)
+	}
+}
+
+func TestTUIDetailLineMetadataOnlyShowsMeaningfulSourceLines(t *testing.T) {
+	withLine := sampleFinding()
+	withLine.LineNumber = 47
+	withLineDetail := buildTUIDetail(withLine)
+	if !strings.Contains(withLineDetail, "Line: 47") {
+		t.Fatalf("genuine source line was omitted:\\n%s", withLineDetail)
+	}
+
+	lineOne := sampleFinding()
+	lineOne.LineNumber = 1
+	if !strings.Contains(buildTUIDetail(lineOne), "Line: 1") {
+		t.Fatal("genuine source line 1 was omitted")
+	}
+
+	structured := sampleFinding()
+	structured.RuleID = "dbinspect.infrastructure.dsn"
+	structured.SignalType = "validated"
+	structured.LineNumber = 0
+	structured.MatchedText = "Server=synthetic.invalid;Database=synthetic"
+	structured.Context = "Server=synthetic.invalid;Database=synthetic"
+	structuredDetail := buildTUIDetail(structured)
+	if strings.Contains(structuredDetail, "Line:") {
+		t.Fatalf("structured evidence should not show non-applicable line metadata:\\n%s", structuredDetail)
+	}
+	if !strings.Contains(structuredDetail, "Server=synthetic.invalid") {
+		t.Fatalf("structured evidence content was lost:\\n%s", structuredDetail)
+	}
+}
+
 func TestTUIFindingDisplayPathIncludesSQLiteContext(t *testing.T) {
 	finding := sampleSQLiteFinding()
 	path := findingDisplayPath(finding)

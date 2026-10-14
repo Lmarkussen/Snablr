@@ -110,6 +110,9 @@ func (s *SQLiteStore) ListBookmarks(ctx context.Context, limit, offset int) ([]B
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("sqlite bookmark store is closed")
 	}
+	if err := s.Flush(); err != nil {
+		return nil, err
+	}
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}

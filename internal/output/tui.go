@@ -584,7 +584,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	}
-	if msg.String() == "alt+b" {
+	if isAltBookmarkKey(msg) {
 		m.searchOpen = false
 		m.bookmarkOpen = true
 		m.bookmarkStatus = "Loading bookmarks..."
@@ -595,6 +595,14 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.searchOpen {
 		return m.handleSearchKey(msg)
+	}
+	if isCtrlBookmarkKey(msg) {
+		if m.selected < 0 || m.selected >= len(m.findings) {
+			m.bookmarkStatus = "No file selected"
+			return m, nil
+		}
+		finding := m.findings[m.selected]
+		return m, m.toggleFindingBookmarkCmd(finding)
 	}
 	switch msg.String() {
 	case "tab", "shift+tab":
@@ -647,13 +655,6 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.quitHint = "Scan is still running. Use Ctrl-C to stop the scan."
 		}
-	case "ctrl+b":
-		if m.selected < 0 || m.selected >= len(m.findings) {
-			m.bookmarkStatus = "No file selected"
-			return m, nil
-		}
-		finding := m.findings[m.selected]
-		return m, m.toggleFindingBookmarkCmd(finding)
 	case "ctrl+f":
 		m.searchOpen = true
 		m.searchInputActive = true
@@ -665,6 +666,17 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+func isCtrlBookmarkKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyCtrlB || msg.String() == "ctrl+b"
+}
+
+func isAltBookmarkKey(msg tea.KeyMsg) bool {
+	if !msg.Alt || msg.Type != tea.KeyRunes || len(msg.Runes) != 1 {
+		return false
+	}
+	return msg.Runes[0] == 'b' || msg.Runes[0] == 'B'
 }
 
 func bookmarkPathKey(host, share, path string) string {

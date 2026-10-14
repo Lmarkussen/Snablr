@@ -1,6 +1,7 @@
 package output
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -679,6 +680,161 @@ func TestTUIBookmarkToggleAndBrowser(t *testing.T) {
 	model = updated.(tuiModel)
 	if !strings.Contains(model.View(), "No bookmarks yet") {
 		t.Fatalf("empty bookmark state missing:\n%s", model.View())
+	}
+}
+
+func TestTUIBookmarkDoesNotStealFindingNavigation(t *testing.T) {
+	state, err := store.Open(t.TempDir()+"/bookmark-navigation.db", store.Options{ScanID: "bookmark-navigation", BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	now := time.Now().UTC()
+	for index, path := range []string{"first.txt", "second.txt"} {
+		if err := state.RecordFile(fmt.Sprintf("file-%d", index), "synthetic-host", "share", path, "complete", "semantics", 1, now, now, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running", searchStore: state}
+	model := newTUIModel(writer)
+	model.findings = []scanner.Finding{
+		{Host: "synthetic-host", Share: "share", FilePath: "first.txt", Category: "credentials", Severity: "high"},
+		{Host: "synthetic-host", Share: "share", FilePath: "second.txt", Category: "credentials", Severity: "high"},
+	}
+	model.selected = 0
+	model.windowLoaded = true
+	model.width = 100
+	model.height = 20
+	model.layout()
+	focus := model.focusedPane
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	model = updated.(tuiModel)
+	if cmd == nil {
+		t.Fatal("Ctrl-B did not start bookmark toggle")
+	}
+	updated, _ = model.Update(cmd())
+	model = updated.(tuiModel)
+	if model.bookmarkOpen || model.focusedPane != focus || model.selected != 0 {
+		t.Fatalf("bookmark changed navigation state: open=%t focus=%d selected=%d", model.bookmarkOpen, model.focusedPane, model.selected)
+	}
+	if !strings.Contains(model.View(), "★") {
+		t.Fatalf("confirmed bookmark indicator missing:\n%s", model.View())
+	}
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = updated.(tuiModel)
+	if model.selected != 1 {
+		t.Fatalf("Down did not navigate after bookmarking: selected=%d", model.selected)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	model = updated.(tuiModel)
+	if model.selected != 0 {
+		t.Fatalf("Up did not navigate after bookmarking: selected=%d", model.selected)
+	}
+}
+
+func TestTUIBookmarkRoundTripAppearsInBrowserImmediately(t *testing.T) {
+	state, err := store.Open(t.TempDir()+"/bookmark-browser.db", store.Options{ScanID: "bookmark-browser", BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	now := time.Now().UTC()
+	if err := state.RecordFile("file-1", "synthetic-host", "share", "interesting.txt", "complete", "semantics", 1, now, now, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running", searchStore: state}
+	model := newTUIModel(writer)
+	model.findings = []scanner.Finding{{Host: "synthetic-host", Share: "share", FilePath: "interesting.txt", Category: "credentials", Severity: "high"}}
+	model.selected = 0
+	model.windowLoaded = true
+	model.width = 100
+	model.height = 20
+	model.layout()
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	model = updated.(tuiModel)
+	updated, _ = model.Update(cmd())
+	model = updated.(tuiModel)
+	if len(model.bookmarkedPaths) != 1 || !model.bookmarkedPaths[bookmarkPathKey("synthetic-host", "share", "interesting.txt")] {
+		t.Fatalf("bookmark state was not updated from successful store result: %#v", model.bookmarkedPaths)
+	}
+
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true})
+	model = updated.(tuiModel)
+	if cmd == nil || !model.bookmarkOpen {
+		t.Fatal("Alt-B did not open bookmark browser")
+	}
+	updated, _ = model.Update(cmd())
+	model = updated.(tuiModel)
+	if len(model.bookmarks) != 1 || model.bookmarks[0].FileKey != "file-1" {
+		t.Fatalf("successful bookmark was not visible in browser: %#v status=%q", model.bookmarks, model.bookmarkStatus)
+	}
+	if strings.Contains(model.View(), "No bookmarks yet") {
+		t.Fatalf("browser showed empty state after successful bookmark:\n%s", model.View())
+	}
+}
+
+func TestTUIBookmarkFailureDoesNotCreatePhantomState(t *testing.T) {
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"}
+	model := newTUIModel(writer)
+	model.findings = []scanner.Finding{{Host: "synthetic-host", Share: "share", FilePath: "missing.txt"}}
+	model.selected = 0
+	model.windowLoaded = true
+	model.width = 100
+	model.height = 20
+	model.layout()
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	model = updated.(tuiModel)
+	updated, _ = model.Update(cmd())
+	model = updated.(tuiModel)
+	if len(model.bookmarkedPaths) != 0 || strings.Contains(model.View(), "★") || strings.Contains(model.bookmarkStatus, "Bookmarked") {
+		t.Fatalf("failed bookmark created phantom state: paths=%#v status=%q", model.bookmarkedPaths, model.bookmarkStatus)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if updated.(tuiModel).selected != 0 {
+		t.Fatal("navigation did not remain available after bookmark failure")
+	}
+}
+
+func TestTUIBookmarksKeepDistinctFilesAndAvoidDuplicates(t *testing.T) {
+	state, err := store.Open(t.TempDir()+"/bookmark-multiple.db", store.Options{ScanID: "bookmark-multiple", BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	now := time.Now().UTC()
+	for index, path := range []string{"same.txt", "same.txt"} {
+		if err := state.RecordFile(fmt.Sprintf("file-%d", index), "synthetic-host", fmt.Sprintf("share-%d", index), path, "complete", "semantics", 1, now, now, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if _, added, err := state.ToggleBookmark(context.Background(), "synthetic-host", "share-0", "same.txt"); err != nil || !added {
+		t.Fatalf("bookmark A failed: added=%t err=%v", added, err)
+	}
+	if _, added, err := state.ToggleBookmark(context.Background(), "synthetic-host", "share-0", "same.txt"); err != nil || added {
+		t.Fatalf("duplicate bookmark toggle did not remove A: added=%t err=%v", added, err)
+	}
+	if _, added, err := state.ToggleBookmark(context.Background(), "synthetic-host", "share-0", "same.txt"); err != nil || !added {
+		t.Fatalf("re-bookmark A failed: added=%t err=%v", added, err)
+	}
+	if _, added, err := state.ToggleBookmark(context.Background(), "synthetic-host", "share-1", "same.txt"); err != nil || !added {
+		t.Fatalf("bookmark B failed: added=%t err=%v", added, err)
+	}
+	bookmarks, err := state.ListBookmarks(context.Background(), 100, 0)
+	if err != nil || len(bookmarks) != 2 {
+		t.Fatalf("distinct bookmark rows were not retained: %#v err=%v", bookmarks, err)
 	}
 }
 

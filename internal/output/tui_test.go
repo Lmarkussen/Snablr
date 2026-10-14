@@ -671,9 +671,9 @@ func TestTUIBookmarkToggleAndBrowser(t *testing.T) {
 	model.width = 100
 	model.height = 20
 	model.layout()
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
 	if cmd == nil {
-		t.Fatal("Ctrl-B did not start bookmark toggle")
+		t.Fatal("Ctrl-D did not start bookmark toggle")
 	}
 	model = updated.(tuiModel)
 	updated, _ = model.Update(cmd())
@@ -682,17 +682,17 @@ func TestTUIBookmarkToggleAndBrowser(t *testing.T) {
 		t.Fatalf("bookmark feedback/indicator missing: status=%q\n%s", model.bookmarkStatus, model.View())
 	}
 	selected := model.selected
-	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
 	model = updated.(tuiModel)
 	updated, _ = model.Update(cmd())
 	model = updated.(tuiModel)
 	if model.selected != selected || !strings.Contains(model.bookmarkStatus, "removed") {
 		t.Fatalf("unbookmark changed selection or missed feedback: selected=%d status=%q", model.selected, model.bookmarkStatus)
 	}
-	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true})
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}, Alt: true})
 	model = updated.(tuiModel)
 	if !model.bookmarkOpen || cmd == nil {
-		t.Fatal("Alt-B did not open bookmark browser")
+		t.Fatal("Alt-D did not open bookmark browser")
 	}
 	updated, _ = model.Update(cmd())
 	model = updated.(tuiModel)
@@ -729,10 +729,10 @@ func TestTUIBookmarkDoesNotStealFindingNavigation(t *testing.T) {
 	model.layout()
 	focus := model.focusedPane
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
 	model = updated.(tuiModel)
 	if cmd == nil {
-		t.Fatal("Ctrl-B did not start bookmark toggle")
+		t.Fatal("Ctrl-D did not start bookmark toggle")
 	}
 	updated, _ = model.Update(cmd())
 	model = updated.(tuiModel)
@@ -777,7 +777,7 @@ func TestTUIBookmarkRoundTripAppearsInBrowserImmediately(t *testing.T) {
 	model.height = 20
 	model.layout()
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
 	model = updated.(tuiModel)
 	updated, _ = model.Update(cmd())
 	model = updated.(tuiModel)
@@ -785,10 +785,10 @@ func TestTUIBookmarkRoundTripAppearsInBrowserImmediately(t *testing.T) {
 		t.Fatalf("bookmark state was not updated from successful store result: %#v", model.bookmarkedPaths)
 	}
 
-	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true})
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}, Alt: true})
 	model = updated.(tuiModel)
 	if cmd == nil || !model.bookmarkOpen {
-		t.Fatal("Alt-B did not open bookmark browser")
+		t.Fatal("Alt-D did not open bookmark browser")
 	}
 	updated, _ = model.Update(cmd())
 	model = updated.(tuiModel)
@@ -810,7 +810,7 @@ func TestTUIBookmarkFailureDoesNotCreatePhantomState(t *testing.T) {
 	model.height = 20
 	model.layout()
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
 	model = updated.(tuiModel)
 	updated, _ = model.Update(cmd())
 	model = updated.(tuiModel)

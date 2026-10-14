@@ -524,7 +524,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			m.bookmarkStatus = "Bookmarks unavailable: " + msg.Err.Error()
 		} else if len(msg.Bookmarks) == 0 {
-			m.bookmarkStatus = "No bookmarks yet. Press Ctrl-B on an interesting file."
+			m.bookmarkStatus = "No bookmarks yet. Press Ctrl-D on an interesting file."
 		} else {
 			m.bookmarkStatus = ""
 			for _, bookmark := range msg.Bookmarks {
@@ -625,7 +625,7 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.moveSelection(-max(1, m.listHeight()-1))
 		}
-	case "pgdown", "ctrl+d":
+	case "pgdown":
 		if m.focusedPane == tuiPaneDetails {
 			m.detailPane.LineDown(max(1, m.detailPane.Height-2))
 		} else {
@@ -669,14 +669,14 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func isCtrlBookmarkKey(msg tea.KeyMsg) bool {
-	return msg.Type == tea.KeyCtrlB || msg.String() == "ctrl+b"
+	return msg.Type == tea.KeyCtrlD || msg.String() == "ctrl+d"
 }
 
 func isAltBookmarkKey(msg tea.KeyMsg) bool {
 	if !msg.Alt || msg.Type != tea.KeyRunes || len(msg.Runes) != 1 {
 		return false
 	}
-	return msg.Runes[0] == 'b' || msg.Runes[0] == 'B'
+	return msg.Runes[0] == 'd' || msg.Runes[0] == 'D'
 }
 
 func bookmarkPathKey(host, share, path string) string {
@@ -766,7 +766,7 @@ func (m tuiModel) handleBookmarkKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.bookmarkDetail = nil
 			m.bookmarkDetailOffset = 0
-		case "ctrl+b":
+		case "ctrl+d":
 			return m, m.toggleBookmarkKeyCmd(m.bookmarkDetail.Bookmark.FileKey)
 		case "up", "k":
 			m.bookmarkDetailOffset = max(0, m.bookmarkDetailOffset-1)
@@ -793,7 +793,7 @@ func (m tuiModel) handleBookmarkKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.bookmarkStatus = "Loading bookmark detail..."
 			return m, m.bookmarkDetailCmd(m.bookmarks[m.bookmarkSelected].FileKey)
 		}
-	case "ctrl+b":
+	case "ctrl+d":
 		if len(m.bookmarks) > 0 {
 			return m, m.toggleBookmarkKeyCmd(m.bookmarks[m.bookmarkSelected].FileKey)
 		}
@@ -874,7 +874,7 @@ func (m tuiModel) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.searchDetailOffset = 0
 		case "G":
 			m.searchDetailOffset = 1 << 30
-		case "ctrl+b":
+		case "ctrl+d":
 			if m.searchDetail.BookmarkKey == "" {
 				m.searchStatus = "This search result has no bookmarkable file"
 				return m, nil
@@ -927,7 +927,7 @@ func (m tuiModel) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.searchStatus = "Searching..."
 		return m, m.searchCmd(query)
-	case "ctrl+b":
+	case "ctrl+d":
 		if len(m.searchResults) == 0 || m.searchResults[m.searchSelected].BookmarkKey == "" {
 			m.searchStatus = "This search result has no bookmarkable file"
 			return m, nil
@@ -1052,7 +1052,7 @@ func (m tuiModel) searchView() string {
 
 func (m tuiModel) bookmarkView() string {
 	header := m.styles.header.Render(fmt.Sprintf("Bookmarks  %d", len(m.bookmarks)))
-	footer := m.styles.footer.Render("Enter open • ↑/↓ or j/k move • PgUp/PgDn • g/G • Ctrl-B remove • Esc back")
+	footer := m.styles.footer.Render("Enter open • ↑/↓ or j/k move • PgUp/PgDn • g/G • Ctrl-D remove • Esc back")
 	if m.bookmarkDetail != nil {
 		lines := strings.Split(clampMultiline(m.bookmarkDetailContent(), max(1, m.width-4)), "\n")
 		visible := m.bookmarkDetailVisibleRows()
@@ -1062,7 +1062,7 @@ func (m tuiModel) bookmarkView() string {
 	}
 	lines := []string{"Select a bookmarked file to inspect its findings and credentials."}
 	if len(m.bookmarks) == 0 {
-		lines = []string{"No bookmarks yet.", "Press Ctrl-B on an interesting file to bookmark it."}
+		lines = []string{"No bookmarks yet.", "Press Ctrl-D on an interesting file to bookmark it."}
 	} else {
 		visible := m.bookmarkVisibleRows()
 		start := max(0, min(m.bookmarkViewport, max(0, len(m.bookmarks)-visible)))
@@ -1329,7 +1329,7 @@ func (m tuiModel) renderHeader() string {
 }
 
 func (m tuiModel) renderFooter() string {
-	message := "↑/↓ or j/k select • Tab switch pane • Ctrl-F search • Ctrl-B bookmark • Alt-B bookmarks • Ctrl-C stop"
+	message := "↑/↓ or j/k select • Tab switch pane • Ctrl-F search • Ctrl-D bookmark • Alt-D bookmarks • Ctrl-C stop"
 	if strings.TrimSpace(m.bookmarkStatus) != "" {
 		message = m.bookmarkStatus + " • " + message
 	}

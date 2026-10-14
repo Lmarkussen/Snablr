@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -38,5 +39,32 @@ func TestSearchQueriesPersistedRowsWithoutMaterializingInventory(t *testing.T) {
 	}
 	if results[0].Type != SearchResultCredential && results[1].Type != SearchResultCredential && results[2].Type != SearchResultCredential {
 		t.Fatalf("credential match missing: %#v", results)
+	}
+}
+
+func TestSearchReadsWhileWriterCommits(t *testing.T) {
+	state, err := Open(t.TempDir()+"/concurrent.db", Options{ScanID: "concurrent", BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	now := time.Now().UTC()
+	writeDone := make(chan error, 1)
+	go func() {
+		for i := 0; i < 100; i++ {
+			if err := state.RecordFile(fmt.Sprintf("file-%d", i), "FS01", "Users", fmt.Sprintf("folder/%d.txt", i), "complete", "semantics", 1, now, now, now, now); err != nil {
+				writeDone <- err
+				return
+			}
+		}
+		writeDone <- state.Flush()
+	}()
+	for i := 0; i < 100; i++ {
+		if _, err := state.Search(context.Background(), "folder", SearchOptions{Limit: 10}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatal(err)
 	}
 }

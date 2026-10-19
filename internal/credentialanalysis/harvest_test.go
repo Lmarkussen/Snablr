@@ -179,3 +179,40 @@ func hasPrivateKeyCandidate(candidates []Candidate, verification Verification, m
 	}
 	return false
 }
+
+func TestHarvestCommandLineCredentialPairs(t *testing.T) {
+	content := strings.Join([]string{
+		"some-tool -u test -p test123",
+		"some-tool --username Notus482 --password ExamplePass!42 --verbose",
+		"tool.exe /user:SYNTHETIC\\svc-deploy /password:Example123!",
+		`deployment -u "domain user" --flag value -p "Example Pass 482!"`,
+		`tool --user=Komtek17 --pass='Synthetic#492!'`,
+		`tool -u continued-user \\`,
+		`  -p ContinuedPass!`,
+	}, "\n")
+	got := Harvest(HarvestInput{Content: []byte(content), Path: "commands.txt"})
+	for _, want := range [][2]string{
+		{"test", "test123"}, {"Notus482", "ExamplePass!42"}, {`SYNTHETIC\svc-deploy`, "Example123!"},
+		{"domain user", "Example Pass 482!"}, {"Komtek17", "Synthetic#492!"}, {"continued-user", "ContinuedPass!"},
+	} {
+		if !hasIdentityValue(got, Confirmed, want[0], want[1]) {
+			t.Errorf("missing command pair %q/%q: %#v", want[0], want[1], got)
+		}
+	}
+}
+
+func TestHarvestCommandLinesDoNotCrossPairOrConfirmPlaceholders(t *testing.T) {
+	content := "tool -u alice -p AlicePass!\ntool -u bob -p BobPass!\nusage: tool -u USER -p PASSWORD\n"
+	got := Harvest(HarvestInput{Content: []byte(content), Path: "commands.txt"})
+	if !hasIdentityValue(got, Confirmed, "alice", "AlicePass!") || !hasIdentityValue(got, Confirmed, "bob", "BobPass!") {
+		t.Fatalf("explicit command pairs missing: %#v", got)
+	}
+	for _, candidate := range got {
+		if candidate.Verification == Confirmed && ((candidate.Identity == "alice" && candidate.Value == "BobPass!") || (candidate.Identity == "bob" && candidate.Value == "AlicePass!")) {
+			t.Fatalf("cross-command pair created: %#v", candidate)
+		}
+		if candidate.Identity == "USER" || candidate.Value == "PASSWORD" {
+			t.Fatalf("usage placeholders became credential material: %#v", candidate)
+		}
+	}
+}

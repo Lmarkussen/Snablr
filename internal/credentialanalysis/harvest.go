@@ -123,7 +123,7 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 		// valid assignments whose right-hand side is a SQL variable, function
 		// call, schema/metadata definition or a prose fragment are not secrets,
 		// regardless of how credential-like the field label is.
-		if IsScalarCredentialType(candidate.CredentialType) {
+		if IsScalarCredentialType(candidate.CredentialType) && candidate.ValidationBasis != "explicit command invocation" {
 			if _, reject := NonSecretValueShape(candidate.Value); reject {
 				return
 			}
@@ -731,6 +731,7 @@ func harvestLines(text string, add func(Candidate)) {
 	// into the shared assignment form before any line-based harvesting, so every
 	// text-bearing source is covered by one grammar.
 	text = NormalizeCredentialExpressions(text)
+	harvestCommandPairs(text, add)
 	sections := map[string]map[string]string{"": {}}
 	section := ""
 	pairedTopLevelPasswords := make(map[string]struct{})
@@ -826,6 +827,122 @@ func harvestLines(text string, add func(Candidate)) {
 	for _, fields := range prefixes {
 		harvestFields(fields, add, "structured environment record")
 	}
+}
+
+func harvestCommandPairs(text string, add func(Candidate)) {
+	lines := strings.Split(text, "\n")
+	for index := 0; index < len(lines); index++ {
+		line := strings.TrimSpace(lines[index])
+		for (strings.HasSuffix(line, "\\") || strings.HasSuffix(line, "^")) && index+1 < len(lines) {
+			line = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(line, "\\"), "^")) + " " + strings.TrimSpace(lines[index+1])
+			index++
+		}
+		if line == "" {
+			continue
+		}
+		tokens := commandTokens(line)
+		var identities, passwords []string
+		for tokenIndex := 0; tokenIndex < len(tokens); tokenIndex++ {
+			token := tokens[tokenIndex]
+			lower := strings.ToLower(token)
+			role, inlineValue := commandSwitch(lower, token)
+			if role == "" {
+				continue
+			}
+			value := inlineValue
+			if value == "" && tokenIndex+1 < len(tokens) {
+				value = tokens[tokenIndex+1]
+				tokenIndex++
+			}
+			value = strings.TrimSpace(value)
+			if value == "" || looksReferenceOrTemplate(value) || looksCommandPlaceholder(value) {
+				continue
+			}
+			if role == "identity" {
+				identities = appendUniqueCommandValue(identities, value)
+			} else {
+				passwords = appendUniqueCommandValue(passwords, value)
+			}
+		}
+		if len(identities) != 1 || len(passwords) != 1 || IsPlaceholderIdentity(identities[0]) || IsPlaceholderValue(passwords[0]) || looksCommandPlaceholder(identities[0]) || looksCommandPlaceholder(passwords[0]) {
+			continue
+		}
+		add(Candidate{Verification: Confirmed, CredentialType: "password", Identity: identities[0], Value: passwords[0], ValidationBasis: "explicit command invocation"})
+	}
+}
+
+func looksCommandPlaceholder(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(strings.Trim(value, "<>[]{}"))) {
+	case "user", "username", "account", "password", "passwd", "pwd", "pass", "value", "your-user", "your-password":
+		return true
+	default:
+		return strings.HasPrefix(strings.TrimSpace(value), "<") && strings.HasSuffix(strings.TrimSpace(value), ">")
+	}
+}
+
+func appendUniqueCommandValue(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func commandSwitch(lower, original string) (string, string) {
+	for _, item := range []struct {
+		role string
+		keys []string
+	}{
+		{role: "identity", keys: []string{"--username", "--user", "-username", "-user", "-u", "/username", "/user"}},
+		{role: "password", keys: []string{"--password", "--passwd", "--pass", "-password", "-passwd", "-pass", "-p", "/password", "/passwd", "/pass"}},
+	} {
+		for _, key := range item.keys {
+			if lower == key {
+				return item.role, ""
+			}
+			if strings.HasPrefix(lower, key+"=") {
+				return item.role, original[len(key)+1:]
+			}
+			if strings.HasPrefix(lower, key+":") {
+				return item.role, original[len(key)+1:]
+			}
+		}
+	}
+	return "", ""
+}
+
+func commandTokens(line string) []string {
+	var tokens []string
+	var builder strings.Builder
+	quote := rune(0)
+	flush := func() {
+		if builder.Len() > 0 {
+			tokens = append(tokens, builder.String())
+			builder.Reset()
+		}
+	}
+	for _, character := range line {
+		if quote != 0 {
+			if character == quote {
+				quote = 0
+			} else {
+				builder.WriteRune(character)
+			}
+			continue
+		}
+		if character == '\'' || character == '"' {
+			quote = character
+			continue
+		}
+		if unicode.IsSpace(character) {
+			flush()
+			continue
+		}
+		builder.WriteRune(character)
+	}
+	flush()
+	return tokens
 }
 
 // normalizeAssignmentLine strips bounded shell/PowerShell assignment prefixes

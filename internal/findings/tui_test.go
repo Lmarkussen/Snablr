@@ -53,6 +53,37 @@ func TestModelWidthAndResize(t *testing.T) {
 	}
 }
 
+func TestCategoryOverviewFitsReportedTerminal(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {100, 30}, {120, 40}, {160, 50}, {200, 60}, {120, 90}, {70, 24}} {
+		m := &model{
+			scans: []Scan{{ID: "scan", Status: "completed"}},
+			categories: []category{
+				{Name: "Credentials", Discoveries: []discovery{{Title: "svc-build", Subcategory: "Username + Password"}}},
+				{Name: "Private Keys", Discoveries: []discovery{{Title: "id_rsa", Subcategory: "RSA Keys"}}},
+				{Name: "Hashes", Discoveries: []discovery{{Title: "synthetic-admin", Subcategory: "NT Hashes"}}},
+				{Name: "Cloud & Application Secrets", Discoveries: []discovery{{Title: "api", Subcategory: "Tokens / API Secrets"}}},
+				{Name: "SCCM / MECM", Discoveries: []discovery{{Title: "join", Subcategory: "Task Sequence Credentials"}}},
+				{Name: "Windows Artifacts", Discoveries: []discovery{{Title: "wincred", Subcategory: "Credential Store Material"}}},
+				{Name: "Correlations", Discoveries: []discovery{{Title: "relationship", Subcategory: "Cross-file Relationships"}}},
+				{Name: "Other / Supporting", Discoveries: []discovery{{Title: "supporting", Subcategory: "Supporting Findings"}}},
+			},
+			list: viewport.New(1, 1), preview: viewport.New(1, 1),
+		}
+		m.resizeTo(size[0], size[1])
+		view := m.View()
+		lines := strings.Split(view, "\n")
+		if len(lines) > size[1] {
+			t.Fatalf("%dx%d rendered %d rows", size[0], size[1], len(lines))
+		}
+		if !strings.Contains(view, "Categories") || !strings.Contains(view, "Credentials") || !strings.Contains(view, "Q quit") {
+			t.Fatalf("%dx%d lost category menu or footer: %q", size[0], size[1], view)
+		}
+		if maxLineWidth(view) > size[0] {
+			t.Fatalf("%dx%d rendered a line wider than terminal", size[0], size[1])
+		}
+	}
+}
+
 func (m *model) resizeTo(width, height int) { m.width, m.height = width, height; m.resize() }
 func maxLineWidth(value string) int {
 	maxWidth := 0

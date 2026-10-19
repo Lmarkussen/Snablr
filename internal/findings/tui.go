@@ -54,6 +54,7 @@ type model struct {
 	findings      []Finding
 	width, height int
 	list, preview viewport.Model
+	previewHeight int
 	status        string
 }
 
@@ -539,18 +540,31 @@ func (m *model) resize() {
 	if m.width < 1 || m.height < 1 {
 		return
 	}
-	listRows := 4
+	listRows := 1
 	switch m.screen {
 	case screenCategories:
-		listRows = len(m.categories) + 2
+		listRows = len(m.categories)
 	case screenSubcategories:
-		listRows = len(m.subs) + 2
+		listRows = len(m.subs)
 	case screenDiscoveries:
-		listRows = min(len(m.discoveries)+2, max(4, m.height/2))
+		listRows = min(len(m.discoveries), max(1, m.height/2))
 	}
-	listRows = min(listRows, max(4, m.height/2))
+	if m.selectingScan {
+		listRows = min(len(m.scans), max(1, m.height/2))
+	}
+	listRows = max(1, listRows)
 	m.list.Width, m.list.Height = max(20, m.width-6), listRows
-	m.preview.Width, m.preview.Height = max(20, m.width-6), max(4, m.height-listRows-9)
+	// Header, breadcrumb, footer, and each panel's title/borders consume fixed
+	// rows. Only the remaining rows belong to the preview viewport.
+	panelRows := listRows + 3
+	remaining := m.height - 3 - panelRows - 3
+	if m.screen == screenEvidence {
+		remaining = m.height - 3 - 3
+	}
+	// Keep the overview compact on tall terminals; unused space below the
+	// footer is preferable to stretching a small preview into a blank panel.
+	m.previewHeight = min(max(0, remaining), 18)
+	m.preview.Width, m.preview.Height = max(20, m.width-6), max(1, m.previewHeight)
 	m.refresh()
 }
 
@@ -565,25 +579,26 @@ func (m *model) View() string {
 	}
 	crumb := breadcrumb(m.screen, m.categories, m.selected, m.subs, m.selectedSub, m.discoveries, m.selectedDisc)
 	if m.selectingScan {
-		return m.frame(header, "Choose a scan", m.list.View(), "", m.preview.View())
+		return m.frame(header, "Choose a scan", "Scans", m.list.View(), "", m.preview.View())
 	}
 	if m.screen == screenEvidence {
-		return m.frame(header, crumb, "", "Evidence  [FOCUS]", m.preview.View())
+		return m.frame(header, crumb, "", "", "Evidence  [FOCUS]", m.preview.View())
 	}
 	if m.screen == screenCategories {
-		return m.frame(header, crumb, categoryList(m.categories, m.selected), "Preview", m.preview.View())
+		return m.frame(header, crumb, "Categories", m.list.View(), "Preview", m.preview.View())
 	}
-	return m.frame(header, crumb, m.list.View(), "Preview", m.preview.View())
+	return m.frame(header, crumb, "Discoveries", m.list.View(), "Preview", m.preview.View())
 }
 
-func (m *model) frame(header, crumb, leftTitle, rightTitle, content string) string {
+func (m *model) frame(header, crumb, leftTitle, leftContent, rightTitle, rightContent string) string {
 	style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1)
-	left := style.Render(leftTitle + "\n" + content)
-	previewTitle := rightTitle
-	if previewTitle == "" {
-		previewTitle = "Evidence"
+	if leftTitle == "" {
+		panel := style.Render(rightTitle + "\n" + rightContent)
+		footer := "PgUp/PgDn scroll  ←/Esc back  Q quit"
+		return lipgloss.JoinVertical(lipgloss.Left, header, crumb, panel, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(footer+"  "+m.status))
 	}
-	preview := style.Render(previewTitle + "\n" + m.preview.View())
+	left := style.Render(leftTitle + "\n" + leftContent)
+	preview := style.Render(rightTitle + "\n" + rightContent)
 	footer := "↑/↓ j/k move  Enter/→ open  ←/Esc back  E evidence  PgUp/PgDn scroll  Q quit"
 	if m.screen == screenCategories || m.selectingScan {
 		footer = "↑/↓ j/k move  Enter/→ select  Q quit"

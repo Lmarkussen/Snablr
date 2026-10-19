@@ -68,3 +68,80 @@ func TestSearchReadsWhileWriterCommits(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSearchOmitsSuppressedCredentialCandidatesButKeepsValidMaterial(t *testing.T) {
+	t.Parallel()
+	state, err := Open(t.TempDir()+"/search-filter.db", Options{ScanID: "search-filter", BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+
+	candidates := []credentialanalysis.Candidate{
+		{CredentialType: "password", Identity: "masked-user", Value: "********"},
+		{CredentialType: "secret", Identity: "", Value: "synthetic"},
+		{CredentialType: "password", Identity: "valid-user", Value: "Odd punctuation !? [value]"},
+		{CredentialType: "nt_hash", Identity: "hash-user", Value: "0123456789abcdef0123456789abcdef"},
+	}
+	for _, candidate := range candidates {
+		if err := state.RecordCredential(candidate); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := state.Search(context.Background(), "user", SearchOptions{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, result := range results {
+		if result.Type == SearchResultCredential && (result.Title == "masked-user" || result.Title == "secret") {
+			t.Fatalf("suppressed credential appeared in search: %#v", result)
+		}
+	}
+	seenValid, seenHash := false, false
+	for _, result := range results {
+		if result.Type != SearchResultCredential {
+			continue
+		}
+		if result.Title == "valid-user" {
+			seenValid = true
+		}
+		if result.Title == "hash-user" {
+			seenHash = true
+		}
+	}
+	if !seenValid || !seenHash {
+		t.Fatalf("valid credential/hash missing from search: %#v", results)
+	}
+}
+
+func TestSearchPaginationCountsOnlyVisibleCredentials(t *testing.T) {
+	t.Parallel()
+	state, err := Open(t.TempDir()+"/search-pagination.db", Options{ScanID: "search-pagination", BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	for _, candidate := range []credentialanalysis.Candidate{
+		{CredentialType: "password", Identity: "masked-1", Value: "********"},
+		{CredentialType: "password", Identity: "masked-2", Value: "${PASSWORD}"},
+		{CredentialType: "password", Identity: "visible", Value: "A valid unusual ! password"},
+	} {
+		if err := state.RecordCredential(candidate); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	results, err := state.Search(context.Background(), "password", SearchOptions{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Title != "visible" {
+		t.Fatalf("visible credential pagination failed: %#v", results)
+	}
+}

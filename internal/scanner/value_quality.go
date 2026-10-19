@@ -31,6 +31,7 @@ var weakValueBases = []string{
 	"qwerty",
 	"sample",
 	"secret",
+	"synthetic",
 	"test",
 	"token",
 	"welcome",

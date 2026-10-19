@@ -208,19 +208,12 @@ func Analyze(candidates []Candidate) Report {
 			continue
 		}
 		report.CandidatesAnalyzed++
-		// Recognised placeholders and templates are not credential material.
-		// They are excluded from confirmed material, review material and the
-		// explicit sensitive export instead of being downgraded to review.
-		if _, placeholder := PlaceholderReason(candidate.Value); placeholder {
-			report.SuppressedPlaceholders++
-			continue
-		}
-		// A review candidate with no identity, no explicit password assignment,
-		// no structured credential relationship and no token shape is not
-		// meaningful credential evidence. It stays recorded by the caller but
-		// must not enter the operator credential ledger.
-		if _, weak := reviewCandidateLacksEvidence(candidate); weak {
-			report.SuppressedWeakReview++
+		if reason, suppressed := SuppressionReason(candidate); suppressed {
+			if reason == "placeholder" {
+				report.SuppressedPlaceholders++
+			} else {
+				report.SuppressedWeakReview++
+			}
 			continue
 		}
 		candidate = normalize(candidate)
@@ -267,6 +260,23 @@ func Analyze(candidates []Candidate) Report {
 		}
 	}
 	return report
+}
+
+// SuppressionReason applies the authoritative candidate-quality decision used
+// by the credential ledger. Raw candidates may still be persisted for audit
+// provenance, but a suppressed candidate must not be presented as recovered
+// credential material by search or exports.
+func SuppressionReason(candidate Candidate) (string, bool) {
+	if strings.TrimSpace(candidate.Value) == "" && candidate.Material != MaterialCorrelation {
+		return "empty_value", true
+	}
+	if _, placeholder := PlaceholderReason(candidate.Value); placeholder {
+		return "placeholder", true
+	}
+	if _, weak := reviewCandidateLacksEvidence(candidate); weak {
+		return "weak_review", true
+	}
+	return "", false
 }
 
 func candidateKey(candidate Candidate) string {

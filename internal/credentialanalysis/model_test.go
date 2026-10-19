@@ -49,3 +49,29 @@ func TestAnalyzePromotesReviewWhenConfirmedEvidenceArrives(t *testing.T) {
 		t.Fatalf("review candidate was not promoted: %#v", report)
 	}
 }
+
+func TestSuppressionReasonKeepsValidMaterialAndSuppressesNonSecrets(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		candidate  Candidate
+		suppressed bool
+	}{
+		{name: "masked password", candidate: Candidate{CredentialType: "password", Value: "********"}, suppressed: true},
+		{name: "template password", candidate: Candidate{CredentialType: "password", Value: "${PASSWORD}"}, suppressed: true},
+		{name: "empty password", candidate: Candidate{CredentialType: "password"}, suppressed: true},
+		{name: "unresolved secret", candidate: Candidate{CredentialType: "secret", Value: "synthetic"}, suppressed: true},
+		{name: "valid password", candidate: Candidate{CredentialType: "password", Value: "Odd punctuation !? [value]"}, suppressed: false},
+		{name: "nt hash", candidate: Candidate{CredentialType: "nt_hash", Identity: "synthetic-user", Value: "0123456789abcdef0123456789abcdef"}, suppressed: false},
+		{name: "netntlm capture", candidate: Candidate{CredentialType: "netntlmv2", Identity: "synthetic-user", Value: "user::domain:0123456789abcdef:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}, suppressed: false},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			_, suppressed := SuppressionReason(test.candidate)
+			if suppressed != test.suppressed {
+				t.Fatalf("suppressed=%t, want %t", suppressed, test.suppressed)
+			}
+		})
+	}
+}

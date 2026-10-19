@@ -121,6 +121,41 @@ Where results go in this example:
 
 Open `report.html` in a browser after the scan finishes.
 
+## Reopen Results In Finder
+
+Every scan has an authoritative local SQLite state database. After a scan,
+open its persisted findings without contacting SMB again:
+
+```bash
+./bin/snablr find --db /path/to/scan.db
+```
+
+When the scan used the default output workspace, `find` without `--db` checks
+the same default `snablr.db` location:
+
+```bash
+./bin/snablr find
+```
+
+Finder is read-only and uses category-first navigation:
+
+1. choose a category or subcategory
+2. select a logical discovery
+3. inspect evidence and source provenance in the Details pane
+
+The Details pane wraps long values and paths, including archive-member
+references, and supports `Up`/`Down`, `j`/`k`, `PgUp`/`PgDn`, and focus changes
+with `Tab`. Use `Enter` to open a selection, `Esc` to go back, and `Ctrl-C` to
+exit Finder. Cross-file relationships are contextual observations; they are
+not automatically verified username/password pairs.
+
+The database distinguishes scanner-produced findings, persisted material rows,
+logical discoveries, individual source observations, and contextual
+correlations. Several observations can therefore appear under one logical
+discovery while remaining available as separate evidence. Confirmed and
+Review material keep their stored classification; Snablr does not authenticate
+recovered values.
+
 ## Interactive TUI Controls
 
 Interactive terminal scans open the two-pane TUI unless `--no-tui` is used.

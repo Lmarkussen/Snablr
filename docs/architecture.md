@@ -131,6 +131,27 @@ Responsibilities:
 - CSV export
 - Markdown summary export
 
+### `internal/findings`
+
+The Findings Engine reopens persisted SQLite scan state without contacting
+SMB. Its provider loads scanner findings, credential material, source
+observations, and contextual correlations read-only. The Finder TUI projects
+that data into category and subcategory navigation, logical discoveries, and
+a scrollable Details pane with evidence and provenance.
+
+The projection keeps these concepts separate:
+
+- scanner-produced findings are raw detection records
+- persisted rows are stored material and evidence records
+- logical discoveries group equivalent material for review
+- source observations identify each contributing file or archive member
+- correlations describe contextual relationships and are not confirmed pairs
+
+Credential analysis preserves scope-aware username/password relationships,
+Review classifications, duplicate observations, archive-member paths, and
+Unicode values. Finder presentation does not authenticate or otherwise test
+discovered credentials.
+
 ### `internal/state`
 
 Authoritative SQLite scan state and credential-independent object metadata.
@@ -256,6 +277,20 @@ Findings flow into one or more writers. These writers can produce:
 - Markdown
 
 The output layer also consumes metrics snapshots and summary data.
+
+### 8. Offline Findings Flow
+
+The complete operator workflow is:
+
+1. scan authorized SMB targets
+2. persist scan state, findings, material, and provenance in local SQLite
+3. finish or stop the scan
+4. reopen the database with `snablr find` or `snablr find --db PATH`
+5. review categories, logical discoveries, Details, and source observations
+
+Finder opens the database read-only and never reconnects to SMB. SQLite files
+are assessment-sensitive artifacts: protect them and any exports that contain
+raw evidence.
 
 ## Design Principles
 

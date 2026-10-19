@@ -62,6 +62,35 @@ The `creds.txt` export is intentionally narrow. It includes only primary, high-c
 
 The `scanned_targets.txt` export is an audit aid. It records the targets Snablr discovered or accepted, whether they were reachable, and whether they were actually planned for scanning.
 
+## SQLite And Finder
+
+The scan's authoritative local SQLite database is the handoff point between
+the scanner and the Findings Engine. Reopen it without contacting SMB:
+
+```bash
+snablr find
+snablr find --db /path/to/scan.db
+```
+
+Without `--db`, Finder checks the same default `snablr.db` location used by the
+scan workspace. With `--db`, the supplied existing SQLite file is opened
+read-only. Finder validates that the file is a Snablr database and checks its
+integrity before presenting results.
+
+The UI keeps several levels of evidence distinct. Scanner findings are raw
+detection records; persisted rows are stored material; logical discoveries
+are grouped material shown to the operator; source observations retain each
+file or archive-member occurrence; and correlations are contextual links.
+The last category must not be read as a verified credential pair. Confirmed
+and Review classifications are preserved from the stored evidence, and
+Snablr does not authenticate discovered values.
+
+For credentials, Details can show the exact identity/value, material type,
+verification state, source path, archive member, and supporting observations.
+Long evidence wraps instead of being truncated, and the Details viewport can
+scroll in both directions. Treat databases, JSON/HTML reports, and
+`creds.txt` exports as sensitive because they may contain raw evidence.
+
 ## Console Output
 
 Console output is designed for live terminal triage.

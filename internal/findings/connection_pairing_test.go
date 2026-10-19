@@ -34,6 +34,8 @@ func TestConnectionPairPostgresURIsDecodeExactlyOnce(t *testing.T) {
 	for _, value := range []string{
 		"postgresql://pg-user:PgSecret%21@pg01.synthetic:5432/audit?sslmode=require",
 		"postgres://unicode%C3%A9:pa%25ss%21@pg02.synthetic/audit",
+		"mariadb://maria-user:MariaSecret%21@db.synthetic/audit",
+		"sqlserver://sql-user:SqlSecret%21@db.synthetic/audit",
 	} {
 		pair, ok := deriveConnectionPair(connectionCandidate(value))
 		if !ok {
@@ -45,6 +47,13 @@ func TestConnectionPairPostgresURIsDecodeExactlyOnce(t *testing.T) {
 		if strings.Contains(pair.Password, "%21") || strings.Contains(pair.Username, "%C3") {
 			t.Fatalf("URI was not decoded exactly once: %#v", pair)
 		}
+	}
+}
+
+func TestConnectionPairPostgresKeywordValue(t *testing.T) {
+	pair, ok := parseKeywordConnection("host='db synthetic' dbname=app user=svc-user password='R4C4 Password 482!'")
+	if !ok || pair.Username != "svc-user" || pair.Password != "R4C4 Password 482!" || pair.Server != "db synthetic" || pair.Database != "app" {
+		t.Fatalf("pair = %#v, ok=%v", pair, ok)
 	}
 }
 

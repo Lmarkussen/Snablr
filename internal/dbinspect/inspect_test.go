@@ -115,3 +115,52 @@ func loadFixtureCandidate(t *testing.T, name string) (Candidate, []byte) {
 		Size:      info.Size(),
 	}, content
 }
+
+func TestInspectorConnectionCredentialRepresentations(t *testing.T) {
+	inspector := New()
+	candidate := Candidate{Name: "connections.conf", Extension: ".conf", FilePath: "connections.conf"}
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{"quoted semicolon", `Server=db-synthetic;Database=app;User ID=svc-r4c4;Password="Synthetic;Pass=482!";`, "dbinspect.access.connection_string"},
+		{"braced odbc", `Driver={PostgreSQL Unicode};Server=db-synthetic;UID=svc-r4c4;PWD={P@ss;word!};`, "dbinspect.access.connection_string"},
+		{"postgres keyword value", `host='db synthetic' dbname=app user=svc-r4c4 password='R4C4 Password 482!'`, "dbinspect.access.connection_string"},
+		{"postgres url", `postgresql://svc-r4c4:R4C4%20Password%20482%21@db-synthetic:5432/app`, "dbinspect.access.connection_string"},
+		{"mariadb url", `mariadb://svc-r4c4:SyntheticPass482%21@db-synthetic/app`, "dbinspect.access.connection_string"},
+		{"sqlserver url", `sqlserver://svc-r4c4:SyntheticPass483%21@db-synthetic/app`, "dbinspect.access.connection_string"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			matches := inspector.InspectContent(candidate, []byte(test.text))
+			found := false
+			for _, match := range matches {
+				if match.ID == test.want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("expected %s in %#v", test.want, matches)
+			}
+		})
+	}
+}
+
+func TestInspectorConnectionCredentialNegatives(t *testing.T) {
+	inspector := New()
+	candidate := Candidate{Name: "connections.conf", Extension: ".conf", FilePath: "connections.conf"}
+	for _, text := range []string{
+		`Server=db-synthetic;User ID=svc-r4c4;Integrated Security=true;`,
+		`postgresql://svc-r4c4@db-synthetic/app`,
+		`postgresql://svc-r4c4:${DB_PASSWORD}@db-synthetic/app`,
+		`Server=db-synthetic;User ID=svc-r4c4;Password=********;`,
+	} {
+		for _, match := range inspector.InspectContent(candidate, []byte(text)) {
+			if match.ID == "dbinspect.access.connection_string" {
+				t.Fatalf("unexpected credential match for %q: %#v", text, match)
+			}
+		}
+	}
+}

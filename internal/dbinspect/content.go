@@ -136,8 +136,8 @@ func inspectINISection(section string, values map[string]string) (stringObservat
 	driver := meaningfulValue(firstNonEmpty(values["driver"], values["provider"]))
 	endpoint := meaningfulValue(firstNonEmpty(values["server"], values["host"], values["datasource"]))
 	database := meaningfulValue(firstNonEmpty(values["database"], values["dbname"], values["dbq"]))
-	user := meaningfulCredentialValue(firstNonEmpty(values["uid"], values["userid"], values["user"], values["username"]))
-	password := meaningfulCredentialValue(firstNonEmpty(values["password"], values["pwd"]))
+	user := meaningfulConnectionCredentialValue(firstNonEmpty(values["uid"], values["userid"], values["user"], values["username"]))
+	password := meaningfulConnectionCredentialValue(firstNonEmpty(values["password"], values["pwd"]))
 	if driver == "" && endpoint == "" && database == "" && user == "" && password == "" {
 		return stringObservation{}, false
 	}
@@ -194,12 +194,17 @@ func inspectINISection(section string, values map[string]string) (stringObservat
 }
 
 func inspectKVFragment(fragment string, lineNumber int) (stringObservation, bool) {
-	candidate := trimWrapper(fragment)
-	if !strings.Contains(candidate, "=") || !strings.Contains(candidate, ";") {
+	// Do not strip a terminal quote from the whole fragment: PostgreSQL
+	// keyword/value strings commonly end with a quoted password.
+	candidate := strings.TrimSpace(fragment)
+	if !strings.Contains(candidate, "=") {
 		return stringObservation{}, false
 	}
 
 	values, count := parseSemicolonKV(candidate)
+	if !strings.Contains(candidate, ";") {
+		values, count = parseKeywordKV(candidate)
+	}
 	if count < 2 {
 		return stringObservation{}, false
 	}
@@ -268,7 +273,7 @@ func inspectURLFragment(fragment string, lineNumber int) (stringObservation, boo
 		return inspectJDBCURL(candidate, lineNumber)
 	case strings.HasPrefix(lower, "jdbc:oracle:"):
 		return inspectJDBCOracle(candidate, lineNumber)
-	case strings.HasPrefix(lower, "postgres://"), strings.HasPrefix(lower, "postgresql://"), strings.HasPrefix(lower, "mysql://"):
+	case strings.HasPrefix(lower, "postgres://"), strings.HasPrefix(lower, "postgresql://"), strings.HasPrefix(lower, "mysql://"), strings.HasPrefix(lower, "mariadb://"), strings.HasPrefix(lower, "sqlserver://"):
 		return inspectDBURL(candidate, lineNumber)
 	default:
 		return stringObservation{}, false

@@ -33,12 +33,21 @@ func deriveConnectionPair(candidate credentialanalysis.Candidate) (connectionPai
 	if pair, ok := parseDatabaseURI(value); ok {
 		return pair, true
 	}
-	return parseDelimitedConnection(value)
+	if pair, ok := parseDelimitedConnection(value); ok {
+		return pair, true
+	}
+	return parseKeywordConnection(value)
 }
 
 func parseDatabaseURI(value string) (connectionPair, bool) {
 	parsed, err := url.Parse(value)
-	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") || parsed.User == nil {
+	if err != nil || parsed.User == nil {
+		return connectionPair{}, false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	switch scheme {
+	case "postgres", "postgresql", "mysql", "mariadb", "sqlserver":
+	default:
 		return connectionPair{}, false
 	}
 	password, hasPassword := parsed.User.Password()
@@ -50,7 +59,7 @@ func parseDatabaseURI(value string) (connectionPair, bool) {
 	return connectionPair{
 		Username: username,
 		Password: password,
-		Provider: parsed.Scheme,
+		Provider: scheme,
 		Server:   parsed.Hostname(),
 		Port:     parsed.Port(),
 		Database: database,
@@ -92,6 +101,68 @@ func parseDelimitedConnection(value string) (connectionPair, bool) {
 	pair.Username = usernames[0]
 	pair.Password = passwords[0]
 	return pair, true
+}
+
+func parseKeywordConnection(value string) (connectionPair, bool) {
+	fields := splitKeywordFields(value)
+	if len(fields) < 2 {
+		return connectionPair{}, false
+	}
+	var pair connectionPair
+	var username, password string
+	for index := 0; index < len(fields); index++ {
+		key, fieldValue, ok := strings.Cut(fields[index], "=")
+		if !ok {
+			return connectionPair{}, false
+		}
+		fieldValue = strings.Trim(fieldValue, `"'`)
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "user", "username", "userid", "uid":
+			username = fieldValue
+		case "password", "pwd":
+			password = fieldValue
+		case "host", "server":
+			pair.Server = fieldValue
+		case "dbname", "database":
+			pair.Database = fieldValue
+		}
+	}
+	if invalidConnectionValue(username) || invalidConnectionValue(password) {
+		return connectionPair{}, false
+	}
+	pair.Username = username
+	pair.Password = password
+	pair.Provider = "postgresql"
+	return pair, true
+}
+
+func splitKeywordFields(value string) []string {
+	fields := make([]string, 0, 8)
+	start := 0
+	var quote byte
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if quote != 0 {
+			if character == quote {
+				quote = 0
+			}
+			continue
+		}
+		if character == '\'' || character == '"' {
+			quote = character
+			continue
+		}
+		if character == ' ' || character == '\t' || character == '\r' || character == '\n' {
+			if start < index {
+				fields = append(fields, value[start:index])
+			}
+			start = index + 1
+		}
+	}
+	if start < len(value) {
+		fields = append(fields, value[start:])
+	}
+	return fields
 }
 
 func splitConnectionFields(value string) []connectionField {

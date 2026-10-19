@@ -14,7 +14,7 @@ func candidateFragments(line string) []string {
 	var fragments []string
 	seen := make(map[string]struct{})
 	add := func(value string) {
-		value = trimWrapper(value)
+		value = strings.TrimSpace(value)
 		if len(value) < 8 {
 			return
 		}
@@ -62,7 +62,7 @@ func looksLikeConnectionLabel(label string) bool {
 func parseSemicolonKV(value string) (map[string]string, int) {
 	values := make(map[string]string)
 	count := 0
-	for _, part := range strings.Split(value, ";") {
+	for _, part := range splitDelimitedValues(value, ';') {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
@@ -71,10 +71,116 @@ func parseSemicolonKV(value string) (map[string]string, int) {
 		if !ok {
 			continue
 		}
-		values[normalizeKVKey(key)] = trimWrapper(rawValue)
+		values[normalizeKVKey(key)] = cleanConnectionValue(rawValue)
 		count++
 	}
 	return values, count
+}
+
+// parseKeywordKV handles PostgreSQL's whitespace-delimited connection syntax,
+// while retaining the same conservative key/value semantics as semicolon
+// connection strings. It deliberately only accepts known connection keys.
+func parseKeywordKV(value string) (map[string]string, int) {
+	values := make(map[string]string)
+	count := 0
+	for index := 0; index < len(value); {
+		for index < len(value) && unicode.IsSpace(rune(value[index])) {
+			index++
+		}
+		if index >= len(value) {
+			break
+		}
+		keyStart := index
+		for index < len(value) && (unicode.IsLetter(rune(value[index])) || unicode.IsDigit(rune(value[index])) || value[index] == '_') {
+			index++
+		}
+		if keyStart == index {
+			return nil, 0
+		}
+		key := normalizeKVKey(value[keyStart:index])
+		for index < len(value) && unicode.IsSpace(rune(value[index])) {
+			index++
+		}
+		if index >= len(value) || value[index] != '=' {
+			return nil, 0
+		}
+		index++
+		for index < len(value) && unicode.IsSpace(rune(value[index])) {
+			index++
+		}
+		valueStart := index
+		if index < len(value) && (value[index] == '\'' || value[index] == '"') {
+			quote := value[index]
+			index++
+			valueStart = index
+			for index < len(value) && value[index] != quote {
+				index++
+			}
+			if index >= len(value) {
+				return nil, 0
+			}
+			values[key] = value[valueStart:index]
+			index++
+		} else {
+			for index < len(value) && !unicode.IsSpace(rune(value[index])) {
+				index++
+			}
+			values[key] = value[valueStart:index]
+		}
+		if key != "" {
+			count++
+		}
+	}
+	return values, count
+}
+
+func splitDelimitedValues(value string, delimiter byte) []string {
+	parts := make([]string, 0, 8)
+	start := 0
+	var quote byte
+	braceDepth := 0
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if quote != 0 {
+			if character == quote {
+				if index+1 < len(value) && value[index+1] == quote {
+					index++
+					continue
+				}
+				quote = 0
+			}
+			continue
+		}
+		switch character {
+		case '\'', '"':
+			quote = character
+		case '{':
+			braceDepth++
+		case '}':
+			if braceDepth > 0 {
+				braceDepth--
+			}
+		default:
+			if character == delimiter && braceDepth == 0 {
+				parts = append(parts, value[start:index])
+				start = index + 1
+			}
+		}
+	}
+	return append(parts, value[start:])
+}
+
+func cleanConnectionValue(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 2 && value[0] == '{' && value[len(value)-1] == '}' {
+		return strings.ReplaceAll(value[1:len(value)-1], "}}", "}")
+	}
+	if len(value) >= 2 && (value[0] == '\'' || value[0] == '"') && value[len(value)-1] == value[0] {
+		quote := value[0]
+		value = value[1 : len(value)-1]
+		value = strings.ReplaceAll(value, string(quote)+string(quote), string(quote))
+	}
+	return strings.TrimSpace(value)
 }
 
 func normalizeKVKey(key string) string {
@@ -113,14 +219,28 @@ func normalizeKVKey(key string) string {
 }
 
 func authSummary(values map[string]string) authFields {
-	user := meaningfulCredentialValue(firstNonEmpty(values["uid"], values["userid"], values["user"], values["username"]))
-	password := meaningfulCredentialValue(firstNonEmpty(values["password"], values["pwd"]))
+	user := meaningfulConnectionCredentialValue(firstNonEmpty(values["uid"], values["userid"], values["user"], values["username"]))
+	password := meaningfulConnectionCredentialValue(firstNonEmpty(values["password"], values["pwd"]))
 	integrated := isTruthy(firstNonEmpty(values["integratedsecurity"], values["trustedconnection"]))
 	return authFields{
 		user:       user,
 		password:   password,
 		integrated: integrated,
 	}
+}
+
+func meaningfulConnectionCredentialValue(value string) string {
+	value = meaningfulValue(value)
+	if value == "" || credentialanalysis.IsMaskedValue(value) || looksLikeSampleValue(value) {
+		return ""
+	}
+	if reason, reject := credentialanalysis.NonSecretValueShape(value); reject {
+		switch reason {
+		case "sql_variable_or_parameter", "sql_bind_parameter", "expression_or_function_call", "schema_metadata_definition", "sql_logic_fragment":
+			return ""
+		}
+	}
+	return value
 }
 
 func detectEcosystem(values map[string]string) string {

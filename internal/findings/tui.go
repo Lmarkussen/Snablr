@@ -25,6 +25,7 @@ const (
 
 type discovery struct {
 	Title, Subcategory, MaterialType, Identity, Domain string
+	MaterialFamily, SourceContext                      string
 	Value, Host, Share, Path, Confidence, Verification string
 	Reason                                             string
 	Sources                                            []string
@@ -75,15 +76,15 @@ func Run(ctx context.Context, provider *Provider, scans []Scan, output io.Writer
 }
 
 func (m *model) loadScan() error {
-	findings, err := m.provider.Findings(m.ctx, m.scans[m.selectedScan].ID, 0, PageSize)
+	findings, err := readAllFindings(m.ctx, m.provider, m.scans[m.selectedScan].ID)
 	if err != nil {
 		return err
 	}
-	credentials, err := m.provider.Credentials(m.ctx, m.scans[m.selectedScan].ID, 0, PageSize)
+	credentials, err := readAllCredentials(m.ctx, m.provider, m.scans[m.selectedScan].ID)
 	if err != nil {
 		return err
 	}
-	correlations, err := m.provider.Correlations(m.ctx, m.scans[m.selectedScan].ID, 0, PageSize)
+	correlations, err := readAllCorrelations(m.ctx, m.provider, m.scans[m.selectedScan].ID)
 	if err != nil {
 		return err
 	}
@@ -91,9 +92,51 @@ func (m *model) loadScan() error {
 	m.categories = buildCategories(credentials, findings, correlations)
 	m.selected, m.selectedSub, m.selectedDisc = 0, 0, 0
 	m.screen = screenCategories
-	m.status = fmt.Sprintf("%d categories · %d persisted findings · %d credential records", len(m.categories), m.scans[m.selectedScan].FindingCount, len(credentials))
+	m.status = fmt.Sprintf("%d categories · %d findings · %d logical credentials · %d correlations", len(m.categories), len(findings), len(credentials), len(correlations))
 	m.refresh()
 	return nil
+}
+
+func readAllFindings(ctx context.Context, provider *Provider, scanID string) ([]Finding, error) {
+	var result []Finding
+	for offset := 0; ; offset += PageSize {
+		page, err := provider.Findings(ctx, scanID, offset, PageSize)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, page...)
+		if len(page) < PageSize {
+			return result, nil
+		}
+	}
+}
+
+func readAllCredentials(ctx context.Context, provider *Provider, scanID string) ([]Credential, error) {
+	var result []Credential
+	for offset := 0; ; offset += PageSize {
+		page, err := provider.Credentials(ctx, scanID, offset, PageSize)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, page...)
+		if len(page) < PageSize {
+			return result, nil
+		}
+	}
+}
+
+func readAllCorrelations(ctx context.Context, provider *Provider, scanID string) ([]Correlation, error) {
+	var result []Correlation
+	for offset := 0; ; offset += PageSize {
+		page, err := provider.Correlations(ctx, scanID, offset, PageSize)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, page...)
+		if len(page) < PageSize {
+			return result, nil
+		}
+	}
 }
 
 func buildCategories(credentials []Credential, findings []Finding, correlations []Correlation) []category {
@@ -101,14 +144,14 @@ func buildCategories(credentials []Credential, findings []Finding, correlations 
 		name, description string
 	}{
 		{"Credentials", "Confirmed and review-level plaintext credential material"},
-		{"Private Keys", "Recovered private-key material with preserved source paths"},
-		{"Hashes", "Validated NT hash and NetNTLM capture material"},
-		{"Cloud & Application Secrets", "Tokens, API keys, and application authentication material"},
-		{"SCCM / MECM", "Configuration Manager credential-bearing evidence"},
-		{"Windows Artifacts", "Windows credential-store and sensitive artifact evidence"},
+		{"Keys & Certificates", "Validated private-key and certificate material"},
+		{"Hashes & Captures", "Validated NT hash and NetNTLM capture material"},
+		{"Application & Cloud Secrets", "Tokens, API keys, and application authentication material"},
+		{"Connection & Database Secrets", "Connection strings, DSNs, and database credentials"},
+		{"Windows & Deployment Artifacts", "Windows, SCCM, and deployment evidence"},
 		{"Correlations", "Persisted cross-file relationships and supporting observations"},
-		{"Uncertain / Review", "Candidates requiring operator review or stronger context"},
-		{"Other / Supporting", "Original actionable and supporting scan observations"},
+		{"Review", "Candidates requiring operator review or stronger context"},
+		{"Original Findings", "Original actionable and supporting scan observations"},
 	}
 	groups := make(map[string]*category, len(ordered))
 	for _, item := range ordered {
@@ -129,22 +172,25 @@ func buildCategories(credentials []Credential, findings []Finding, correlations 
 		if ref, ok := seen[key]; ok && ref.category == name {
 			group := groups[name]
 			group.Discoveries[ref.index].Sources = appendUnique(group.Discoveries[ref.index].Sources, sourceLabel(candidate))
+			group.Discoveries[ref.index].SourceContext = appendContext(group.Discoveries[ref.index].SourceContext, sourceContext(candidate))
 			continue
 		}
 		d := discovery{
-			Title:        discoveryTitle(candidate),
-			Subcategory:  sub,
-			MaterialType: candidate.CredentialType,
-			Identity:     candidate.Identity,
-			Domain:       candidate.Domain,
-			Value:        candidate.Value,
-			Host:         candidate.Host,
-			Share:        candidate.Share,
-			Path:         candidate.Path,
-			Confidence:   string(candidate.Verification),
-			Verification: string(candidate.Verification),
-			Reason:       strings.Join(candidate.ReviewReasons, "; "),
-			Sources:      []string{sourceLabel(candidate)},
+			Title:          discoveryTitle(candidate),
+			Subcategory:    sub,
+			MaterialType:   candidate.CredentialType,
+			Identity:       candidate.Identity,
+			Domain:         candidate.Domain,
+			Value:          candidate.Value,
+			Host:           candidate.Host,
+			Share:          candidate.Share,
+			Path:           candidate.Path,
+			Confidence:     string(candidate.Verification),
+			Verification:   string(candidate.Verification),
+			MaterialFamily: name,
+			SourceContext:  sourceContext(candidate),
+			Reason:         strings.Join(candidate.ReviewReasons, "; "),
+			Sources:        []string{sourceLabel(candidate)},
 		}
 		group := groups[name]
 		seen[key] = discoveryRef{category: name, index: len(group.Discoveries)}
@@ -153,8 +199,8 @@ func buildCategories(credentials []Credential, findings []Finding, correlations 
 	for _, item := range findings {
 		f := item.Finding
 		if !f.Actionable && !strings.EqualFold(f.TriageClass, "review") {
-			if len(groups["Other / Supporting"].Discoveries) < 50 {
-				groups["Other / Supporting"].Discoveries = append(groups["Other / Supporting"].Discoveries, discovery{
+			if len(groups["Original Findings"].Discoveries) < 50 {
+				groups["Original Findings"].Discoveries = append(groups["Original Findings"].Discoveries, discovery{
 					Title: firstNonEmpty(f.RuleName, f.RuleID), Subcategory: "Supporting Findings", MaterialType: "supporting finding",
 					Host: f.Host, Share: f.Share, Path: f.FilePath, Confidence: firstNonEmpty(f.Confidence, "unknown"), Verification: "supporting",
 					Sources: []string{sourceLabelFinding(f)}, Finding: &f,
@@ -162,21 +208,22 @@ func buildCategories(credentials []Credential, findings []Finding, correlations 
 			}
 			continue
 		}
-		name := findingCategory(f)
+		name := "Original Findings"
 		group := groups[name]
 		group.Discoveries = append(group.Discoveries, discovery{
-			Title:        firstNonEmpty(f.RuleName, f.RuleID),
-			Subcategory:  "Original Findings",
-			MaterialType: "scanner finding",
-			Identity:     f.PotentialAccount,
-			Host:         f.Host,
-			Share:        f.Share,
-			Path:         f.FilePath,
-			Confidence:   firstNonEmpty(f.Confidence, "unknown"),
-			Verification: firstNonEmpty(f.TriageClass, "actionable"),
-			Reason:       f.MatchReason,
-			Sources:      []string{sourceLabelFinding(f)},
-			Finding:      &f,
+			Title:          firstNonEmpty(f.RuleName, f.RuleID),
+			Subcategory:    firstNonEmpty(f.TriageClass, "Original Findings"),
+			MaterialFamily: name,
+			MaterialType:   "scanner finding",
+			Identity:       f.PotentialAccount,
+			Host:           f.Host,
+			Share:          f.Share,
+			Path:           f.FilePath,
+			Confidence:     firstNonEmpty(f.Confidence, "unknown"),
+			Verification:   firstNonEmpty(f.TriageClass, "actionable"),
+			Reason:         f.MatchReason,
+			Sources:        []string{sourceLabelFinding(f)},
+			Finding:        &f,
 		})
 	}
 	for _, item := range correlations {
@@ -203,67 +250,81 @@ func buildCategories(credentials []Credential, findings []Finding, correlations 
 }
 
 func classifyCandidate(candidate credentialanalysis.Candidate) (string, string) {
-	typ := strings.ToLower(candidate.CredentialType)
-	context := strings.ToLower(candidate.Path + " " + candidate.Source + " " + candidate.Container)
-	if candidate.Verification == credentialanalysis.Review || candidate.Encrypted || candidate.Value == "" {
-		return "Uncertain / Review", "Potential Credentials"
+	if candidate.Verification == credentialanalysis.Review || candidate.Encrypted || strings.TrimSpace(candidate.Value) == "" {
+		return "Review", reviewSubcategory(candidate)
 	}
-	if strings.Contains(typ, "hash") || strings.Contains(typ, "netntlm") {
-		if strings.Contains(typ, "netntlmv1") {
-			return "Hashes", "NetNTLMv1"
+	typ := strings.ToLower(strings.TrimSpace(candidate.CredentialType))
+	switch typ {
+	case "nt_hash", "hash":
+		return "Hashes & Captures", "NT Hashes"
+	case "netntlmv1":
+		return "Hashes & Captures", "NetNTLMv1"
+	case "netntlmv2":
+		return "Hashes & Captures", "NetNTLMv2"
+	case "private_key":
+		return "Keys & Certificates", privateKeySubcategory(candidate)
+	case "certificate":
+		return "Keys & Certificates", "Certificates"
+	case "connection_string", "dsn":
+		return "Connection & Database Secrets", "Connection Strings"
+	case "token", "bearer_token", "access_token", "session_token", "api_key", "apikey", "api_secret", "access_key", "secret_key", "client_secret":
+		return "Application & Cloud Secrets", "Tokens / API Secrets"
+	case "password", "passwd", "pwd", "passord", "secret", "shared_secret":
+		if candidate.Identity != "" {
+			return "Credentials", "Username + Password"
 		}
-		if strings.Contains(typ, "netntlmv2") {
-			return "Hashes", "NetNTLMv2"
-		}
-		return "Hashes", "NT Hashes"
+		return "Credentials", "Password Only"
+	default:
+		return "Credentials", "Other Credential Material"
 	}
-	if strings.Contains(typ, "key") || strings.Contains(context, "private") || strings.Contains(context, "id_ed25519") || strings.Contains(context, "id_rsa") {
-		return "Private Keys", privateKeySubcategory(candidate)
+}
+
+func reviewSubcategory(candidate credentialanalysis.Candidate) string {
+	if candidate.Encrypted {
+		return "Encrypted Credential Material"
 	}
-	if strings.Contains(context, "sccm") || strings.Contains(context, "mecm") || strings.Contains(context, "tasksequence") || strings.Contains(context, "osd") {
-		return "SCCM / MECM", "Task Sequence Credentials"
+	if strings.TrimSpace(candidate.Value) == "" {
+		return "Identity or Reference Only"
 	}
-	if strings.Contains(typ, "token") || strings.Contains(typ, "api") || strings.Contains(typ, "aws") {
-		return "Cloud & Application Secrets", "Tokens / API Secrets"
+	if strings.EqualFold(candidate.CredentialType, "private_key") {
+		return "Unparsed Key Material"
 	}
-	if strings.Contains(typ, "connection") || strings.Contains(context, "connection") {
-		return "Credentials", "Connection Strings"
-	}
-	if strings.Contains(context, "wincred") || strings.Contains(context, "credential") || strings.Contains(context, "sam") || strings.Contains(context, "ntds") {
-		return "Windows Artifacts", "Credential Store Material"
-	}
-	if candidate.Identity != "" {
-		return "Credentials", "Username + Password"
-	}
-	return "Credentials", "Other Credential Material"
+	return "Potential Credentials"
 }
 
 func privateKeySubcategory(candidate credentialanalysis.Candidate) string {
-	value := strings.ToLower(candidate.Value + " " + candidate.Path)
-	if strings.Contains(value, "openssh") || strings.Contains(value, "ed25519") {
+	value := strings.ToLower(candidate.Value)
+	if strings.Contains(value, "openssh") || strings.Contains(value, "ed25519") || strings.Contains(value, "begin ssh") {
 		return "OpenSSH Keys"
 	}
-	if strings.Contains(value, "rsa") || strings.Contains(value, "begin rsa") {
+	if strings.Contains(value, "begin rsa") {
 		return "RSA Keys"
 	}
 	return "Other Private Keys"
 }
 
-func findingCategory(f scanner.Finding) string {
-	value := strings.ToLower(f.Category + " " + f.RuleID + " " + f.FilePath)
-	if strings.Contains(value, "sccm") || strings.Contains(value, "mecm") || strings.Contains(value, "tasksequence") {
+func sourceContext(candidate credentialanalysis.Candidate) string {
+	value := strings.ToLower(strings.Join([]string{candidate.Source, candidate.Path, candidate.Container, candidate.ValidationBasis}, " "))
+	switch {
+	case strings.Contains(value, "sccm") || strings.Contains(value, "mecm") || strings.Contains(value, "tasksequence") || strings.Contains(value, "osd"):
 		return "SCCM / MECM"
+	case strings.Contains(value, "aws") || strings.Contains(value, "azure") || strings.Contains(value, "cloud"):
+		return "Cloud / Application"
+	case strings.Contains(value, "sam") || strings.Contains(value, "ntds") || strings.Contains(value, "wincred") || strings.Contains(value, "browser"):
+		return "Windows"
+	default:
+		return ""
 	}
-	if strings.Contains(value, "hash") || strings.Contains(value, "ntlm") {
-		return "Hashes"
+}
+
+func appendContext(existing, value string) string {
+	if existing == "" {
+		return value
 	}
-	if strings.Contains(value, "key") || strings.Contains(value, "ssh") {
-		return "Private Keys"
+	if value == "" || existing == value {
+		return existing
 	}
-	if strings.Contains(value, "token") || strings.Contains(value, "aws") || strings.Contains(value, "api") {
-		return "Cloud & Application Secrets"
-	}
-	return "Other / Supporting"
+	return existing + ", " + value
 }
 
 func discoveryTitle(candidate credentialanalysis.Candidate) string {
@@ -496,13 +557,19 @@ func (m *model) evidenceText() string {
 	}
 	d := m.discoveries[m.selectedDisc]
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\nIdentity: %s\nMaterial type: %s\nVerification: %s\nConfidence: %s\n", d.Title, firstNonEmpty(d.Identity, "not persisted"), firstNonEmpty(d.MaterialType, "unknown"), firstNonEmpty(d.Verification, "unknown"), firstNonEmpty(d.Confidence, "unknown"))
-	fmt.Fprintf(&b, "Host: %s\nShare: %s\nSource: %s\n", firstNonEmpty(d.Host, "not persisted"), firstNonEmpty(d.Share, "not persisted"), firstNonEmpty(d.Path, "not persisted"))
+	fmt.Fprintf(&b, "DISCOVERY\n%s\n\nMaterial family: %s\nMaterial type: %s\nVerification: %s\nConfidence: %s\n", d.Title, firstNonEmpty(d.MaterialFamily, "unknown"), firstNonEmpty(d.MaterialType, "unknown"), firstNonEmpty(d.Verification, "unknown"), firstNonEmpty(d.Confidence, "unknown"))
 	if d.Value != "" {
-		fmt.Fprintf(&b, "Recovered material: %s\n", d.Value)
+		b.WriteString("\nRECOVERED MATERIAL\n")
+		b.WriteString(d.Value)
+		b.WriteByte('\n')
 	}
+	fmt.Fprintf(&b, "\nIDENTITY\n%s\n", firstNonEmpty(d.Identity, "not persisted"))
+	if d.SourceContext != "" {
+		fmt.Fprintf(&b, "Source context: %s\n", d.SourceContext)
+	}
+	fmt.Fprintf(&b, "Host: %s\nShare: %s\nSource: %s\n", firstNonEmpty(d.Host, "not persisted"), firstNonEmpty(d.Share, "not persisted"), firstNonEmpty(d.Path, "not persisted"))
 	if len(d.Sources) > 0 {
-		b.WriteString("\nSource observations\n-------------------\n")
+		b.WriteString("\nSOURCE OBSERVATIONS\n")
 		b.WriteString(strings.Join(d.Sources, "\n"))
 		b.WriteByte('\n')
 	}
@@ -592,13 +659,21 @@ func (m *model) View() string {
 
 func (m *model) frame(header, crumb, leftTitle, leftContent, rightTitle, rightContent string) string {
 	style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1)
+	section := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+	focus := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 	if leftTitle == "" {
-		panel := style.Render(rightTitle + "\n" + rightContent)
+		panel := style.Render(section.Render(rightTitle) + "\n" + rightContent)
 		footer := "PgUp/PgDn scroll  ←/Esc back  Q quit"
 		return lipgloss.JoinVertical(lipgloss.Left, header, crumb, panel, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(footer+"  "+m.status))
 	}
-	left := style.Render(leftTitle + "\n" + leftContent)
-	preview := style.Render(rightTitle + "\n" + rightContent)
+	left := style.Render(section.Render(leftTitle) + "\n" + leftContent)
+	rightHeading := rightTitle
+	if strings.Contains(rightTitle, "[FOCUS]") {
+		rightHeading = focus.Render(rightTitle)
+	} else {
+		rightHeading = section.Render(rightTitle)
+	}
+	preview := style.Render(rightHeading + "\n" + rightContent)
 	footer := "↑/↓ j/k move  Enter/→ open  ←/Esc back  E evidence  PgUp/PgDn scroll  Q quit"
 	if m.screen == screenCategories || m.selectingScan {
 		footer = "↑/↓ j/k move  Enter/→ select  Q quit"
@@ -619,21 +694,33 @@ func scanList(scans []Scan, selected int) string {
 }
 func categoryList(items []category, selected int) string {
 	var lines []string
+	arrow := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	selectedName := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+	severity := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 	for i, item := range items {
 		marker := "  "
 		if i == selected {
-			marker = "▸ "
+			marker = arrow.Render("▸") + " "
 		}
-		lines = append(lines, marker+fmt.Sprintf("%-32s %5d  %s", item.Name, len(item.Discoveries), item.Severity))
+		name := item.Name
+		if i == selected {
+			name = selectedName.Render(name)
+		}
+		lines = append(lines, marker+fmt.Sprintf("%-32s %5d  %s", name, len(item.Discoveries), severity.Render(item.Severity)))
 	}
 	return strings.Join(lines, "\n")
 }
 func subcategoryList(items []string, selected int) string {
 	var lines []string
+	arrow := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	selectedName := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
 	for i, item := range items {
 		marker := "  "
 		if i == selected {
-			marker = "▸ "
+			marker = arrow.Render("▸") + " "
+		}
+		if i == selected {
+			item = selectedName.Render(item)
 		}
 		lines = append(lines, marker+item)
 	}
@@ -641,12 +728,19 @@ func subcategoryList(items []string, selected int) string {
 }
 func discoveryList(items []discovery, selected int) string {
 	var lines []string
+	arrow := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	selectedName := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
 	for i, item := range items {
 		marker := "  "
 		if i == selected {
-			marker = "▸ "
+			marker = arrow.Render("▸") + " "
 		}
-		lines = append(lines, marker+item.Title+"  "+firstNonEmpty(item.Confidence, "unknown"))
+		name := item.Title
+		if i == selected {
+			name = selectedName.Render(name)
+		}
+		status := firstNonEmpty(item.Verification, "unknown")
+		lines = append(lines, marker+name+"  "+statusStyle(status).Render(status))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -661,7 +755,7 @@ func categoryPreview(items []category, selected int) string {
 		if i == 8 {
 			break
 		}
-		fmt.Fprintf(&b, "%s\n  %s\n  %s\n\n", d.Title, firstNonEmpty(d.MaterialType, "finding"), firstNonEmpty(d.Path, "source not persisted"))
+		fmt.Fprintf(&b, "%s\n  %s · %s\n  %s\n\n", d.Title, firstNonEmpty(d.MaterialType, "finding"), statusStyle(d.Verification).Render(firstNonEmpty(d.Verification, "unknown")), firstNonEmpty(d.Path, "source not persisted"))
 	}
 	return b.String()
 }
@@ -676,7 +770,18 @@ func discoveryPreview(items []discovery, selected int) string {
 		return "No discoveries are available in this subcategory."
 	}
 	d := items[selected]
-	return fmt.Sprintf("%s\n\nIdentity: %s\nType: %s\nVerification: %s\nConfidence: %s\nSource: %s\n\nPress E for full evidence.", d.Title, firstNonEmpty(d.Identity, "not persisted"), firstNonEmpty(d.MaterialType, "unknown"), firstNonEmpty(d.Verification, "unknown"), firstNonEmpty(d.Confidence, "unknown"), firstNonEmpty(d.Path, "not persisted"))
+	return fmt.Sprintf("%s\n\nMaterial: %s\nIdentity: %s\nVerification: %s\nConfidence: %s\nSource observations: %d\nSource context: %s\nSource: %s\n\nPress E for full evidence.", d.Title, firstNonEmpty(d.MaterialType, "unknown"), firstNonEmpty(d.Identity, "not persisted"), statusStyle(d.Verification).Render(firstNonEmpty(d.Verification, "unknown")), firstNonEmpty(d.Confidence, "unknown"), len(d.Sources), firstNonEmpty(d.SourceContext, "not classified"), firstNonEmpty(d.Path, "not persisted"))
+}
+
+func statusStyle(value string) lipgloss.Style {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "confirmed", "actionable":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+	case "review", "weak-review", "uncertain":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	default:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	}
 }
 func breadcrumb(level screen, cats []category, cat int, subs []string, sub int, discs []discovery, disc int) string {
 	if len(cats) == 0 {

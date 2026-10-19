@@ -40,8 +40,43 @@ func TestCategoryFirstNavigationAndEvidence(t *testing.T) {
 
 func TestCategoryCountsDoNotPromoteSupportingFindings(t *testing.T) {
 	items := buildCategories(nil, []Finding{{Finding: scanner.Finding{RuleID: "extension", Category: "configuration", TriageClass: "supporting", Actionable: false}}}, nil)
-	if len(items) != 1 || items[0].Name != "Other / Supporting" {
+	if len(items) != 1 || items[0].Name != "Original Findings" {
 		t.Fatal("supporting-only finding should remain accessible only in the supporting category")
+	}
+}
+
+func TestFinderClassificationUsesPersistedMaterialType(t *testing.T) {
+	tests := []struct {
+		name, typ, value, wantCategory, wantSubcategory string
+	}{
+		{"password", "password", "Synthetic!", "Credentials", "Password Only"},
+		{"hash", "nt_hash", "00112233445566778899aabbccddeeff", "Hashes & Captures", "NT Hashes"},
+		{"netntlm", "netntlmv2", "user::domain:challenge:proof:blob", "Hashes & Captures", "NetNTLMv2"},
+		{"key", "private_key", "-----BEGIN RSA PRIVATE KEY-----", "Keys & Certificates", "RSA Keys"},
+		{"review", "password", "${UNRESOLVED}", "Review", "Potential Credentials"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			verification := credentialanalysis.Confirmed
+			if test.name == "review" {
+				verification = credentialanalysis.Review
+			}
+			category, subcategory := classifyCandidate(credentialanalysis.Candidate{
+				CredentialType: test.typ, Value: test.value, Verification: verification,
+			})
+			if category != test.wantCategory || subcategory != test.wantSubcategory {
+				t.Fatalf("classification = %q / %q, want %q / %q", category, subcategory, test.wantCategory, test.wantSubcategory)
+			}
+		})
+	}
+}
+
+func TestPrivateKeyClassificationDoesNotUseFilename(t *testing.T) {
+	category, subcategory := classifyCandidate(credentialanalysis.Candidate{
+		CredentialType: "private_key", Value: "-----BEGIN PRIVATE KEY-----", Path: "keys/id_rsa", Verification: credentialanalysis.Confirmed,
+	})
+	if category != "Keys & Certificates" || subcategory != "Other Private Keys" {
+		t.Fatalf("filename inferred a key subtype: %q / %q", category, subcategory)
 	}
 }
 
@@ -59,13 +94,13 @@ func TestCategoryOverviewFitsReportedTerminal(t *testing.T) {
 			scans: []Scan{{ID: "scan", Status: "completed"}},
 			categories: []category{
 				{Name: "Credentials", Discoveries: []discovery{{Title: "svc-build", Subcategory: "Username + Password"}}},
-				{Name: "Private Keys", Discoveries: []discovery{{Title: "id_rsa", Subcategory: "RSA Keys"}}},
-				{Name: "Hashes", Discoveries: []discovery{{Title: "synthetic-admin", Subcategory: "NT Hashes"}}},
+				{Name: "Keys & Certificates", Discoveries: []discovery{{Title: "id_rsa", Subcategory: "RSA Keys"}}},
+				{Name: "Hashes & Captures", Discoveries: []discovery{{Title: "synthetic-admin", Subcategory: "NT Hashes"}}},
 				{Name: "Cloud & Application Secrets", Discoveries: []discovery{{Title: "api", Subcategory: "Tokens / API Secrets"}}},
-				{Name: "SCCM / MECM", Discoveries: []discovery{{Title: "join", Subcategory: "Task Sequence Credentials"}}},
+				{Name: "Windows & Deployment Artifacts", Discoveries: []discovery{{Title: "join", Subcategory: "Task Sequence Credentials"}}},
 				{Name: "Windows Artifacts", Discoveries: []discovery{{Title: "wincred", Subcategory: "Credential Store Material"}}},
 				{Name: "Correlations", Discoveries: []discovery{{Title: "relationship", Subcategory: "Cross-file Relationships"}}},
-				{Name: "Other / Supporting", Discoveries: []discovery{{Title: "supporting", Subcategory: "Supporting Findings"}}},
+				{Name: "Original Findings", Discoveries: []discovery{{Title: "supporting", Subcategory: "Supporting Findings"}}},
 			},
 			list: viewport.New(1, 1), preview: viewport.New(1, 1),
 		}

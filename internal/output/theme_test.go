@@ -26,6 +26,7 @@ func TestHTMLReportThemesAreStandaloneAndDarkByDefault(t *testing.T) {
 		`data-theme-choice="dark"`,
 		`data-theme-choice="flashbang"`,
 		`class="report-banner"`,
+		`padding: 18px 0 8px`,
 		`@Evilhaxxor`,
 		`class="report-banner"`,
 		`https://github.com/Lmarkussen/Snablr`,

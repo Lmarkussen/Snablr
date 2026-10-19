@@ -28,6 +28,7 @@ type discovery struct {
 	OriginType                                         string
 	Value, Host, Share, Path, Confidence, Verification string
 	Reason                                             string
+	PairingStatus, PairingBasis, OriginalVerification  string
 	ConnectionDetails                                  []connectionDetail
 	Sources                                            []string
 	Finding                                            *scanner.Finding
@@ -170,6 +171,7 @@ func buildCategories(credentials []Credential, findings []Finding, correlations 
 	seen := make(map[string]discoveryRef)
 	for _, item := range credentials {
 		candidate := item.Candidate
+		pairing := interpretCredential(candidate)
 		name, sub := classifyCandidate(candidate)
 		key := strings.Join([]string{candidate.CredentialType, candidate.Identity, candidate.Domain, candidate.Value}, "\x00")
 		if key == "\x00\x00\x00" {
@@ -183,23 +185,26 @@ func buildCategories(credentials []Credential, findings []Finding, correlations 
 			continue
 		}
 		d := discovery{
-			Title:             discoveryTitle(candidate),
-			Subcategory:       sub,
-			MaterialType:      candidate.CredentialType,
-			Identity:          candidate.Identity,
-			Domain:            candidate.Domain,
-			Value:             candidate.Value,
-			Host:              candidate.Host,
-			Share:             candidate.Share,
-			Path:              candidate.Path,
-			Confidence:        string(candidate.Verification),
-			Verification:      string(candidate.Verification),
-			MaterialFamily:    name,
-			SourceContext:     sourceContext(candidate),
-			OriginType:        originType(candidate),
-			Reason:            strings.Join(candidate.ReviewReasons, "; "),
-			ConnectionDetails: connectionDetails(candidate),
-			Sources:           []string{sourceLabel(candidate)},
+			Title:                discoveryTitle(candidate),
+			Subcategory:          sub,
+			MaterialType:         candidate.CredentialType,
+			Identity:             candidate.Identity,
+			Domain:               candidate.Domain,
+			Value:                candidate.Value,
+			Host:                 candidate.Host,
+			Share:                candidate.Share,
+			Path:                 candidate.Path,
+			Confidence:           string(candidate.Verification),
+			Verification:         firstNonEmpty(pairing.Status, string(candidate.Verification)),
+			PairingStatus:        pairing.Status,
+			PairingBasis:         pairing.Basis,
+			OriginalVerification: pairing.OriginalVerification,
+			MaterialFamily:       name,
+			SourceContext:        sourceContext(candidate),
+			OriginType:           originType(candidate),
+			Reason:               strings.Join(candidate.ReviewReasons, "; "),
+			ConnectionDetails:    connectionDetails(candidate),
+			Sources:              []string{sourceLabel(candidate)},
 		}
 		group := groups[name]
 		seen[key] = discoveryRef{category: name, index: len(group.Discoveries)}
@@ -251,7 +256,8 @@ func buildCategories(credentials []Credential, findings []Finding, correlations 
 }
 
 func classifyCandidate(candidate credentialanalysis.Candidate) (string, string) {
-	if candidate.Verification == credentialanalysis.Review || candidate.Encrypted || strings.TrimSpace(candidate.Value) == "" {
+	pairing := interpretCredential(candidate)
+	if pairing.Opaque || strings.TrimSpace(candidate.Value) == "" || (isUsernamePasswordType(candidate.CredentialType) && !pairing.Confirmed) {
 		return "Review", reviewSubcategory(candidate)
 	}
 	typ := strings.ToLower(strings.TrimSpace(candidate.CredentialType))
@@ -387,11 +393,14 @@ func connectionFieldLabel(key string) string {
 }
 
 func reviewSubcategory(candidate credentialanalysis.Candidate) string {
-	if candidate.Encrypted {
+	if isOpaqueCredential(candidate) {
 		return "Encrypted Credential Material"
 	}
 	if strings.TrimSpace(candidate.Value) == "" {
 		return "Identity or Reference Only"
+	}
+	if isUsernamePasswordType(candidate.CredentialType) && strings.TrimSpace(candidate.Identity) == "" {
+		return "Password Only"
 	}
 	if strings.EqualFold(candidate.CredentialType, "private_key") {
 		return "Unparsed Key Material"
@@ -623,19 +632,19 @@ func (m *model) evidenceText() string {
 	}
 	d := m.discoveries[m.selectedDisc]
 	var b strings.Builder
-	fmt.Fprintf(&b, "DISCOVERY\n%s\n\nMaterial family: %s\nMaterial type: %s\nVerification: %s\nConfidence: %s\n", d.Title, firstNonEmpty(d.MaterialFamily, "unknown"), firstNonEmpty(d.MaterialType, "unknown"), firstNonEmpty(d.Verification, "unknown"), firstNonEmpty(d.Confidence, "unknown"))
+	fmt.Fprintf(&b, "%s\n%s\n\nMaterial family: %s\nMaterial type: %s\nVerification: %s\nConfidence: %s\n", evidenceSection("DISCOVERY"), d.Title, firstNonEmpty(d.MaterialFamily, "unknown"), firstNonEmpty(d.MaterialType, "unknown"), firstNonEmpty(d.Verification, "unknown"), firstNonEmpty(d.Confidence, "unknown"))
 	if strings.EqualFold(d.MaterialFamily, "Credentials") && d.Value != "" {
 		if d.Identity != "" {
-			b.WriteString("\nUSERNAME + PASSWORD COMBINATION\n")
-			fmt.Fprintf(&b, "Username: %s\nPassword: %s\n", qualifiedIdentity(d), d.Value)
+			fmt.Fprintf(&b, "\n%s\n", evidenceSection("USERNAME + PASSWORD COMBINATION"))
+			fmt.Fprintf(&b, "%s %s\n%s %s\n", evidenceLabel("Username:"), evidenceValue(qualifiedIdentity(d)), evidencePasswordLabel("Password:"), evidenceValue(d.Value))
 		} else {
-			b.WriteString("\nPASSWORD MATERIAL\n")
+			fmt.Fprintf(&b, "\n%s\n", evidenceSection("PASSWORD MATERIAL"))
 			b.WriteString("Username: not safely established\n")
-			fmt.Fprintf(&b, "Password: %s\n", d.Value)
+			fmt.Fprintf(&b, "%s %s\n", evidencePasswordLabel("Password:"), evidenceValue(d.Value))
 		}
 		fmt.Fprintf(&b, "Credential kind: %s\nOrigin type: %s\n", firstNonEmpty(credentialKind(d.MaterialType), "credential material"), firstNonEmpty(d.OriginType, "Unknown Origin Credential"))
 	} else if strings.EqualFold(d.MaterialFamily, "Keys & Certificates") {
-		b.WriteString("\nKEY / CERTIFICATE MATERIAL\n")
+		fmt.Fprintf(&b, "\n%s\n", evidenceSection("KEY / CERTIFICATE MATERIAL"))
 		fmt.Fprintf(&b, "Key or certificate type: %s\n", firstNonEmpty(keyType(d), "validated material"))
 		if d.Identity != "" {
 			fmt.Fprintf(&b, "Associated identity: %s\n", qualifiedIdentity(d))
@@ -646,28 +655,36 @@ func (m *model) evidenceText() string {
 			b.WriteByte('\n')
 		}
 	} else if d.Value != "" {
-		b.WriteString("\nRECOVERED MATERIAL\n")
-		b.WriteString(d.Value)
+		fmt.Fprintf(&b, "\n%s\n", evidenceSection("RECOVERED MATERIAL"))
+		b.WriteString(evidenceValue(d.Value))
 		b.WriteByte('\n')
 	}
 	if d.OriginType != "" && !strings.EqualFold(d.MaterialFamily, "Credentials") {
 		fmt.Fprintf(&b, "\nOrigin type: %s\n", d.OriginType)
 	}
 	if len(d.ConnectionDetails) > 0 {
-		b.WriteString("\nCONNECTION STRING FIELDS\n")
+		fmt.Fprintf(&b, "\n%s\n", evidenceSection("CONNECTION STRING FIELDS"))
 		for _, detail := range d.ConnectionDetails {
 			fmt.Fprintf(&b, "%s: %s\n", detail.Label, detail.Value)
 		}
 	}
-	fmt.Fprintf(&b, "\nIDENTITY\n%s\n", firstNonEmpty(qualifiedIdentity(d), "not persisted"))
+	fmt.Fprintf(&b, "\n%s\n%s\n", evidenceSection("IDENTITY"), firstNonEmpty(qualifiedIdentity(d), "not persisted"))
 	if d.SourceContext != "" {
 		fmt.Fprintf(&b, "Source context: %s\n", d.SourceContext)
 	}
 	fmt.Fprintf(&b, "Host: %s\nShare: %s\nSource: %s\n", firstNonEmpty(d.Host, "not persisted"), firstNonEmpty(d.Share, "not persisted"), firstNonEmpty(d.Path, "not persisted"))
 	if len(d.Sources) > 0 {
-		b.WriteString("\nSOURCE OBSERVATIONS\n")
+		fmt.Fprintf(&b, "\n%s\n", evidenceSection("SOURCE OBSERVATIONS"))
 		b.WriteString(strings.Join(d.Sources, "\n"))
 		b.WriteByte('\n')
+	}
+	if d.PairingStatus != "" {
+		fmt.Fprintf(&b, "\n%s\n", evidenceSection("EVIDENCE QUALITY"))
+		fmt.Fprintf(&b, "Pairing: %s\n", evidenceStatus(d.PairingStatus))
+		fmt.Fprintf(&b, "Basis: %s\n", firstNonEmpty(d.PairingBasis, "not persisted"))
+		if strings.Contains(d.Verification, "Finder-derived") && d.OriginalVerification != "" {
+			fmt.Fprintf(&b, "Original persisted verification: %s\n", d.OriginalVerification)
+		}
 	}
 	if d.Reason != "" {
 		b.WriteString("\nClassification notes\n--------------------\n")
@@ -697,6 +714,30 @@ func (m *model) evidenceText() string {
 		}
 	}
 	return b.String()
+}
+
+func evidenceSection(title string) string {
+	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#60A5FA")).Render(title)
+}
+
+func evidenceLabel(label string) string {
+	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#B5C4D0")).Render(label)
+}
+
+func evidencePasswordLabel(label string) string {
+	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FB923C")).Render(label)
+}
+
+func evidenceValue(value string) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#EDF4F8")).Render(value)
+}
+
+func evidenceStatus(value string) string {
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("#FBBF24"))
+	if strings.Contains(strings.ToLower(value), "confirmed") {
+		style = style.Foreground(lipgloss.Color("#5BE49B"))
+	}
+	return style.Bold(true).Render(value)
 }
 
 func qualifiedIdentity(d discovery) string {

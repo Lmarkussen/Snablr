@@ -157,11 +157,11 @@ func TestFinderClassificationUsesPersistedMaterialType(t *testing.T) {
 	tests := []struct {
 		name, typ, value, wantCategory, wantSubcategory string
 	}{
-		{"password", "password", "Synthetic!", "Credentials", "Password Only"},
+		{"password", "password", "Synthetic!", "Review", "Password Only"},
 		{"hash", "nt_hash", "00112233445566778899aabbccddeeff", "Hashes & Captures", "NT Hashes"},
 		{"netntlm", "netntlmv2", "user::domain:challenge:proof:blob", "Hashes & Captures", "NetNTLMv2"},
 		{"key", "private_key", "-----BEGIN RSA PRIVATE KEY-----", "Keys & Certificates", "RSA Keys"},
-		{"review", "password", "${UNRESOLVED}", "Review", "Potential Credentials"},
+		{"review", "password", "${UNRESOLVED}", "Review", "Password Only"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -176,6 +176,88 @@ func TestFinderClassificationUsesPersistedMaterialType(t *testing.T) {
 				t.Fatalf("classification = %q / %q, want %q / %q", category, subcategory, test.wantCategory, test.wantSubcategory)
 			}
 		})
+	}
+}
+
+func TestFinderPairingPolicyRejectsOpaqueAndDerivesExplicitReviewPairs(t *testing.T) {
+	opaque := credentialanalysis.Candidate{
+		Verification:    credentialanalysis.Confirmed,
+		CredentialType:  "password",
+		Identity:        "opaque-user",
+		Value:           "BASE64-CIPHERTEXT-NOT-PLAINTEXT",
+		ValidationBasis: "windows_unattend_structured_password",
+		Path:            "negative/encrypted.xml",
+		Evidence:        []credentialanalysis.Evidence{{Path: "negative/encrypted.xml"}},
+	}
+	decision := interpretCredential(opaque)
+	if decision.Confirmed || !decision.Opaque || decision.Status != "Encrypted / opaque material" {
+		t.Fatalf("opaque decision = %#v", decision)
+	}
+	if category, _ := classifyCandidate(opaque); category != "Review" {
+		t.Fatalf("opaque material classified as %q", category)
+	}
+
+	for _, identity := range []string{"cfg-user", "json-b", "deploy-user"} {
+		candidate := credentialanalysis.Candidate{
+			Verification:   credentialanalysis.Review,
+			CredentialType: "secret",
+			Identity:       identity,
+			Value:          identity + "-secret",
+			Path:           "config/" + identity + ".json",
+			Evidence:       []credentialanalysis.Evidence{{Path: "config/" + identity + ".json"}},
+		}
+		decision := interpretCredential(candidate)
+		if !decision.Confirmed || decision.Status != "Confirmed pair (Finder-derived)" {
+			t.Fatalf("%s decision = %#v", identity, decision)
+		}
+		if category, _ := classifyCandidate(candidate); category != "Credentials" {
+			t.Fatalf("%s classified as %q", identity, category)
+		}
+	}
+}
+
+func TestFinderPairingPolicyKeepsPasswordOnlyMaterialInReview(t *testing.T) {
+	candidate := credentialanalysis.Candidate{
+		Verification:   credentialanalysis.Review,
+		CredentialType: "password",
+		Value:          "PasswordOnly!",
+		Path:           "scripts/example.ps1",
+		Evidence:       []credentialanalysis.Evidence{{Path: "scripts/example.ps1"}},
+	}
+	decision := interpretCredential(candidate)
+	if decision.Confirmed || decision.Status != "Password only / identity not established" {
+		t.Fatalf("password-only decision = %#v", decision)
+	}
+	if category, _ := classifyCandidate(candidate); category != "Review" {
+		t.Fatalf("password-only material classified as %q", category)
+	}
+}
+
+func TestFinderDerivedPairEvidenceShowsPairingBasis(t *testing.T) {
+	candidate := credentialanalysis.Candidate{
+		Verification:   credentialanalysis.Review,
+		CredentialType: "secret",
+		Identity:       "cfg-user",
+		Value:          "CfgSecret!",
+		Path:           "config/settings.ini",
+		Host:           "synthetic-host",
+		Share:          "share_iso",
+		Evidence:       []credentialanalysis.Evidence{{Path: "config/settings.ini"}},
+	}
+	categories := buildCategories([]Credential{{Candidate: candidate}}, nil, nil)
+	if len(categories) != 1 || categories[0].Name != "Credentials" {
+		t.Fatalf("derived pair categories = %#v", categories)
+	}
+	discovery := categories[0].Discoveries[0]
+	if discovery.PairingStatus != "Confirmed pair (Finder-derived)" || discovery.OriginalVerification != "review" {
+		t.Fatalf("derived discovery = %#v", discovery)
+	}
+	m := &model{scans: []Scan{{ID: "scan"}}, categories: categories, screen: screenDiscoveries, discoveries: categories[0].Discoveries, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(120, 40)
+	for _, want := range []string{"USERNAME + PASSWORD COMBINATION", "Username: cfg-user", "Password: CfgSecret!", "Pairing: Confirmed pair (Finder-derived)", "Original persisted verification: review"} {
+		if !strings.Contains(m.evidenceText(), want) {
+			t.Fatalf("derived pair evidence missing %q: %q", want, m.evidenceText())
+		}
 	}
 }
 

@@ -45,7 +45,7 @@ func NeedsContent(path, name string, size int64) bool {
 		ext = strings.ToLower(filepath.Ext(path))
 	}
 	switch ext {
-	case ".json", ".yaml", ".yml", ".xml", ".config", ".ini", ".env", ".conf", ".txt", ".md", ".ps1", ".py", ".sh", ".pem", ".key", ".ed25519", ".openssh":
+	case ".json", ".yaml", ".yml", ".xml", ".config", ".ini", ".env", ".conf", ".toml", ".properties", ".props", ".txt", ".md", ".ps1", ".py", ".sh", ".pem", ".key", ".ed25519", ".openssh":
 		return true
 	case ".jpg", ".jpeg", ".png", ".gif", ".zip", ".7z", ".gz", ".exe", ".dll", ".so", ".pdf", ".wim", ".dit":
 		return false
@@ -165,6 +165,10 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 		// XML parsing is intentionally attempted before the generic line
 		// harvester; well-formed XML has its own object/attribute scope.
 	}
+	if ext == ".toml" || ext == ".properties" || ext == ".props" {
+		harvestStructuredAssignments(textContent, add, ext == ".toml")
+		return out
+	}
 	if strings.TrimSpace(textContent) != "" {
 		if !structured {
 			harvestInlinePairs(textContent, add)
@@ -189,6 +193,64 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 		}
 	}
 	return out
+}
+
+// harvestStructuredAssignments handles formats whose credential scope is not
+// safely represented by the generic line harvester. TOML table headers and
+// Java-properties namespaces delimit independent records; keeping those
+// boundaries prevents a username in one object from pairing with a password
+// in another object.
+func harvestStructuredAssignments(text string, add func(Candidate), toml bool) {
+	flush := func(fields map[string]string) {
+		if len(fields) != 0 {
+			harvestFields(fields, add, "structured configuration scope")
+		}
+	}
+	fields := make(map[string]string)
+	propertyScopes := make(map[string]map[string]string)
+	flushProperties := func() {
+		for _, scoped := range propertyScopes {
+			flush(scoped)
+		}
+	}
+	for _, raw := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if toml && strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			flush(fields)
+			fields = make(map[string]string)
+			continue
+		}
+		match := assignmentPattern.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
+		rawKey := strings.TrimSpace(match[1])
+		key := normalizeKey(rawKey)
+		value := strings.TrimSpace(firstNonEmpty(match[2], match[3]))
+		if value == "" {
+			continue
+		}
+		if !toml {
+			scope := ""
+			if dot := strings.LastIndex(rawKey, "."); dot > 0 {
+				scope, key = normalizeKey(rawKey[:dot]), normalizeKey(rawKey[dot+1:])
+			}
+			if propertyScopes[scope] == nil {
+				propertyScopes[scope] = make(map[string]string)
+			}
+			propertyScopes[scope][key] = value
+			continue
+		}
+		fields[key] = value
+	}
+	if toml {
+		flush(fields)
+	} else {
+		flushProperties()
+	}
 }
 
 // delimitedRecordText renders delimited text as sectioned records using the

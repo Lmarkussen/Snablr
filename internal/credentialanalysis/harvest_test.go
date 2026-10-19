@@ -101,6 +101,56 @@ func TestHarvestFormatsAndSemanticNoise(t *testing.T) {
 	}
 }
 
+func TestHarvestStructuredConfigurationScopes(t *testing.T) {
+	tests := []struct {
+		name, path, content string
+		pairs               [][2]string
+	}{
+		{
+			name: "toml array tables", path: "services.toml",
+			content: "[[services]]\nusername = \"Notus481\"\npassword = \"TOML-A!\"\n\n[[services]]\nusername = \"Komtek72\"\npassword = \"TOML-B!\"\n",
+			pairs:   [][2]string{{"Notus481", "TOML-A!"}, {"Komtek72", "TOML-B!"}},
+		},
+		{
+			name: "properties namespaces", path: "application.properties",
+			content: "alpha.username=svc-alpha\nalpha.password=Alpha-Pass!\nbeta.username=svc-beta\nbeta.password=Beta-Pass!\n",
+			pairs:   [][2]string{{"svc-alpha", "Alpha-Pass!"}, {"svc-beta", "Beta-Pass!"}},
+		},
+	}
+	for _, test := range tests {
+		got := Harvest(HarvestInput{Content: []byte(test.content), Path: test.path})
+		for _, pair := range test.pairs {
+			if !hasIdentityValue(got, Confirmed, pair[0], pair[1]) {
+				t.Errorf("%s: missing pair %q/%q: %#v", test.name, pair[0], pair[1], got)
+			}
+		}
+	}
+}
+
+func TestHarvestStructuredConfigurationDoesNotCrossScopes(t *testing.T) {
+	content := "[[accounts]]\nusername = \"alice\"\npassword = \"Alice-Pass!\"\n\n[[accounts]]\nusername = \"bob\"\npassword = \"Bob-Pass!\"\n"
+	got := Harvest(HarvestInput{Content: []byte(content), Path: "accounts.toml"})
+	if !hasIdentityValue(got, Confirmed, "alice", "Alice-Pass!") || !hasIdentityValue(got, Confirmed, "bob", "Bob-Pass!") {
+		t.Fatalf("expected scoped TOML pairs: %#v", got)
+	}
+	for _, candidate := range got {
+		if candidate.Verification == Confirmed && ((candidate.Identity == "alice" && candidate.Value == "Bob-Pass!") || (candidate.Identity == "bob" && candidate.Value == "Alice-Pass!")) {
+			t.Fatalf("cross-scope TOML pair created: %#v", candidate)
+		}
+	}
+}
+
+func TestHarvestStructuredConfigurationPreservesUnicodeAndRejectsPlaceholders(t *testing.T) {
+	content := "norsk.username=bruker-æøå\nnorsk.password=Passord-æøå!\nignored.username=%APP_USER%\nignored.password=${APP_PASSWORD}\n"
+	got := Harvest(HarvestInput{Content: []byte(content), Path: "norsk.properties"})
+	if !hasIdentityValue(got, Confirmed, "bruker-æøå", "Passord-æøå!") {
+		t.Fatalf("unicode properties pair missing: %#v", got)
+	}
+	if hasIdentityValue(got, Confirmed, "%APP_USER%", "${APP_PASSWORD}") {
+		t.Fatal("placeholder properties pair was confirmed")
+	}
+}
+
 func TestHarvestPreservesAPIFieldTypesAndEncryptedKeys(t *testing.T) {
 	got := Harvest(HarvestInput{Content: []byte(`{"api_key":"key-value","client_secret":"client-value","bearer_token":"bearer-value","access_key":"access-value","secret_key":"secret-value","token":"generic-value"}`), Path: "api.json"})
 	want := map[string]string{

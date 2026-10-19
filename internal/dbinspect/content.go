@@ -128,6 +128,106 @@ func inspectINISections(text string, seen map[string]struct{}) []Match {
 	return matches
 }
 
+func inspectScopedCredentialFields(text string, seen map[string]struct{}) []Match {
+	type scopeValues struct {
+		lines []string
+		user  string
+		pass  string
+	}
+	scopes := make(map[string]*scopeValues)
+	for _, rawLine := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(rawLine)
+		key, value, ok := splitKeyValue(line)
+		if !ok {
+			continue
+		}
+		normalized := strings.ToLower(strings.TrimSpace(key))
+		kind, scope, ok := scopedCredentialField(normalized)
+		if !ok {
+			continue
+		}
+		entry := scopes[scope]
+		if entry == nil {
+			entry = &scopeValues{}
+			scopes[scope] = entry
+		}
+		entry.lines = append(entry.lines, line)
+		value = cleanConnectionValue(value)
+		switch kind {
+		case "user":
+			entry.user = meaningfulConnectionCredentialValue(value)
+		case "password":
+			entry.pass = meaningfulConnectionCredentialValue(value)
+		}
+	}
+
+	matches := make([]Match, 0, len(scopes))
+	for scope, values := range scopes {
+		if values.user == "" || values.pass == "" {
+			continue
+		}
+		canonical := "driver=postgresql;database=" + scope + ";user=" + values.user + ";password=" + values.pass
+		key := "dbinspect.access.connection_string::" + strings.ToLower(canonical)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		matches = append(matches, Match{
+			ID:                  "dbinspect.access.connection_string",
+			Name:                "Validated Database Connection Details",
+			Description:         "Validated database configuration fields with authentication material were parsed within one datasource scope.",
+			RuleType:            "content",
+			SignalType:          "validated",
+			Severity:            "high",
+			Confidence:          "high",
+			Category:            "database-access",
+			Match:               scope,
+			MatchedText:         canonical,
+			MatchedTextRedacted: redactText(canonical),
+			Snippet:             flatten(strings.Join(values.lines, " "), 160),
+			Context:             limitRunes(strings.Join(values.lines, "\n"), 320),
+			ContextRedacted:     limitRunes(redactText(strings.Join(values.lines, "\n")), 320),
+			Explanation:         "This finding comes from explicit username and password fields within one database datasource namespace.",
+			Remediation:         "Remove embedded database credentials from shared configuration files and move access details into managed secrets.",
+			Tags:                []string{"database", "db:source:config", "db:type:config-credential", "db:ecosystem:postgresql"},
+		})
+	}
+	return matches
+}
+
+func scopedCredentialField(key string) (kind, scope string, ok bool) {
+	key = strings.TrimSpace(key)
+	for _, suffix := range []string{".username", ".userid", ".user", ".uid", ".password", ".pwd"} {
+		if strings.HasSuffix(key, suffix) && len(key) > len(suffix) {
+			scope = strings.TrimSuffix(key, suffix)
+			if !databaseCredentialScope(scope) {
+				return "", "", false
+			}
+			if strings.Contains(suffix, "pass") || suffix == ".pwd" {
+				return "password", scope, true
+			}
+			return "user", scope, true
+		}
+	}
+	for _, suffix := range []string{"_username", "_userid", "_user", "_uid", "_password", "_pwd"} {
+		if strings.HasSuffix(key, suffix) && len(key) > len(suffix) {
+			scope = strings.TrimSuffix(key, suffix)
+			if !databaseCredentialScope(scope) {
+				return "", "", false
+			}
+			if strings.Contains(suffix, "pass") || suffix == "_pwd" {
+				return "password", scope, true
+			}
+			return "user", scope, true
+		}
+	}
+	return "", "", false
+}
+
+func databaseCredentialScope(scope string) bool {
+	return strings.Contains(scope, "database") || strings.Contains(scope, "datasource") || strings.HasPrefix(scope, "db") || strings.Contains(scope, "connection")
+}
+
 func inspectINISection(section string, values map[string]string) (stringObservation, bool) {
 	if len(values) == 0 {
 		return stringObservation{}, false

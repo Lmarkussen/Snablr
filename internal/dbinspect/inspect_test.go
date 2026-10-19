@@ -3,6 +3,7 @@ package dbinspect
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -161,6 +162,33 @@ func TestInspectorConnectionCredentialNegatives(t *testing.T) {
 			if match.ID == "dbinspect.access.connection_string" {
 				t.Fatalf("unexpected credential match for %q: %#v", text, match)
 			}
+		}
+	}
+}
+
+func TestInspectorScopedDatabaseFieldsPairWithinNamespace(t *testing.T) {
+	candidate := Candidate{Name: "database.properties", Extension: ".properties", FilePath: "database/database.properties"}
+	matches := New().InspectContent(candidate, []byte("datasource.primary.username=svc-primary\ndatasource.primary.password=R4C4-Primary!\ndatasource.backup.username=svc-backup\ndatasource.backup.password=R4C4-Backup!\n"))
+	count := 0
+	for _, match := range matches {
+		if match.ID == "dbinspect.access.connection_string" {
+			count++
+			if !strings.Contains(match.MatchedText, "svc-") || !strings.Contains(match.MatchedText, "password=") {
+				t.Fatalf("scoped match lost canonical values: %#v", match)
+			}
+		}
+	}
+	if count != 2 {
+		t.Fatalf("expected two scoped database matches, got %d (%#v)", count, matches)
+	}
+}
+
+func TestInspectorScopedDatabaseFieldsRejectUnrelatedSecrets(t *testing.T) {
+	candidate := Candidate{Name: "database.env", Extension: ".env", FilePath: "database/database.env"}
+	matches := New().InspectContent(candidate, []byte("API_USER=svc-api\nAPI_SECRET=R4C4-Token!\nusername=svc-unrelated\npassword=R4C4-Password!\n"))
+	for _, match := range matches {
+		if match.ID == "dbinspect.access.connection_string" {
+			t.Fatalf("unrelated fields were paired: %#v", match)
 		}
 	}
 }

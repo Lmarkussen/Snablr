@@ -57,6 +57,21 @@ func TestConnectionPairPostgresKeywordValue(t *testing.T) {
 	}
 }
 
+func TestConnectionPairNorwegianAliasesPreserveUnicode(t *testing.T) {
+	for _, value := range []string{
+		"Server=norsk-1;Database=app;brukernavn=bruker-ø;passord=Passord-å!;",
+		"host='norsk db' dbname=app bruker='pålogging-æ' passord='Norsk øå!'",
+	} {
+		pair, ok := deriveConnectionPair(connectionCandidate(value))
+		if !ok || pair.Username == "" || pair.Password == "" {
+			t.Fatalf("Norwegian connection pair not recovered: %#v, ok=%v", pair, ok)
+		}
+		if !strings.Contains(pair.Username+pair.Password, "ø") && !strings.Contains(pair.Username+pair.Password, "æ") && !strings.Contains(pair.Username+pair.Password, "å") {
+			t.Fatalf("Unicode values were not preserved: %#v", pair)
+		}
+	}
+}
+
 func TestConnectionPairRejectsAmbiguousOrNonPasswordAuthentication(t *testing.T) {
 	for _, value := range []string{
 		"Server=sql;Integrated Security=true;User ID=ignored;Password=ignored!;",

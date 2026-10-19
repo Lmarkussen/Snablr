@@ -1,8 +1,9 @@
 // Command snablr-upload-preflight creates a local-only, write-free fixture
-// upload plan. It has no SMB client and cannot upload or scan.
+// upload plan. Its optional execution mode is explicit create-only upload.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 
 	"snablr/internal/fixtureupload"
+	"snablr/internal/smb"
 )
 
 type manifest struct {
@@ -40,12 +42,17 @@ func run() error {
 	share := fs.String("share", "", "expected SMB share")
 	destination := fs.String("destination-root", "", "proposed dedicated remote root")
 	outputPath := fs.String("output", "", "local JSON output path")
-	dryRun := fs.Bool("dry-run", false, "required; this command cannot write")
+	dryRun := fs.Bool("dry-run", false, "plan only; do not connect or write")
+	execute := fs.Bool("execute-create-only", false, "explicitly authorize the create-only upload")
+	verifyRemote := fs.Bool("verify-remote", false, "read and checksum mapped remote files; never writes")
+	username := fs.String("username", "", "SMB username (execute mode only)")
+	domain := fs.String("domain", "", "SMB domain (execute mode only)")
+	passwordEnv := fs.String("password-env", "", "environment variable containing the temporary SMB password")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
 	}
-	if !*dryRun {
-		return errors.New("refusing to run without --dry-run; writes are not implemented")
+	if !*dryRun && !*execute && !*verifyRemote {
+		return errors.New("refusing to run without --dry-run, --verify-remote, or --execute-create-only")
 	}
 	if *source == "" || *manifestPath == "" || *server == "" || *share == "" || *destination == "" || *outputPath == "" {
 		return errors.New("source-root, manifest, server, share, destination-root, and output are required")
@@ -79,5 +86,65 @@ func run() error {
 		return fmt.Errorf("write local plan: %w", err)
 	}
 	fmt.Printf("dry-run mappings=%d destination=%s output=%s\n", len(plan.Mappings), plan.DestinationRoot, *outputPath)
+	if !*execute {
+		if !*verifyRemote {
+			return nil
+		}
+	}
+	if *verifyRemote && !*execute {
+		if *username == "" || *domain == "" || *passwordEnv == "" {
+			return errors.New("verify-remote requires username, domain, and password-env")
+		}
+		password := os.Getenv(*passwordEnv)
+		if password == "" {
+			return fmt.Errorf("password environment variable %q is empty", *passwordEnv)
+		}
+		client := smb.NewClient()
+		if err := client.Connect(*server, *domain+`\`+*username, password); err != nil {
+			return fmt.Errorf("connect for remote verification: %w", err)
+		}
+		defer client.Close()
+		result, err := fixtureupload.VerifyRemote(context.Background(), client, plan)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("remote verification complete: checked=%d mismatches=%d\n", result.Checked, len(result.Mismatches))
+		return nil
+	}
+	if *username == "" || *domain == "" || *passwordEnv == "" {
+		return errors.New("execute-create-only requires username, domain, and password-env")
+	}
+	password := os.Getenv(*passwordEnv)
+	if password == "" {
+		return fmt.Errorf("password environment variable %q is empty", *passwordEnv)
+	}
+	client := smb.NewClient()
+	if err := client.Connect(*server, *domain+`\`+*username, password); err != nil {
+		return fmt.Errorf("connect for create-only preflight: %w", err)
+	}
+	defer client.Close()
+	probe := smbProbe{client: client, server: *server, share: *share}
+	if _, err := fixtureupload.Preflight(context.Background(), probe, plan); err != nil {
+		return fmt.Errorf("create-only preflight: %w", err)
+	}
+	result, err := fixtureupload.UploadCreateOnly(context.Background(), client, plan, fixtureupload.CreateAuthorization{ApprovedRoot: *destination, AllowCreate: true})
+	if err != nil {
+		return fmt.Errorf("create-only upload stopped after %d files: %w", len(result.CreatedFiles), err)
+	}
+	fmt.Printf("create-only upload complete: directories=%d files=%d\n", len(result.CreatedDirectories), len(result.CreatedFiles))
 	return nil
+}
+
+type smbProbe struct {
+	client *smb.Client
+	server string
+	share  string
+}
+
+func (p smbProbe) Identity(context.Context) (fixtureupload.RemoteIdentity, error) {
+	return fixtureupload.RemoteIdentity{Server: p.server, Share: p.share}, nil
+}
+
+func (p smbProbe) Exists(_ context.Context, remotePath string) (bool, error) {
+	return p.client.Exists(p.share, remotePath)
 }

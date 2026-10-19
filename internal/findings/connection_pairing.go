@@ -77,9 +77,9 @@ func parseDelimitedConnection(value string) (connectionPair, bool) {
 			continue
 		}
 		switch key {
-		case "user id", "uid", "username", "user":
+		case "user id", "uid", "username", "user", "brukernavn", "bruker", "brukerkonto", "påloggingsnavn":
 			usernames = appendUniqueString(usernames, fieldValue)
-		case "password", "pwd":
+		case "password", "pwd", "passord":
 			passwords = appendUniqueString(passwords, fieldValue)
 		case "provider", "provider name", "driver":
 			pair.Provider = fieldValue
@@ -117,9 +117,9 @@ func parseKeywordConnection(value string) (connectionPair, bool) {
 		}
 		fieldValue = strings.Trim(fieldValue, `"'`)
 		switch strings.ToLower(strings.TrimSpace(key)) {
-		case "user", "username", "userid", "uid":
+		case "user", "username", "userid", "uid", "brukernavn", "bruker", "brukerkonto", "påloggingsnavn":
 			username = fieldValue
-		case "password", "pwd":
+		case "password", "pwd", "passord":
 			password = fieldValue
 		case "host", "server":
 			pair.Server = fieldValue

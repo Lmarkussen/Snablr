@@ -18,17 +18,26 @@ const (
 var bannerGradient = []int{157, 120, 84, 78, 42, 36}
 
 func PrintBanner(w io.Writer) {
+	colored := false
+	if file, ok := w.(*os.File); ok {
+		info, err := file.Stat()
+		colored = err == nil && info.Mode()&os.ModeCharDevice != 0 && strings.TrimSpace(os.Getenv("TERM")) != "dumb" && os.Getenv("NO_COLOR") == ""
+	}
+	PrintBannerWithColor(w, colored)
+}
+
+func PrintBannerWithColor(w io.Writer, colored bool) {
 	banner, err := LoadBanner("")
 	if err != nil {
-		printFallbackBanner(w)
+		printFallbackBanner(w, colored)
 		return
 	}
 
 	for i, line := range strings.Split(strings.TrimRight(banner, "\n"), "\n") {
-		fmt.Fprintf(w, "%s%s%s\n", ansi256(bannerGradient[i%len(bannerGradient)]), line, colorReset)
+		fmt.Fprintf(w, "%s%s%s\n", colorPrefix(colored, bannerGradient[i%len(bannerGradient)]), line, colorSuffix(colored))
 	}
-	fmt.Fprintf(w, "%sVersion : %s%s\n", ansi256(bannerGradient[0]), version.Short(), colorReset)
-	fmt.Fprintf(w, "\n%sSnablr - SMB Share Triage Tool (%s)%s\n\n", colorBright, version.Short(), colorReset)
+	fmt.Fprintf(w, "%sVersion : %s%s\n", colorPrefix(colored, bannerGradient[0]), version.Short(), colorSuffix(colored))
+	fmt.Fprintf(w, "\n%sSnablr - SMB Share Triage Tool (%s)%s\n\n", colorPrefix(colored, 97), version.Short(), colorSuffix(colored))
 }
 
 func LoadBanner(path string) (string, error) {
@@ -72,7 +81,7 @@ func resolveBannerPath(path string) string {
 	return candidates[0]
 }
 
-func printFallbackBanner(w io.Writer) {
+func printFallbackBanner(w io.Writer, colored bool) {
 	fallback := []string{
 		"  _____             __    __    ",
 		" / ___/____  ____ _/ /_  / /____",
@@ -82,10 +91,24 @@ func printFallbackBanner(w io.Writer) {
 	}
 
 	for i, line := range fallback {
-		fmt.Fprintf(w, "%s%s%s\n", ansi256(bannerGradient[i%len(bannerGradient)]), line, colorReset)
+		fmt.Fprintf(w, "%s%s%s\n", colorPrefix(colored, bannerGradient[i%len(bannerGradient)]), line, colorSuffix(colored))
 	}
-	fmt.Fprintf(w, "%sVersion : %s%s\n", ansi256(bannerGradient[0]), version.Short(), colorReset)
-	fmt.Fprintf(w, "\n%sSnablr - SMB Share Triage Tool (%s)%s\n\n", colorBright, version.Short(), colorReset)
+	fmt.Fprintf(w, "%sVersion : %s%s\n", colorPrefix(colored, bannerGradient[0]), version.Short(), colorSuffix(colored))
+	fmt.Fprintf(w, "\n%sSnablr - SMB Share Triage Tool (%s)%s\n\n", colorPrefix(colored, 97), version.Short(), colorSuffix(colored))
+}
+
+func colorPrefix(enabled bool, code int) string {
+	if !enabled {
+		return ""
+	}
+	return ansi256(code)
+}
+
+func colorSuffix(enabled bool) string {
+	if !enabled {
+		return ""
+	}
+	return colorReset
 }
 
 func ansi256(code int) string {

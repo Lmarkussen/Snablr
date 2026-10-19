@@ -17,7 +17,7 @@ import (
 
 func main() {
 	if !isListSharesInvocation(os.Args[1:]) {
-		ui.PrintBanner(os.Stdout)
+		ui.PrintBannerWithColor(os.Stdout, terminalColorEnabled(os.Stdout) && !hasNoColor(os.Args[1:]))
 	}
 
 	if len(os.Args) < 2 {
@@ -39,6 +39,8 @@ func main() {
 		err = runEval(os.Args[2:])
 	case "rules":
 		err = runRules(os.Args[2:])
+	case "dev":
+		err = runDev(os.Args[2:])
 	case "version":
 		printVersion()
 		return
@@ -84,7 +86,37 @@ func terminalColorEnabled(file *os.File) bool {
 		return false
 	}
 	info, err := file.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0 && strings.TrimSpace(os.Getenv("TERM")) != "dumb"
+	return err == nil && info.Mode()&os.ModeCharDevice != 0 && strings.TrimSpace(os.Getenv("TERM")) != "dumb" && os.Getenv("NO_COLOR") == ""
+}
+
+func hasNoColor(args []string) bool {
+	for _, arg := range args {
+		if arg == "--no-color" || arg == "--no-color=true" {
+			return true
+		}
+	}
+	return false
+}
+
+func runDev(args []string) error {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
+		printDeveloperUsage()
+		return nil
+	}
+	switch args[0] {
+	case "benchmark":
+		return runBenchmark(args[1:])
+	case "eval":
+		return runEval(args[1:])
+	case "rules":
+		if len(args) == 1 || args[1] == "-h" || args[1] == "--help" || args[1] == "help" {
+			printDeveloperRulesUsage()
+			return nil
+		}
+		return runRules(args[1:])
+	default:
+		return fmt.Errorf("unknown dev command %q", args[0])
+	}
 }
 
 func runScan(args []string) error {
@@ -145,6 +177,7 @@ func runScan(args []string) error {
 	outputFormat := fs.String("output-format", "", "Output format: console, json, html, all, or a comma-separated combination like html,json")
 	noTUI := fs.Bool("no-tui", false, "Disable the Bubble Tea live console UI and use plain stdout console output")
 	noColor := fs.Bool("no-color", false, "Disable ANSI colors while preserving status text")
+	helpAdvanced := fs.Bool("help-advanced", false, "Show the complete advanced scan flag reference and exit")
 	jsonOut := fs.String("json-out", "", "Path to JSON output file")
 	htmlOut := fs.String("html-out", "", "Path to HTML report file")
 	csvOut := fs.String("csv-out", "", "Path to CSV findings export file")
@@ -187,6 +220,10 @@ func runScan(args []string) error {
 			return nil
 		}
 		return err
+	}
+	if *helpAdvanced {
+		printScanAdvancedUsage(fs)
+		return nil
 	}
 	htmlOutSet := false
 	fs.Visit(func(flag *flag.Flag) {
@@ -543,7 +580,11 @@ func printHelp(args []string) {
 
 	switch args[0] {
 	case "scan":
-		printScanUsage(flag.NewFlagSet("scan", flag.ContinueOnError))
+		helpArgs := append([]string{}, args[1:]...)
+		if len(helpArgs) == 0 {
+			helpArgs = []string{"--help"}
+		}
+		_ = runScan(helpArgs)
 	case "discover":
 		printDiscoverUsage(flag.NewFlagSet("discover", flag.ContinueOnError))
 	case "rules":
@@ -556,103 +597,225 @@ func printHelp(args []string) {
 		printEvalUsage(flag.NewFlagSet("eval", flag.ContinueOnError))
 	case "version":
 		printVersionUsage()
+	case "dev":
+		printDeveloperUsage()
 	default:
 		printUsage()
 	}
 }
 
 func printUsage() {
-	fmt.Printf("Snablr %s\n\n", version.Short())
-	fmt.Println("Snablr helps authorized operators discover SMB-accessible files, apply YAML rules, and review findings in console, JSON, and HTML formats.")
-	fmt.Println()
+	section("Snablr", "SMB Share Triage Tool")
+	fmt.Printf("Build: %s\n\n", version.String())
 	fmt.Println("Usage:")
 	fmt.Println("  snablr <command> [options]")
 	fmt.Println()
-	fmt.Println("Commands:")
-	fmt.Println("  scan       Run SMB share triage with YAML-driven rule scanning")
-	fmt.Println("  discover   Resolve targets through CLI input, LDAP, DFS, and reachability checks")
-	fmt.Println("  rules      List, validate, inspect, and test rule files")
-	fmt.Println("  diff       Compare two Snablr JSON result files")
-	fmt.Println("  benchmark  Measure scan performance and finding volume on a local dataset")
-	fmt.Println("  eval       Compare findings against a labeled local dataset")
-	fmt.Println("  version    Show version, commit, and build metadata")
-	fmt.Println("  help       Show top-level or command-specific help")
+	section("Operator commands", "")
+	commandLine("scan", "Scan SMB shares for evidence and credentials")
+	commandLine("discover", "Discover targets, shares, and reachability")
+	commandLine("diff", "Compare two JSON scan results")
+	commandLine("version", "Show version, commit, and build metadata")
+	commandLine("help", "Show command-specific help")
 	fmt.Println()
-	fmt.Println("Good First Steps:")
-	fmt.Println("  1. snablr version")
-	fmt.Println("  2. snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>' --output-format all --json-out results.json --html-out report.html")
-	fmt.Println("  3. open report.html in a browser")
+	section("Developer tools", "")
+	commandLine("dev", "Run benchmarks, evaluations, and rule tooling")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>'")
-	fmt.Println("  snablr scan --config configs/config.yaml")
-	fmt.Println("  snablr scan --username USER --password '<password>'")
-	fmt.Println("  snablr scan --output-format all --json-out results.json --html-out report.html")
-	fmt.Println("  snablr discover --discover-dfs --username USER --password '<password>'")
-	fmt.Println("  snablr rules test --rule configs/rules/default/content.yml --input testdata/rules/fixtures/content/password-assignment.conf --verbose")
-	fmt.Println("  snablr diff --old results-old.json --new results-new.json")
-	fmt.Println("  snablr benchmark --config examples/eval/benchmark.yaml --out benchmark.json")
-	fmt.Println("  snablr eval --dataset examples/eval/dataset --labels examples/eval/labels.yaml --out eval.json")
+	fmt.Println("  snablr scan --targets HOST --username USER --password '<password>'")
+	fmt.Println("  snablr discover --targets HOST --username USER --password '<password>'")
+	fmt.Println("  snablr diff --old previous.json --new current.json")
 	fmt.Println()
-	fmt.Println("Authorized use only. Run Snablr only against systems and data you are explicitly permitted to assess.")
+	fmt.Println("Run `snablr scan --help` for common scan options.")
+	fmt.Println("Run `snablr scan --help-advanced` for the complete scan reference.")
+	fmt.Println("Run `snablr dev --help` for developer tools.")
 	fmt.Println()
-	fmt.Println("Use `snablr <command> --help` for command-specific flags and examples.")
+	fmt.Println("Authorized use only. Assess systems and data only with explicit permission.")
 }
 
 func printScanUsage(fs *flag.FlagSet) {
-	fmt.Println("Usage:")
-	fmt.Println("  snablr scan [options]")
+	section("Usage", "snablr scan [options]")
+	printHelpParagraph("Scans authorized SMB targets, applies YAML rules, and writes selected reports.")
+	printHelpParagraph("Use --list-shares to authenticate and enumerate readable shares without scanning files.")
 	fmt.Println()
-	fmt.Println("Description:")
-	fmt.Println("  Runs target discovery, reachability testing, planning, SMB enumeration, rule-based scanning,")
-	fmt.Println("  and report generation.")
-	fmt.Println("  --list-shares authenticates normally, lists only readable shares for that identity, and exits without scanning files.")
-	fmt.Println("  Required credentials for LDAP/DFS discovery are validated before the live TUI starts.")
-	fmt.Println("  Discovery-based scans show target discovery and reachability progress before the TUI opens.")
+	for _, group := range scanHelpGroups(false) {
+		printFlagGroup(fs, group)
+	}
+	fmt.Println("Examples:")
+	printHelpParagraph("  snablr scan --targets HOST --username USER --password '<password>'")
+	printHelpParagraph("  snablr scan --targets HOST --share Finance --path Reports/")
+	printHelpParagraph("  snablr scan --targets HOST --username USER --password '<password>' --force-rescan")
 	fmt.Println()
-	fmt.Println("When to use it:")
-	fmt.Println("  - direct target scan: use --targets or --targets-file")
-	fmt.Println("  - domain-aware scan: omit targets and provide credentials so LDAP discovery can run")
-	fmt.Println("  - SMB auth: select password, ntlm-hash, or kerberos with --smb-auth; LDAP discovery auth is selected separately with --auth")
+	printHelpParagraph("Run `snablr scan --help-advanced` for all flags, including Kerberos, diagnostics, and WIM controls.")
+	printHelpParagraph("Ctrl-C marks SQLite state interrupted and finalizes explicitly selected reports.")
+}
+
+type scanHelpGroup struct {
+	Title string
+	Flags []string
+}
+
+func scanHelpGroups(advanced bool) []scanHelpGroup {
+	groups := []scanHelpGroup{
+		{Title: "Target and scope", Flags: []string{"targets", "targets-file", "share", "path", "exclude-share", "exclude-path"}},
+		{Title: "Authentication", Flags: []string{"username", "password", "user", "pass", "auth", "smb-auth", "domain", "dc", "no-ldap", "list-shares"}},
+		{Title: "Persistence and execution", Flags: []string{"resume", "force-rescan", "sqlite-state-file", "worker-count", "max-scan-time"}},
+		{Title: "Output", Flags: []string{"output-format", "json-out", "html-out", "csv-out", "md-out", "creds-out", "scanned-targets-out", "no-tui", "no-color"}},
+	}
+	if !advanced {
+		return groups
+	}
+	return append(groups,
+		scanHelpGroup{Title: "Discovery and scheduling", Flags: []string{"config", "profile", "max-depth", "max-file-size", "rules-directory", "base-dn", "discover-dfs", "prioritize-ad-shares", "only-ad-shares", "skip-reachability-check", "reachability-timeout"}},
+		scanHelpGroup{Title: "Authentication overrides", Flags: []string{"nt-hash", "kerberos-ccache", "smb-hostname", "smb-spn", "ldap-spn"}},
+		scanHelpGroup{Title: "Comparison and diagnostics", Flags: []string{"baseline", "seed-manifest", "validation-mode", "report-backup-artifacts", "log-level"}},
+		scanHelpGroup{Title: "WIM inspection", Flags: []string{"wim-enabled", "wim-auto-max-size", "wim-allow-large", "wim-max-size", "wim-max-members", "wim-max-member-bytes", "wim-max-total-bytes", "wim-max-binary-artifacts", "wim-max-binary-bytes", "wim-max-sam-bytes", "wim-max-system-bytes", "wim-max-security-bytes", "wim-max-ntds-bytes", "wim-max-images"}},
+	)
+}
+
+func printFlagGroup(fs *flag.FlagSet, group scanHelpGroup) {
+	section(group.Title, "")
+	for _, name := range group.Flags {
+		f := fs.Lookup(name)
+		if f == nil {
+			continue
+		}
+		valueName, usage := flag.UnquoteUsage(f)
+		label := "--" + name
+		if valueName != "" {
+			label += " " + valueName
+		}
+		printHelpLine(label, usage, 30)
+	}
+	fmt.Println()
+}
+
+func printScanAdvancedUsage(fs *flag.FlagSet) {
+	section("Usage", "snablr scan --help-advanced")
+	fmt.Println("Complete scan flag reference. Defaults and scanner behavior are unchanged.")
+	fmt.Println()
+	for _, group := range scanHelpGroups(true) {
+		printFlagGroup(fs, group)
+	}
+	fmt.Println("Ctrl-C marks SQLite state interrupted and finalizes explicitly selected reports.")
+}
+
+func printDeveloperUsage() {
+	section("Usage", "snablr dev <command> [options]")
+	fmt.Println("Developer and rule-author tooling built on the existing Snablr implementations.")
+	fmt.Println()
+	section("Commands", "")
+	commandLine("benchmark", "Measure scan performance on a local dataset")
+	commandLine("eval", "Compare findings against labeled local data")
+	commandLine("rules", "List, validate, inspect, and test rules")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>'")
-	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth ntlm-hash --username USER --nt-hash '<32-hex-nt-hash>'")
-	fmt.Println("  KRB5CCNAME=/path/to/ccache snablr scan --targets FILE01.TEST.LOCAL --no-ldap --smb-auth kerberos --smb-hostname FILE01.TEST.LOCAL")
-	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --no-ldap --smb-auth password --username USER --password '<password>' --list-shares")
-	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --no-ldap --smb-auth ntlm-hash --username USER --nt-hash '<32-hex-nt-hash>' --list-shares")
-	fmt.Println("  KRB5CCNAME=/path/to/ccache snablr scan --targets FILE01.TEST.LOCAL --no-ldap --smb-auth kerberos --smb-hostname FILE01.TEST.LOCAL --list-shares")
-	fmt.Println("  snablr scan --targets FILE01.TEST.LOCAL --smb-auth password --username USER --password '<password>' --force-rescan")
-	fmt.Println("  snablr scan --username USER --password '<password>'")
-	fmt.Println("  snablr scan --domain TEST.LOCAL --dc DIRECTORY01.TEST.LOCAL --username USER --password '<password>'")
-	fmt.Println("  KRB5CCNAME=/path/to/ccache snablr scan --auth kerberos --domain TEST.LOCAL --dc DIRECTORY01.TEST.LOCAL --smb-auth kerberos --smb-hostname FILE01.TEST.LOCAL")
-	fmt.Println("  snablr scan --output-format all --json-out results.json --html-out report.html")
-	fmt.Println("  snablr scan --share Finance --path Reports/ --max-depth 4")
-	fmt.Println("  snablr scan --baseline previous-results.json --output-format all --json-out results.json --html-out report.html")
-	fmt.Println("  snablr scan --wim-allow-large --wim-max-size 536870912")
-	fmt.Println("  snablr scan --output-format html --html-out report.html --report-backup-artifacts")
+	fmt.Println("  snablr dev benchmark --config examples/eval/benchmark.yaml --out benchmark.json")
+	fmt.Println("  snablr dev eval --dataset examples/eval/dataset --labels examples/eval/labels.yaml --out eval.json")
+	fmt.Println("  snablr dev rules test --rule configs/rules/default/content.yml --input testdata/rules/fixtures/content/password-assignment.conf")
 	fmt.Println()
-	fmt.Println("Output formats:")
-	fmt.Println("  console  print findings to the terminal")
-	fmt.Println("  json     write one JSON report to --json-out")
-	fmt.Println("  html     write one HTML report to --html-out")
-	fmt.Println("  all      print to console and write both JSON and HTML")
+	fmt.Println("Compatibility aliases remain available as `snablr benchmark`, `snablr eval`, and `snablr rules`.")
+}
+
+func printDeveloperRulesUsage() {
+	section("Usage", "snablr dev rules <subcommand> [options]")
+	fmt.Println("Rule inspection and fixture testing using the existing rules engine.")
 	fmt.Println()
-	fmt.Println("Defaults:")
-	fmt.Println("  --config configs/config.yaml")
-	fmt.Println("  --output-format console")
-	fmt.Println("  --worker-count 15 (safe default; raise carefully, 0 enables adaptive)")
-	fmt.Println("  --max-file-size 10485760")
+	section("Subcommands", "")
+	commandLine("list", "List enabled rules")
+	commandLine("validate", "Validate rule files and regular expressions")
+	commandLine("show", "Show one rule by ID")
+	commandLine("test", "Test one rule against one input file")
+	commandLine("test-dir", "Test a rules directory against fixtures")
 	fmt.Println()
-	fmt.Println("Results are written to the paths you provide with --json-out, --html-out, --csv-out, and --md-out.")
-	fmt.Println()
-	fmt.Println("Flags:")
-	fs.PrintDefaults()
-	fmt.Println()
-	fmt.Println("Ctrl-C gracefully stops a scan, finalizes explicitly selected outputs, and marks the SQLite scan state interrupted.")
-	fmt.Println("  No report is created unless its output was selected; interrupted reports are marked INTERRUPTED / PARTIAL SCAN.")
-	fmt.Println("Interrupted scans finalize only the output formats explicitly selected.")
-	fmt.Println("A successfully finalized interrupted scan exits with status 130.")
+	fmt.Println("The compatibility alias `snablr rules` remains available.")
+}
+
+func section(title, detail string) {
+	if detail == "" {
+		fmt.Println(colorText(title, "32"))
+		return
+	}
+	fmt.Printf("%s: %s\n", colorText(title, "32"), detail)
+}
+
+func commandLine(name, description string) {
+	printHelpLine(name, description, 12)
+}
+
+func printHelpLine(label, description string, labelWidth int) {
+	width := helpWidth()
+	labelWidth = minInt(labelWidth, maxInt(12, width/2))
+	if len([]rune(label)) > labelWidth || len([]rune(label))+4 >= width {
+		fmt.Printf("  %s\n", colorText(label, "36"))
+		for _, line := range wrapHelpText(description, maxInt(10, width-4)) {
+			fmt.Printf("    %s\n", line)
+		}
+		return
+	}
+	lines := wrapHelpText(description, maxInt(10, width-labelWidth-4))
+	if len(lines) == 0 {
+		fmt.Printf("  %s\n", colorText(label, "36"))
+		return
+	}
+	fmt.Printf("  %-*s %s\n", labelWidth, colorText(label, "36"), lines[0])
+	for _, line := range lines[1:] {
+		fmt.Printf("  %-*s %s\n", labelWidth, "", line)
+	}
+}
+
+func printHelpParagraph(value string) {
+	for _, line := range wrapHelpText(strings.TrimSpace(value), helpWidth()) {
+		fmt.Println(line)
+	}
+}
+
+func helpWidth() int {
+	if value, err := strconv.Atoi(strings.TrimSpace(os.Getenv("COLUMNS"))); err == nil && value >= 40 {
+		return value
+	}
+	return 100
+}
+
+func wrapHelpText(value string, width int) []string {
+	words := strings.Fields(value)
+	if len(words) == 0 {
+		return nil
+	}
+	lines := []string{""}
+	for _, word := range words {
+		current := lines[len(lines)-1]
+		if current == "" {
+			lines[len(lines)-1] = word
+			continue
+		}
+		if len([]rune(current))+1+len([]rune(word)) <= width {
+			lines[len(lines)-1] = current + " " + word
+			continue
+		}
+		lines = append(lines, word)
+	}
+	return lines
+}
+
+func maxInt(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func minInt(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
+}
+
+func colorText(value, code string) string {
+	if !terminalColorEnabled(os.Stdout) || hasNoColor(os.Args[1:]) {
+		return value
+	}
+	return "\033[" + code + "m" + value + "\033[0m"
 }
 
 func printDiscoverUsage(fs *flag.FlagSet) {

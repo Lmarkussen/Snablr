@@ -519,7 +519,9 @@ func (s *SQLiteSink) WriteFinding(f scanner.Finding) error {
 }
 func (s *SQLiteSink) Close() error { return s.underlying.Close() }
 func (s *SQLiteSink) RecordCredentialCandidate(c credentialanalysis.Candidate) error {
-	_ = s.store.RecordCredential(c)
+	if err := s.store.RecordCredential(c); err != nil {
+		return fmt.Errorf("persist credential candidate: %w", err)
+	}
 	if r, ok := s.underlying.(scanner.CredentialCandidateSink); ok {
 		return r.RecordCredentialCandidate(c)
 	}

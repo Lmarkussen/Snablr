@@ -411,3 +411,97 @@ func TestRecordCredentialPersistsBoundedCrossFileCorrelation(t *testing.T) {
 		t.Fatalf("got %d correlation rows, want one: %#v", len(snapshot.CorrelationKeys), snapshot.CorrelationKeys)
 	}
 }
+
+type credentialSinkFindingStub struct{}
+
+func (credentialSinkFindingStub) WriteFinding(scanner.Finding) error { return nil }
+func (credentialSinkFindingStub) Close() error                       { return nil }
+
+func TestSQLiteSinkCredentialWriteSuccessIsPersisted(t *testing.T) {
+	t.Parallel()
+
+	store, path := openTestStore(t)
+	defer store.Close()
+	sink := WrapSink(credentialSinkFindingStub{}, store)
+	candidate := credentialanalysis.Candidate{
+		CredentialType: "password",
+		Identity:       "r4a-user",
+		Value:          "R4A-Synthetic-Pass-482!",
+		Path:           "r4a/credentials.ini",
+	}
+	if err := sink.RecordCredentialCandidate(candidate); err != nil {
+		t.Fatalf("RecordCredentialCandidate returned error: %v", err)
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("Flush returned error: %v", err)
+	}
+
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM credentials WHERE identity=? AND value=?`, candidate.Identity, candidate.Value).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("persisted credential count=%d, want 1", count)
+	}
+}
+
+func TestSQLiteSinkCredentialWriteFailureIsReturned(t *testing.T) {
+	t.Parallel()
+
+	store, _ := openTestStore(t)
+	if err := store.Close(); err != nil {
+		t.Fatalf("closing test store: %v", err)
+	}
+	sink := WrapSink(credentialSinkFindingStub{}, store)
+	err := sink.RecordCredentialCandidate(credentialanalysis.Candidate{
+		CredentialType: "password",
+		Identity:       "r4a-user",
+		Value:          "R4A-Synthetic-Pass-482!",
+		Path:           "r4a/credentials.ini",
+	})
+	if err == nil {
+		t.Fatal("expected closed SQLite store error")
+	}
+	if !strings.Contains(err.Error(), "persist credential candidate") || !strings.Contains(err.Error(), "sqlite state store is closed") {
+		t.Fatalf("error=%q, want operation context and underlying error", err)
+	}
+}
+
+func TestSQLiteSinkFailureAfterEarlierCommittedWriteRemainsObservable(t *testing.T) {
+	t.Parallel()
+
+	store, path := openTestStore(t)
+	sink := WrapSink(credentialSinkFindingStub{}, store)
+	first := credentialanalysis.Candidate{CredentialType: "password", Identity: "first", Value: "First-R4A!", Path: "r4a/first.ini"}
+	if err := sink.RecordCredentialCandidate(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	secondErr := sink.RecordCredentialCandidate(credentialanalysis.Candidate{CredentialType: "password", Identity: "second", Value: "Second-R4A!", Path: "r4a/second.ini"})
+	if secondErr == nil {
+		t.Fatal("expected second write error")
+	}
+
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM credentials WHERE identity=?`, first.Identity).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("earlier committed credential count=%d, want 1", count)
+	}
+}

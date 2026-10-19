@@ -838,7 +838,9 @@ func harvestFieldsMode(fields map[string]string, add func(Candidate), basis stri
 	if len(fields) == 0 {
 		return
 	}
-	harvestSCCMFields(fields, add, basis)
+	if basis != "structured XML object" {
+		harvestSCCMFields(fields, add, basis)
+	}
 	identity := fieldIdentity(fields)
 	domain := fieldDomain(fields)
 	harvestNTHashFields(fields, add, basis)

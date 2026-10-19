@@ -40,6 +40,11 @@ func TestHarvestSCCMXMLPairsOnlyWithinStep(t *testing.T) {
 	if unpaired == nil || unpaired.Verification != Review || unpaired.Identity != "" {
 		t.Fatalf("cross-step password was promoted: %#v", unpaired)
 	}
+	for _, candidate := range candidates {
+		if candidate.Value == "Synthetic-XML-482!" && candidate.ValidationBasis == "structured XML object" {
+			t.Fatalf("generic XML candidate duplicated the scoped SCCM record: %#v", candidate)
+		}
+	}
 }
 
 func TestHarvestSCCMJSONPairsMatchingAccountOnly(t *testing.T) {

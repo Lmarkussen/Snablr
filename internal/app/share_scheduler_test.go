@@ -184,6 +184,9 @@ func TestShareSchedulerSkipFolderUsesCurrentTraversalDirectory(t *testing.T) {
 	scheduler := newShareScheduler(syntheticSharePlans()[:1])
 	_, _ = scheduler.next()
 	scheduler.setCurrentDirectory(`1/2/3`)
+	if got := scheduler.snapshot().CurrentDirectory; got != `1/2/3` {
+		t.Fatalf("current directory snapshot = %q", got)
+	}
 	var gotPath string
 	scheduler.setSkipHandlers(nil, func(_ planner.PlannedTarget, path string) error {
 		gotPath = path

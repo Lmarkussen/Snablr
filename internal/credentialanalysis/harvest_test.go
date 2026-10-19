@@ -279,3 +279,18 @@ func TestHarvestCommandLinesDoNotCrossPairOrConfirmPlaceholders(t *testing.T) {
 		}
 	}
 }
+
+func TestHarvestStructuredAccountNameAlias(t *testing.T) {
+	for _, item := range []struct {
+		path, content, identity, password string
+	}{
+		{"alias.json", `{"credential":{"account_name":"json-user","account_password":"Json-Pass!"}}`, "json-user", "Json-Pass!"},
+		{"alias.yaml", "credentials:\n  account_name: yaml-user\n  user_password: Yaml-Pass!\n", "yaml-user", "Yaml-Pass!"},
+		{"alias.xml", `<account><account_name>xml-user</account_name><user_password>Xml-Pass!</user_password></account>`, "xml-user", "Xml-Pass!"},
+	} {
+		got := Harvest(HarvestInput{Content: []byte(item.content), Path: item.path})
+		if !hasIdentityValue(got, Confirmed, item.identity, item.password) {
+			t.Errorf("%s: account_name alias was not paired: %#v", item.path, got)
+		}
+	}
+}

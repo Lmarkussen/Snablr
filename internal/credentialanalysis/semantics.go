@@ -52,7 +52,7 @@ var identityQualifierAliases = map[string]struct{}{
 // to form an identity key. The English set is intentionally limited to "user"
 // so existing behavior is preserved.
 var identityRootAliases = map[string]struct{}{
-	"user":   {},
+	"user": {}, "account": {},
 	"bruker": {}, "konto": {}, // Norwegian
 }
 

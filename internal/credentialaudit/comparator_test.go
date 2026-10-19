@@ -17,6 +17,8 @@ func TestExtractPairsConnectionFormatsAndGuards(t *testing.T) {
 		{"odbc", "dsn", "Driver=x;UID=svc;PWD={P;ass};", "svc", "P;ass", true},
 		{"postgres", "connection_string", "postgresql://svc:p%40ss@db/app", "svc", "p@ss", true},
 		{"mysql", "connection_string", "mysql://svc:p%21@db/app", "svc", "p!", true},
+		{"norwegian", "connection_string", "Server=db;brukernavn=bruker-ø;passord=Passord-å!;", "bruker-ø", "Passord-å!", true},
+		{"postgres keyword", "connection_string", "host=db dbname=app user=svc password='pass word!'", "svc", "pass word!", true},
 		{"no-user", "connection_string", "Server=db;Password=secret;", "", "", false},
 		{"integrated", "connection_string", "Server=db;Integrated Security=true;", "", "", false},
 		{"opaque", "password", "opaque-user", "", "", false},

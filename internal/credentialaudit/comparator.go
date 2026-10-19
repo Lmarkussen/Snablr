@@ -61,12 +61,77 @@ func ExtractPairs(material ObservedMaterial) []Pair {
 	if parsed, ok := parseURI(value); ok {
 		result = append(result, parsed)
 	}
-	username := connectionField(value, "user id", "uid", "username", "user", "login", "account")
-	password := connectionField(value, "password", "pwd", "passwd", "secret")
+	username := connectionField(value, "user id", "uid", "username", "user", "login", "account", "brukernavn", "bruker", "brukerkonto", "påloggingsnavn")
+	password := connectionField(value, "password", "pwd", "passwd", "secret", "passord")
+	if username == "" || password == "" {
+		username = firstNonEmpty(username, connectionKeywordField(value, "user", "username", "userid", "uid", "brukernavn", "bruker", "brukerkonto", "påloggingsnavn"))
+		password = firstNonEmpty(password, connectionKeywordField(value, "password", "pwd", "passord"))
+	}
 	if username != "" && password != "" {
 		result = appendUnique(result, Pair{Username: username, Password: password})
 	}
 	return result
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func connectionKeywordField(value string, names ...string) string {
+	for _, field := range splitKeywordFields(value) {
+		key, raw, ok := strings.Cut(field, "=")
+		if !ok {
+			continue
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		for _, name := range names {
+			if key != name {
+				continue
+			}
+			raw = strings.TrimSpace(raw)
+			if len(raw) >= 2 && ((raw[0] == '\'' && raw[len(raw)-1] == '\'') || (raw[0] == '"' && raw[len(raw)-1] == '"')) {
+				raw = raw[1 : len(raw)-1]
+			}
+			if !looksUnsafe(raw) {
+				return raw
+			}
+		}
+	}
+	return ""
+}
+
+func splitKeywordFields(value string) []string {
+	fields := make([]string, 0, 8)
+	start := 0
+	var quote byte
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if quote != 0 {
+			if character == quote {
+				quote = 0
+			}
+			continue
+		}
+		if character == '\'' || character == '"' {
+			quote = character
+			continue
+		}
+		if character == ' ' || character == '\t' || character == '\r' || character == '\n' {
+			if start < index {
+				fields = append(fields, value[start:index])
+			}
+			start = index + 1
+		}
+	}
+	if start < len(value) {
+		fields = append(fields, value[start:])
+	}
+	return fields
 }
 
 func Compare(expected []ExpectedPair, observed []ObservedMaterial) Report {

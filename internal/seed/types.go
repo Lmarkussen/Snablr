@@ -39,9 +39,13 @@ type SeedManifestEntry struct {
 }
 
 type Manifest struct {
-	GeneratedAt time.Time           `json:"generated_at"`
-	SeedPrefix  string              `json:"seed_prefix"`
-	Entries     []SeedManifestEntry `json:"entries"`
+	GeneratedAt    time.Time           `json:"generated_at"`
+	FixtureVersion string              `json:"fixture_version,omitempty"`
+	SeedPrefix     string              `json:"seed_prefix"`
+	FileCount      int                 `json:"file_count,omitempty"`
+	DirectoryCount int                 `json:"directory_count,omitempty"`
+	Families       map[string]int      `json:"families,omitempty"`
+	Entries        []SeedManifestEntry `json:"entries"`
 }
 
 type GenerateOptions struct {
@@ -54,6 +58,7 @@ type GenerateOptions struct {
 	FilenameOnlyRatio   int
 	HighSeverityRatio   int
 	MediumSeverityRatio int
+	Expanded            bool
 }
 
 type WriteOptions struct {
@@ -77,6 +82,7 @@ type WriteOptions struct {
 	Warnf               func(string, ...any)
 	CountPerCat         int
 	MaxFiles            int
+	Expanded            bool
 }
 
 type ShareTarget struct {

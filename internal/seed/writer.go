@@ -133,6 +133,7 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 		FilenameOnlyRatio:   opts.FilenameOnlyRatio,
 		HighSeverityRatio:   opts.HighSeverityRatio,
 		MediumSeverityRatio: opts.MediumSeverityRatio,
+		Expanded:            opts.Expanded,
 	})
 	if err != nil {
 		return Manifest{}, err
@@ -227,6 +228,7 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 		manifest.Add(entry)
 	}
 
+	manifest.Recalculate()
 	if err := manifest.Write(opts.ManifestOut); err != nil {
 		return manifest, err
 	}

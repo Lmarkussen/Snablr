@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -14,6 +15,34 @@ func NewManifest(prefix string) Manifest {
 		SeedPrefix:  normalizeSeedPrefix(prefix),
 		Entries:     make([]SeedManifestEntry, 0),
 	}
+}
+
+func (m *Manifest) Recalculate() {
+	if m == nil {
+		return
+	}
+	m.FileCount = len(m.Entries)
+	m.DirectoryCount = 0
+	m.Families = make(map[string]int)
+	directories := make(map[string]struct{})
+	for _, entry := range m.Entries {
+		path := filepath.ToSlash(entry.Path)
+		if index := strings.LastIndex(path, "/"); index >= 0 {
+			for parent := path[:index]; parent != ""; {
+				directories[parent] = struct{}{}
+				cut := strings.LastIndex(parent, "/")
+				if cut < 0 {
+					break
+				}
+				parent = parent[:cut]
+			}
+		}
+		family := entry.Category
+		if family != "" {
+			m.Families[family]++
+		}
+	}
+	m.DirectoryCount = len(directories)
 }
 
 func (m *Manifest) Add(entry SeedManifestEntry) {

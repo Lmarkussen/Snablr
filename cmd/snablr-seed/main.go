@@ -44,6 +44,7 @@ func run(args []string) error {
 	includeAdminShares := fs.Bool("include-admin-shares", false, "Include administrative shares like ADMIN$, C$, IPC$, and PRINT$ during share discovery")
 	countPerCategory := fs.Int("count-per-category", 6, "Number of files to generate per category")
 	maxFiles := fs.Int("max-files", 480, "Maximum total files to generate")
+	expanded := fs.Bool("expanded", false, "Generate the deterministic recursive lab corpus")
 	depth := fs.Int("depth", 1, "Additional nested directory depth to add under each base path")
 	sharesPerTarget := fs.Int("shares-per-target", 0, "Maximum number of shares to seed per target; 0 uses all accessible shares")
 	likelyHitRatio := fs.Int("likely-hit-ratio", 65, "Approximate percentage of generated files intended as likely hits")
@@ -98,6 +99,7 @@ func run(args []string) error {
 		MediumSeverityRatio: *mediumSeverityRatio,
 		CountPerCat:         *countPerCategory,
 		MaxFiles:            *maxFiles,
+		Expanded:            *expanded,
 		Logf:                logger.Infof,
 		Warnf:               logger.Warnf,
 	})
@@ -200,6 +202,7 @@ func printUsage(fs *flag.FlagSet) {
 	fmt.Println("  snablr-seed --targets fileserver.example.test --username USER --password PASS --likely-hit-ratio 35 --filename-only-ratio 20")
 	fmt.Println("  snablr-seed --targets fileserver.example.test --username USER --password PASS --likely-hit-ratio 85 --high-severity-ratio 60 --medium-severity-ratio 25")
 	fmt.Println("  snablr-seed --targets fileserver.example.test --username USER --password PASS --seed-prefix SyntheticSeed --random-seed 424242")
+	fmt.Println("  snablr-seed --targets fileserver.example.test --username USER --password PASS --expanded --max-files 12000 --depth 12 --manifest-out expanded-manifest.json")
 	fmt.Println("  snablr-seed verify --manifest seed-manifest.json --results results.json")
 	fmt.Println()
 	fmt.Println("Flags:")

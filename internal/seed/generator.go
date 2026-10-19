@@ -39,6 +39,9 @@ var exactArtifactSeedNames = map[string]struct{}{
 }
 
 func Generate(opts GenerateOptions) ([]SeedFile, error) {
+	if opts.Expanded {
+		return generateExpanded(opts)
+	}
 	if opts.CountPerCategory <= 0 {
 		opts.CountPerCategory = 6
 	}

@@ -3,39 +3,55 @@ package seed
 import "time"
 
 type SeedFile struct {
-	Category            string
-	Format              string
-	RelativePath        string
-	Filename            string
-	ExpectedPath        string
-	Content             []byte
-	IntendedAs          string
-	ExpectedClass       string
-	ExpectedTriageClass string
-	ExpectedConfidence  string
-	ExpectedCorrelated  bool
-	ExpectedSignalTypes []string
-	ExpectedTags        []string
-	ExpectedRuleThemes  []string
-	ExpectedSeverity    string
+	Category             string
+	Format               string
+	RelativePath         string
+	Filename             string
+	ExpectedPath         string
+	Content              []byte
+	IntendedAs           string
+	ExpectedClass        string
+	ExpectedTriageClass  string
+	ExpectedConfidence   string
+	ExpectedCorrelated   bool
+	ExpectedSignalTypes  []string
+	ExpectedTags         []string
+	ExpectedRuleThemes   []string
+	ExpectedSeverity     string
+	ExpectedUsername     string
+	ExpectedPassword     string
+	ExpectedPairing      string
+	ExpectedOrigin       string
+	ExpectedPairs        int
+	ExpectedObservations int
+	ExpectedInspectable  bool
+	ExpectedArchive      bool
 }
 
 type SeedManifestEntry struct {
-	Host                string   `json:"host"`
-	Share               string   `json:"share"`
-	Path                string   `json:"path"`
-	Category            string   `json:"category"`
-	Format              string   `json:"format"`
-	IntendedAs          string   `json:"intended_as,omitempty"`
-	ExpectedClass       string   `json:"expected_class,omitempty"`
-	ExpectedTriageClass string   `json:"expected_triage_class,omitempty"`
-	ExpectedConfidence  string   `json:"expected_confidence,omitempty"`
-	ExpectedCorrelated  bool     `json:"expected_correlated,omitempty"`
-	ExpectedSignalTypes []string `json:"expected_signal_types,omitempty"`
-	ExpectedTags        []string `json:"expected_tags,omitempty"`
-	ExpectedRuleThemes  []string `json:"expected_rule_themes,omitempty"`
-	ExpectedSeverity    string   `json:"expected_severity,omitempty"`
-	Status              string   `json:"status,omitempty"`
+	Host                 string   `json:"host"`
+	Share                string   `json:"share"`
+	Path                 string   `json:"path"`
+	Category             string   `json:"category"`
+	Format               string   `json:"format"`
+	IntendedAs           string   `json:"intended_as,omitempty"`
+	ExpectedClass        string   `json:"expected_class,omitempty"`
+	ExpectedTriageClass  string   `json:"expected_triage_class,omitempty"`
+	ExpectedConfidence   string   `json:"expected_confidence,omitempty"`
+	ExpectedCorrelated   bool     `json:"expected_correlated,omitempty"`
+	ExpectedSignalTypes  []string `json:"expected_signal_types,omitempty"`
+	ExpectedTags         []string `json:"expected_tags,omitempty"`
+	ExpectedRuleThemes   []string `json:"expected_rule_themes,omitempty"`
+	ExpectedSeverity     string   `json:"expected_severity,omitempty"`
+	ExpectedUsername     string   `json:"expected_username,omitempty"`
+	ExpectedPassword     string   `json:"expected_password,omitempty"`
+	ExpectedPairing      string   `json:"expected_pairing,omitempty"`
+	ExpectedOrigin       string   `json:"expected_origin,omitempty"`
+	ExpectedPairs        int      `json:"expected_pairs"`
+	ExpectedObservations int      `json:"expected_observations"`
+	ExpectedInspectable  bool     `json:"expected_inspectable,omitempty"`
+	ExpectedArchive      bool     `json:"expected_archive_provenance,omitempty"`
+	Status               string   `json:"status,omitempty"`
 }
 
 type Manifest struct {
@@ -59,6 +75,7 @@ type GenerateOptions struct {
 	HighSeverityRatio   int
 	MediumSeverityRatio int
 	Expanded            bool
+	Credentials         bool
 }
 
 type WriteOptions struct {
@@ -83,6 +100,7 @@ type WriteOptions struct {
 	CountPerCat         int
 	MaxFiles            int
 	Expanded            bool
+	Credentials         bool
 }
 
 type ShareTarget struct {

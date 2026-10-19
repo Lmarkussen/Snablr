@@ -1540,3 +1540,51 @@ func TestGeneratedSQLiteSeedProducesFindings(t *testing.T) {
 		t.Fatalf("expected sqlite composite finding path %q, got %#v", sqliteSeed.ExpectedPath, evaluation.Findings)
 	}
 }
+
+func TestCredentialCorpusIsDeterministicAndGroundTruthed(t *testing.T) {
+	opts := GenerateOptions{Credentials: true, SeedPrefix: "Credentials-Finder-V1", RandomSeed: 42}
+	first, err := Generate(opts)
+	if err != nil {
+		t.Fatalf("generate credentials: %v", err)
+	}
+	second, err := Generate(opts)
+	if err != nil {
+		t.Fatalf("generate credentials twice: %v", err)
+	}
+	if len(first) < 30 || len(first) != len(second) {
+		t.Fatalf("credential corpus size = %d/%d, want at least 30 identical files", len(first), len(second))
+	}
+	positive, review := 0, 0
+	for i, file := range first {
+		if string(file.Content) != string(second[i].Content) || file.ExpectedPath != second[i].ExpectedPath {
+			t.Fatalf("credential corpus is not deterministic at index %d", i)
+		}
+		if file.ExpectedPairs > 0 {
+			positive++
+		}
+		if file.ExpectedPairs == 0 {
+			review++
+		}
+		if file.ExpectedInspectable != true {
+			t.Fatalf("fixture %s lacks inspectability ground truth", file.ExpectedPath)
+		}
+	}
+	if positive == 0 || review == 0 {
+		t.Fatalf("expected positive and review fixtures, got positive=%d review=%d", positive, review)
+	}
+}
+
+func TestCredentialCorpusArchiveFixturesAreValid(t *testing.T) {
+	files, err := Generate(GenerateOptions{Credentials: true, SeedPrefix: "Credentials-Finder-V1"})
+	if err != nil {
+		t.Fatalf("generate credentials: %v", err)
+	}
+	for _, file := range files {
+		if !file.ExpectedArchive {
+			continue
+		}
+		if _, err := zip.NewReader(bytes.NewReader(file.Content), int64(len(file.Content))); err != nil {
+			t.Fatalf("archive fixture %s is invalid: %v", file.ExpectedPath, err)
+		}
+	}
+}

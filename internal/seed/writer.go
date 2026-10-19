@@ -134,6 +134,7 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 		HighSeverityRatio:   opts.HighSeverityRatio,
 		MediumSeverityRatio: opts.MediumSeverityRatio,
 		Expanded:            opts.Expanded,
+		Credentials:         opts.Credentials,
 	})
 	if err != nil {
 		return Manifest{}, err
@@ -150,6 +151,9 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 	manifest := NewManifest(opts.SeedPrefix)
 	if opts.Expanded {
 		manifest.FixtureVersion = "expanded-smb-fixtures-v1"
+	}
+	if opts.Credentials {
+		manifest.FixtureVersion = "credentials-finder-v1"
 	}
 	stats := newSeedRunStats(len(files))
 	pool := newSeedClientPool(opts)
@@ -182,20 +186,28 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 			manifestPath = file.ExpectedPath
 		}
 		entry := SeedManifestEntry{
-			Host:                target.Host,
-			Share:               target.Share,
-			Path:                manifestPath,
-			Category:            file.Category,
-			Format:              formatLabel(file),
-			IntendedAs:          file.IntendedAs,
-			ExpectedClass:       file.ExpectedClass,
-			ExpectedTriageClass: file.ExpectedTriageClass,
-			ExpectedConfidence:  file.ExpectedConfidence,
-			ExpectedCorrelated:  file.ExpectedCorrelated,
-			ExpectedSignalTypes: append([]string{}, file.ExpectedSignalTypes...),
-			ExpectedTags:        append([]string{}, file.ExpectedTags...),
-			ExpectedRuleThemes:  append([]string{}, file.ExpectedRuleThemes...),
-			ExpectedSeverity:    file.ExpectedSeverity,
+			Host:                 target.Host,
+			Share:                target.Share,
+			Path:                 manifestPath,
+			Category:             file.Category,
+			Format:               formatLabel(file),
+			IntendedAs:           file.IntendedAs,
+			ExpectedClass:        file.ExpectedClass,
+			ExpectedTriageClass:  file.ExpectedTriageClass,
+			ExpectedConfidence:   file.ExpectedConfidence,
+			ExpectedCorrelated:   file.ExpectedCorrelated,
+			ExpectedSignalTypes:  append([]string{}, file.ExpectedSignalTypes...),
+			ExpectedTags:         append([]string{}, file.ExpectedTags...),
+			ExpectedRuleThemes:   append([]string{}, file.ExpectedRuleThemes...),
+			ExpectedSeverity:     file.ExpectedSeverity,
+			ExpectedUsername:     file.ExpectedUsername,
+			ExpectedPassword:     file.ExpectedPassword,
+			ExpectedPairing:      file.ExpectedPairing,
+			ExpectedOrigin:       file.ExpectedOrigin,
+			ExpectedPairs:        file.ExpectedPairs,
+			ExpectedObservations: file.ExpectedObservations,
+			ExpectedInspectable:  file.ExpectedInspectable,
+			ExpectedArchive:      file.ExpectedArchive,
 		}
 
 		if opts.DryRun {

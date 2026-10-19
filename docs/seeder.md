@@ -40,6 +40,23 @@ snablr-seed --targets fileserver.example.test --username test_operator \
   --manifest-out seed-manifests/synthetic.json
 ```
 
+## Credential-pair audit corpus
+
+The dedicated credentials mode creates a deterministic, inert corpus for
+measuring username/password recall without changing scanner behavior:
+
+```text
+snablr-seed --credentials --targets fileserver.example.test \
+  --username test_operator --password SYNTHETIC_PASSWORD \
+  --share SyntheticShare --seed-prefix Credentials-Finder-V1 \
+  --manifest-out credentials-finder-v1.json
+```
+
+The manifest records positive, review, and negative fixture expectations,
+including logical pair counts, synthetic identities, pairing scope, origin
+context, and archive provenance. The generated values are deliberately fake;
+the manifest is test ground truth, not proof that a credential is valid.
+
 Generated files are synthetic regression material. Do not place live data,
 real credentials, customer names, or local workstation paths in fixtures,
 manifests, documentation, or commits.

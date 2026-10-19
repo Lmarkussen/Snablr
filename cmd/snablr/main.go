@@ -105,9 +105,9 @@ func runDev(args []string) error {
 	}
 	switch args[0] {
 	case "benchmark":
-		return runBenchmark(args[1:])
+		return runBenchmarkNamed(args[1:], "dev benchmark")
 	case "eval":
-		return runEval(args[1:])
+		return runEvalNamed(args[1:], "dev eval")
 	case "rules":
 		if len(args) == 1 || args[1] == "-h" || args[1] == "--help" || args[1] == "help" {
 			printDeveloperRulesUsage()
@@ -379,7 +379,11 @@ func runDiff(args []string) error {
 }
 
 func runBenchmark(args []string) error {
-	fs := flag.NewFlagSet("benchmark", flag.ContinueOnError)
+	return runBenchmarkNamed(args, "benchmark")
+}
+
+func runBenchmarkNamed(args []string, commandName string) error {
+	fs := flag.NewFlagSet(commandName, flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
 	fs.Usage = func() { printBenchmarkUsage(fs) }
 
@@ -396,7 +400,7 @@ func runBenchmark(args []string) error {
 		return err
 	}
 	if strings.TrimSpace(*configPath) == "" {
-		return fmt.Errorf("benchmark config is required: pass --config <file> (run `snablr benchmark --help` for an example)")
+		return fmt.Errorf("benchmark config is required: pass --config <file> (run `snablr %s --help` for an example)", commandName)
 	}
 
 	return app.RunBenchmark(context.Background(), app.BenchmarkOptions{
@@ -409,7 +413,11 @@ func runBenchmark(args []string) error {
 }
 
 func runEval(args []string) error {
-	fs := flag.NewFlagSet("eval", flag.ContinueOnError)
+	return runEvalNamed(args, "eval")
+}
+
+func runEvalNamed(args []string, commandName string) error {
+	fs := flag.NewFlagSet(commandName, flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
 	fs.Usage = func() { printEvalUsage(fs) }
 
@@ -853,15 +861,15 @@ func printDiffUsage(fs *flag.FlagSet) {
 
 func printBenchmarkUsage(fs *flag.FlagSet) {
 	fmt.Println("Usage:")
-	fmt.Println("  snablr benchmark --config <file> [options]")
+	fmt.Printf("  snablr %s --config <file> [options]\n", fs.Name())
 	fmt.Println()
 	fmt.Println("Description:")
 	fmt.Println("  Runs Snablr against an authorized local dataset and records scan duration, time to first")
 	fmt.Println("  finding, files visited/read, grouped findings, and high-confidence findings.")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  snablr benchmark --config examples/eval/benchmark.yaml --out benchmark.json")
-	fmt.Println("  snablr benchmark --config examples/eval/benchmark.yaml --dataset examples/eval/dataset")
+	fmt.Printf("  snablr %s --config examples/eval/benchmark.yaml --out benchmark.json\n", fs.Name())
+	fmt.Printf("  snablr %s --config examples/eval/benchmark.yaml --dataset examples/eval/dataset\n", fs.Name())
 	fmt.Println()
 	fmt.Println("Flags:")
 	fs.PrintDefaults()
@@ -869,15 +877,15 @@ func printBenchmarkUsage(fs *flag.FlagSet) {
 
 func printEvalUsage(fs *flag.FlagSet) {
 	fmt.Println("Usage:")
-	fmt.Println("  snablr eval --dataset <dir> --labels <file> [options]")
+	fmt.Printf("  snablr %s --dataset <dir> --labels <file> [options]\n", fs.Name())
 	fmt.Println()
 	fmt.Println("Description:")
 	fmt.Println("  Scans an authorized local dataset, compares findings to labels, and reports precision-like,")
 	fmt.Println("  recall-like, noisy findings, duplicate findings, and missed rule candidates.")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  snablr eval --dataset examples/eval/dataset --labels examples/eval/labels.yaml --out eval.json")
-	fmt.Println("  snablr eval --dataset examples/eval/dataset --labels examples/eval/labels.yaml --rules-directory configs/rules/default")
+	fmt.Printf("  snablr %s --dataset examples/eval/dataset --labels examples/eval/labels.yaml --out eval.json\n", fs.Name())
+	fmt.Printf("  snablr %s --dataset examples/eval/dataset --labels examples/eval/labels.yaml --rules-directory configs/rules/default\n", fs.Name())
 	fmt.Println()
 	fmt.Println("Flags:")
 	fs.PrintDefaults()

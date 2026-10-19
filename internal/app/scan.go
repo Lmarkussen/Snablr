@@ -777,6 +777,8 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 					}
 					if stateManager != nil && inventory == nil {
 						stateManager.RecordFileResult(meta.Host, meta.Share, meta.FilePath, meta.Size, meta.ModifiedAt, err == nil)
+					} else if stateManager != nil {
+						stateManager.RecordFileResultInMemory(meta.Host, meta.Share, meta.FilePath, meta.Size, meta.ModifiedAt, err == nil)
 					}
 					if inventory == nil {
 						return

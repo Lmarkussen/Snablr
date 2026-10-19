@@ -306,6 +306,17 @@ func (m *Manager) AbortShare(host, share string) {
 }
 
 func (m *Manager) RecordFileResult(host, share, path string, size int64, modifiedAt time.Time, success bool) {
+	m.recordFileResult(host, share, path, size, modifiedAt, success, true)
+}
+
+// RecordFileResultInMemory updates host/share progress without writing the
+// legacy file identity. The SQLite inventory owns file persistence when it is
+// active; the manager still needs this transition to close share progress.
+func (m *Manager) RecordFileResultInMemory(host, share, path string, size int64, modifiedAt time.Time, success bool) {
+	m.recordFileResult(host, share, path, size, modifiedAt, success, false)
+}
+
+func (m *Manager) recordFileResult(host, share, path string, size int64, modifiedAt time.Time, success, persistFile bool) {
 	if !m.Enabled() {
 		return
 	}
@@ -313,7 +324,7 @@ func (m *Manager) RecordFileResult(host, share, path string, size int64, modifie
 	if success {
 		m.store.MarkFileComplete(host, share, path, size, modifiedAt)
 	}
-	if m.stateStore != nil {
+	if persistFile && m.stateStore != nil {
 		status := "failed"
 		if success {
 			status = "completed"

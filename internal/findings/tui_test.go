@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 	"snablr/internal/credentialanalysis"
@@ -554,5 +555,57 @@ func TestFinderKeepsReviewPasswordIdentityUncertain(t *testing.T) {
 	decision := interpretCredential(candidate)
 	if decision.Confirmed || decision.Status != "Uncertain pairing" {
 		t.Fatalf("review password was promoted: %#v", decision)
+	}
+}
+
+func TestDetailsViewportScrollsUpFromBottomWithoutFocusReset(t *testing.T) {
+	for _, size := range []struct {
+		name          string
+		width, height int
+	}{
+		{name: "120x40", width: 120, height: 40},
+		{name: "80x24", width: 80, height: 24},
+	} {
+		t.Run(size.name, func(t *testing.T) {
+			item := category{Name: "Credentials", Discoveries: []discovery{{Title: "long-detail"}}}
+			m := &model{
+				scans:       []Scan{{ID: "scan"}},
+				categories:  []category{item},
+				screen:      screenDiscoveries,
+				discoveries: item.Discoveries,
+				focus:       1,
+				list:        viewport.New(1, 1),
+				preview:     viewport.New(1, 1),
+			}
+			m.width, m.height = size.width, size.height
+			m.resize()
+			lines := make([]string, 0, m.preview.Height*4+8)
+			for index := 0; index < cap(lines); index++ {
+				lines = append(lines, fmt.Sprintf("detail line %03d", index))
+			}
+			m.preview.SetContent(strings.Join(lines, "\n"))
+			m.preview.GotoBottom()
+			bottom := m.preview.YOffset
+			if bottom <= 0 {
+				t.Fatalf("test content did not exceed viewport: height=%d lines=%d", m.preview.Height, len(lines))
+			}
+
+			m.Update(tea.KeyMsg{Type: tea.KeyUp})
+			if m.preview.YOffset != bottom-1 {
+				t.Fatalf("up from bottom moved to offset %d, want %d", m.preview.YOffset, bottom-1)
+			}
+			for index := 0; index < bottom+2; index++ {
+				m.Update(tea.KeyMsg{Type: tea.KeyUp})
+			}
+			if m.preview.YOffset != 0 {
+				t.Fatalf("repeated up did not reach top: offset=%d", m.preview.YOffset)
+			}
+			for index := 0; index < bottom+2; index++ {
+				m.Update(tea.KeyMsg{Type: tea.KeyDown})
+			}
+			if m.preview.YOffset != bottom {
+				t.Fatalf("repeated down did not return to bottom: offset=%d want=%d", m.preview.YOffset, bottom)
+			}
+		})
 	}
 }

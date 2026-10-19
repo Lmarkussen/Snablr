@@ -565,7 +565,11 @@ func (m *model) move(delta int) {
 		return
 	}
 	if m.focus == 1 {
-		m.preview.LineDown(delta)
+		if delta < 0 {
+			m.preview.LineUp(-delta)
+		} else {
+			m.preview.LineDown(delta)
+		}
 		return
 	}
 	switch m.screen {

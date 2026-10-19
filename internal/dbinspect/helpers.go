@@ -191,6 +191,8 @@ func normalizeKVKey(key string) string {
 	switch key {
 	case "userid":
 		return "userid"
+	case "brukernavn", "bruker", "brukerkonto", "påloggingsnavn":
+		return "user"
 	case "uid":
 		return "uid"
 	case "user":
@@ -200,6 +202,8 @@ func normalizeKVKey(key string) string {
 	case "pwd":
 		return "pwd"
 	case "password":
+		return "password"
+	case "passord":
 		return "password"
 	case "datasource", "datasourcepath", "addr", "address", "networkaddress", "dbq":
 		return "datasource"

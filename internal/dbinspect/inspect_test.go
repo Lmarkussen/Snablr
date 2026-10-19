@@ -192,3 +192,14 @@ func TestInspectorScopedDatabaseFieldsRejectUnrelatedSecrets(t *testing.T) {
 		}
 	}
 }
+
+func TestInspectorNorwegianConnectionAliases(t *testing.T) {
+	candidate := Candidate{Name: "database-norsk.conf", Extension: ".conf", FilePath: "database/database-norsk.conf"}
+	matches := New().InspectContent(candidate, []byte("Server=norsk-db;Database=app;brukernavn=bruker-æ;passord=Passord-øå!;"))
+	for _, match := range matches {
+		if match.ID == "dbinspect.access.connection_string" {
+			return
+		}
+	}
+	t.Fatalf("Norwegian connection aliases were not recognized: %#v", matches)
+}

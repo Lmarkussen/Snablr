@@ -58,6 +58,8 @@ func TestGenerateExpandedCorpusIncludesValidContainerFixtures(t *testing.T) {
 		"valid-credentials.zip":  "configs/credentials.ini",
 		"valid-credentials.docx": "word/document.xml",
 		"valid-credentials.xlsx": "xl/sharedStrings.xml",
+		"benign-notes.docx":      "word/document.xml",
+		"benign-inventory.xlsx":  "xl/sharedStrings.xml",
 		"valid-benign.zip":       "docs/readme.txt",
 	}
 	found := make(map[string]bool)

@@ -37,3 +37,13 @@ func TestCorrelateDifferentValuesRemainMediumAndStable(t *testing.T) {
 		t.Fatalf("correlation is not deterministic: %#v %#v", first, second)
 	}
 }
+
+func TestCorrelateDoesNotTreatArchiveIdentityFormsAsDistinctSources(t *testing.T) {
+	candidates := []Candidate{
+		{CredentialType: "password", Identity: "office-user", Value: "Synthetic-Office-482!", Path: "bundle.docx!word/document.xml"},
+		{CredentialType: "password", Identity: "office-user", Value: "Synthetic-Office-482!", Container: "bundle.docx", Path: "word/document.xml"},
+	}
+	if correlations := Correlate(candidates); len(correlations) != 0 {
+		t.Fatalf("equivalent archive provenance forms produced a false correlation: %#v", correlations)
+	}
+}

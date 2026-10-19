@@ -98,7 +98,18 @@ func Correlate(candidates []Candidate) []Correlation {
 }
 
 func candidateOrigin(candidate Candidate) string {
-	return strings.Join([]string{strings.ToLower(strings.TrimSpace(candidate.Host)), strings.ToLower(strings.TrimSpace(candidate.Share)), strings.TrimSpace(candidate.Path), strings.TrimSpace(candidate.Container)}, "\x00")
+	host := strings.ToLower(strings.TrimSpace(candidate.Host))
+	share := strings.ToLower(strings.TrimSpace(candidate.Share))
+	path := strings.TrimSpace(candidate.Path)
+	container := strings.TrimSpace(candidate.Container)
+	if container != "" {
+		qualifiedPrefix := container + "!"
+		if strings.HasPrefix(path, qualifiedPrefix) {
+			path = strings.TrimPrefix(path, qualifiedPrefix)
+		}
+		path = container + "!" + path
+	}
+	return strings.Join([]string{host, share, path}, "\x00")
 }
 
 func preferCorrelationCandidate(candidate, existing Candidate) bool {

@@ -129,7 +129,6 @@ func expandedEvidenceFixtures(_ string) []expandedFixture {
 		{"negative-placeholder", joinSeedPath(base, "Negative"), "placeholder.env", "env", "PASSWORD=<REPLACE_ME>\nTOKEN=example-placeholder\nnot-a-secret=synthetic\n"},
 		{"negative-benign", joinSeedPath(base, "Negative"), "readme.txt", "txt", "This is a benign synthetic fixture with no credential material.\n"},
 		{"evidence-backup", joinSeedPath(base, "Backups"), "application-backup.conf", "conf", "backup_name=synthetic-app\nbackup_password=Synthetic-Expanded-Password-006!\n"},
-		{"evidence-office", joinSeedPath(base, "Office"), "synthetic-notes.docx", "docx", "Synthetic office evidence placeholder for manifest coverage.\n"},
 		{"evidence-archive", joinSeedPath(base, "Archives"), "synthetic-evidence.zip", "zip", "Synthetic archive evidence placeholder for manifest coverage.\n"},
 		{"evidence-correlation", joinSeedPath(base, "Correlation"), "service.env", "env", "DB_PASSWORD=Synthetic-Expanded-Password-007!\n"},
 		{"evidence-correlation", joinSeedPath(base, "Correlation"), "service.properties", "properties", "password=Synthetic-Expanded-Password-008!\n"},
@@ -178,6 +177,16 @@ func expandedContainerFixtures(base string) []expandedContainerFixture {
 		{
 			category: "evidence-office", directory: joinSeedPath(base, "Office"), filename: "valid-credentials.xlsx", format: "xlsx",
 			binary:         buildArchiveBytes(ctx, append(officeBaseMembers(".xlsx"), archiveMemberTemplate{Path: "xl/sharedStrings.xml", Content: officeSharedStringsXML("username=spreadsheet-user", "password=Synthetic-Spreadsheet-482!")})),
+			expectedMember: "xl/sharedStrings.xml",
+		},
+		{
+			category: "evidence-office", directory: joinSeedPath(base, "Office"), filename: "benign-notes.docx", format: "docx",
+			binary:         buildArchiveBytes(ctx, append(officeBaseMembers(".docx"), archiveMemberTemplate{Path: "word/document.xml", Content: officeDocumentXML("Synthetic status notes", "Owner: synthetic-user", "Status: complete")})),
+			expectedMember: "word/document.xml",
+		},
+		{
+			category: "evidence-office", directory: joinSeedPath(base, "Office"), filename: "benign-inventory.xlsx", format: "xlsx",
+			binary:         buildArchiveBytes(ctx, append(officeBaseMembers(".xlsx"), archiveMemberTemplate{Path: "xl/sharedStrings.xml", Content: officeSharedStringsXML("Q1", "Q2", "Owner", "synthetic-user")})),
 			expectedMember: "xl/sharedStrings.xml",
 		},
 		{category: "negative-archive", directory: joinSeedPath(base, "Negative"), filename: "malformed.zip", format: "zip", binary: []byte("not a valid zip container\n")},

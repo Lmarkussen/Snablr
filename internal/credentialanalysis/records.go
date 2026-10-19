@@ -244,16 +244,27 @@ func leadingNonEmptyLines(text string, limit int) []string {
 // what real password lists with extra columns look like.
 func isCredentialHeaderRow(row []string) bool {
 	passwords, identities := 0, 0
+	hasAccount := false
 	for _, cell := range row {
 		cell = strings.TrimSpace(cell)
 		if cell == "" {
 			continue
+		}
+		if normalizeKey(cell) == "account" {
+			hasAccount = true
 		}
 		switch ClassifyFieldName(cell) {
 		case FieldRolePassword:
 			passwords++
 		case FieldRoleIdentity:
 			identities++
+		}
+	}
+	if passwords == 0 && hasAccount {
+		for _, cell := range row {
+			if normalizeKey(cell) == "secret" {
+				passwords++
+			}
 		}
 	}
 	return passwords >= 1 && identities >= 1

@@ -59,3 +59,10 @@ func TestCompareDoesNotCreditUnrelatedPassword(t *testing.T) {
 		t.Fatalf("report = %#v", report)
 	}
 }
+
+func TestCompareCreditsJDBCQueryCredentials(t *testing.T) {
+	report := Compare([]ExpectedPair{{ID: "jdbc-1", SourcePath: "config.properties", Username: "svc-jdbc", Password: "Encoded Pass!"}}, []ObservedMaterial{{RowID: "row-1", SourcePath: "config.properties", MaterialType: "connection_string", Value: "jdbc:mysql://db.synthetic/app?user=svc-jdbc&password=Encoded+Pass%21"}})
+	if report.UniqueMatched != 1 || len(report.Matches) != 1 {
+		t.Fatalf("JDBC query pair was not matched: %#v", report)
+	}
+}

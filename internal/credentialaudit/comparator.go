@@ -176,9 +176,22 @@ func parseURI(value string) (Pair, bool) {
 	if !strings.Contains(strings.ToLower(value), "://") {
 		return Pair{}, false
 	}
-	parsed, err := url.Parse(strings.TrimSpace(value))
+	trimmed := strings.TrimSpace(value)
+	if strings.HasPrefix(strings.ToLower(trimmed), "jdbc:") {
+		trimmed = trimmed[len("jdbc:"):]
+	}
+	parsed, err := url.Parse(trimmed)
 	if err != nil || parsed.User == nil {
-		return Pair{}, false
+		if err != nil {
+			return Pair{}, false
+		}
+		query := parsed.Query()
+		username := firstNonEmpty(query.Get("user"), query.Get("username"), query.Get("uid"))
+		password := firstNonEmpty(query.Get("password"), query.Get("pwd"), query.Get("pass"))
+		if username == "" || password == "" || looksUnsafe(username) || looksUnsafe(password) {
+			return Pair{}, false
+		}
+		return Pair{Username: username, Password: password}, true
 	}
 	password, hasPassword := parsed.User.Password()
 	username := parsed.User.Username()

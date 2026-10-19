@@ -25,6 +25,10 @@ var htmlTagPattern = regexp.MustCompile(`(?is)<[^>]+>`)
 var htmlTableRowPattern = regexp.MustCompile(`(?i)</tr\s*>`)
 var htmlTableCellPattern = regexp.MustCompile(`(?i)</t[dh]\s*>`)
 var htmlTableCellOpenPattern = regexp.MustCompile(`(?i)<t[dh]\b[^>]*>`)
+var htmlFormPattern = regexp.MustCompile(`(?is)<form\b[^>]*>(.*?)</form\s*>`)
+var htmlInputPattern = regexp.MustCompile(`(?is)<input\b([^>]*)>`)
+var htmlAttributePattern = regexp.MustCompile(`(?is)([a-z][a-z0-9_-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+var powerShellHashtablePattern = regexp.MustCompile(`(?is)@\{(.*?)\}`)
 
 func htmlCredentialText(content string) string {
 	content = htmlTableRowPattern.ReplaceAllString(content, "\n")
@@ -69,6 +73,40 @@ func markdownTableText(content string) string {
 		return ""
 	}
 	return RenderTableText(rows, "markdown")
+}
+
+func harvestHTMLForms(content string, add func(Candidate)) {
+	for _, form := range htmlFormPattern.FindAllStringSubmatch(content, -1) {
+		fields := make(map[string]string)
+		for _, input := range htmlInputPattern.FindAllStringSubmatch(form[1], -1) {
+			attrs := make(map[string]string)
+			for _, attribute := range htmlAttributePattern.FindAllStringSubmatch(input[1], -1) {
+				value := attribute[2]
+				if value == "" {
+					value = attribute[3]
+				}
+				attrs[strings.ToLower(attribute[1])] = html.UnescapeString(strings.TrimSpace(value))
+			}
+			name := normalizeKey(attrs["name"])
+			value := strings.TrimSpace(attrs["value"])
+			if name == "" || value == "" {
+				continue
+			}
+			fields[name] = value
+		}
+		if len(fields) > 0 {
+			harvestFields(fields, add, "structured HTML form")
+		}
+	}
+}
+
+func harvestPowerShellHashtables(content string, add func(Candidate)) {
+	for _, match := range powerShellHashtablePattern.FindAllStringSubmatch(content, -1) {
+		body := strings.ReplaceAll(match[1], ";", "\n")
+		if strings.TrimSpace(body) != "" {
+			harvestLines(body, add)
+		}
+	}
 }
 
 const (
@@ -192,6 +230,7 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 	}
 	textContent := textdecode.Normalize(content)
 	if ext == ".html" || ext == ".htm" {
+		harvestHTMLForms(textContent, add)
 		textContent = htmlCredentialText(textContent)
 		if rendered := delimitedRecordText(textContent); rendered != "" {
 			textContent = rendered
@@ -201,6 +240,7 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 			textContent = rendered
 		}
 	}
+	harvestPowerShellHashtables(textContent, add)
 	if strings.TrimSpace(textContent) == "" {
 		return out
 	}
@@ -921,7 +961,7 @@ func harvestLines(text string, add func(Candidate)) {
 			harvestSCCMFields(fields, add, "structured SCCM configuration record")
 		}
 		if section != "" {
-			harvestFields(fields, add, basis)
+			harvestScopedFields(fields, add, basis)
 		}
 	}
 	// Top-level assignments are deliberately independent. This prevents a
@@ -955,6 +995,41 @@ func harvestLines(text string, add func(Candidate)) {
 	}
 	for _, fields := range prefixes {
 		harvestFields(fields, add, "structured environment record")
+	}
+}
+
+func harvestScopedFields(fields map[string]string, add func(Candidate), basis string) {
+	scopes := make(map[string]map[string]string)
+	for key, value := range fields {
+		scope := ""
+		field := key
+		switch key {
+		case "user_id":
+			scope, field = "user", "userid"
+		case "account_name":
+			scope, field = "account", "username"
+		}
+		for _, suffix := range []string{"username", "userid", "user", "account", "password", "passwd", "pwd", "passord", "secret", "token", "domain"} {
+			if scope != "" {
+				break
+			}
+			marker := "_" + suffix
+			if strings.HasSuffix(key, marker) && len(key) > len(marker) {
+				scope = strings.TrimSuffix(key, marker)
+				field = suffix
+				break
+			}
+		}
+		if scope != "" && field == "id" {
+			field = "userid"
+		}
+		if scopes[scope] == nil {
+			scopes[scope] = make(map[string]string)
+		}
+		scopes[scope][field] = value
+	}
+	for _, scoped := range scopes {
+		harvestFields(scoped, add, basis)
 	}
 }
 
@@ -1153,13 +1228,14 @@ func harvestFieldsMode(fields map[string]string, add func(Candidate), basis stri
 			continue
 		}
 		credType := credentialType(key)
+		explicitAccountSecret := normalizeKey(key) == "secret" && identityKey == "account"
 		if requireTokenShape && !isPasswordKey(key) {
 			if _, ok := TokenSecretValueShape(value); !ok {
 				continue
 			}
 		}
 		candidate := Candidate{Verification: Review, CredentialType: credType, Identity: identity, Domain: domain, Value: value, ReviewReasons: []string{"credential-like value requires semantic review"}}
-		if (identity != "" && !identityPlaceholder && isPasswordKey(key) && compatibleAssignmentScope(identityKey, key) || strongAPI || strongClient) && !looksReferenceOrTemplate(value) {
+		if (identity != "" && !identityPlaceholder && (isPasswordKey(key) || explicitAccountSecret) && compatibleAssignmentScope(identityKey, key) || strongAPI || strongClient) && !looksReferenceOrTemplate(value) {
 			candidate.Verification = Confirmed
 			candidate.ValidationBasis = basis
 			candidate.ReviewReasons = nil

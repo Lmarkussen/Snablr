@@ -130,9 +130,38 @@ func TestHarvestMarkdownCredentialTableKeepsRowsSeparate(t *testing.T) {
 }
 
 func TestNeedsContentIncludesDocumentAndDelimitedCredentialFormats(t *testing.T) {
-	for _, path := range []string{"credentials.csv", "credentials.tsv", "credentials.html", "credentials.htm", "credentials.markdown"} {
+	for _, path := range []string{"credentials.csv", "credentials.tsv", "credentials.html", "credentials.htm", "credentials.markdown", "credentials.bat", "credentials.cmd"} {
 		if !NeedsContent(path, path, 128) {
 			t.Errorf("%s should be eligible for credential content inspection", path)
+		}
+	}
+}
+
+func TestHarvestWindowsBatchLiteralAssignmentsPreserveScopeAndUnicode(t *testing.T) {
+	content := "@echo off\r\nset APP_USER=svc-batch\r\nset \"APP_PASS=Åpen-Batch-482!\"\r\nset OTHER_USER=unrelated\r\nset OTHER_PASS=%UNRESOLVED_PASS%\r\n"
+	got := Harvest(HarvestInput{Content: []byte(content), Path: "credentials.cmd"})
+	if !hasCandidatePayload(got, Confirmed, "Åpen-Batch-482!", "svc-batch", "") {
+		t.Fatalf("expected scoped literal batch credential, got %#v", got)
+	}
+	for _, candidate := range got {
+		if candidate.Identity == "unrelated" && candidate.Value == "%UNRESOLVED_PASS%" {
+			t.Fatalf("dynamic batch value was incorrectly paired: %#v", candidate)
+		}
+	}
+}
+
+func TestHarvestWindowsBatchAssignmentsDoNotCrossPairPrefixes(t *testing.T) {
+	content := "set FIRST_USER=first-user\nset FIRST_PASS=First-Batch-1!\nset SECOND_USER=second-user\nset SECOND_PASSWORD=Second-Batch-2!\nset ORPHAN_USER=orphan-user\nset UNRELATED_PASS=Unrelated-Batch-3!\n"
+	got := Harvest(HarvestInput{Content: []byte(content), Path: "credentials.bat"})
+	if !hasCandidatePayload(got, Confirmed, "First-Batch-1!", "first-user", "") {
+		t.Fatalf("expected first batch credential, got %#v", got)
+	}
+	if !hasCandidatePayload(got, Confirmed, "Second-Batch-2!", "second-user", "") {
+		t.Fatalf("expected second batch credential, got %#v", got)
+	}
+	for _, candidate := range got {
+		if candidate.Verification == Confirmed && candidate.Identity == "orphan-user" {
+			t.Fatalf("orphan batch identity was incorrectly paired: %#v", got)
 		}
 	}
 }

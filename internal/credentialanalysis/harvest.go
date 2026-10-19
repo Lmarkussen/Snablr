@@ -135,7 +135,7 @@ func NeedsContent(path, name string, size int64) bool {
 		ext = strings.ToLower(filepath.Ext(path))
 	}
 	switch ext {
-	case ".json", ".yaml", ".yml", ".xml", ".config", ".ini", ".env", ".conf", ".toml", ".properties", ".props", ".txt", ".md", ".markdown", ".csv", ".tsv", ".html", ".htm", ".ps1", ".py", ".sh", ".pem", ".key", ".ed25519", ".openssh":
+	case ".json", ".yaml", ".yml", ".xml", ".config", ".ini", ".env", ".conf", ".toml", ".properties", ".props", ".txt", ".md", ".markdown", ".csv", ".tsv", ".html", ".htm", ".bat", ".cmd", ".ps1", ".py", ".sh", ".pem", ".key", ".ed25519", ".openssh":
 		return true
 	case ".jpg", ".jpeg", ".png", ".gif", ".zip", ".7z", ".gz", ".exe", ".dll", ".so", ".pdf", ".wim", ".dit":
 		return false
@@ -998,9 +998,12 @@ func harvestLines(text string, add func(Candidate)) {
 		if idx := strings.LastIndex(key, "_"); idx > 0 {
 			prefix := key[:idx]
 			field := key[idx+1:]
-			if field == "username" || field == "user" || field == "password" || field == "passwd" || field == "passord" || field == "secret" || field == "token" {
+			if field == "username" || field == "user" || field == "password" || field == "passwd" || field == "passord" || field == "pass" || field == "secret" || field == "token" {
 				if prefixes[prefix] == nil {
 					prefixes[prefix] = map[string]string{}
+				}
+				if field == "pass" {
+					field = "password"
 				}
 				prefixes[prefix][field] = value
 			}
@@ -1222,7 +1225,11 @@ func normalizeAssignmentLine(line string) string {
 	case strings.HasPrefix(lower, "export "):
 		return strings.TrimSpace(line[len("export "):])
 	case strings.HasPrefix(lower, "set "):
-		return strings.TrimSpace(line[len("set "):])
+		assignment := strings.TrimSpace(line[len("set "):])
+		if len(assignment) >= 2 && assignment[0] == '"' && assignment[len(assignment)-1] == '"' {
+			assignment = strings.TrimSpace(assignment[1 : len(assignment)-1])
+		}
+		return assignment
 	case strings.HasPrefix(line, "$"):
 		return strings.TrimSpace(line[1:])
 	default:

@@ -28,6 +28,11 @@ func TestHTMLReportThemesAreStandaloneAndDarkByDefault(t *testing.T) {
 		`aria-pressed="true">Dark</button>`,
 		`>Flashbang</button>`,
 		`:root[data-theme="flashbang"]`,
+		`--accent: #3b82f6`,
+		`--surface-table-head`,
+		`details.group[open]`,
+		`.nav-chips a:hover`,
+		`.meta-chip`,
 		`sessionStorage`,
 		`snablr-report-theme:`,
 	}

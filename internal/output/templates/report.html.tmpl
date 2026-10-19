@@ -12,6 +12,7 @@
       --panel-alt: #1d272f;
       --text: #e7f0f2;
       --muted: #9bb0b5;
+      --secondary-text: #b5c4d0;
       --line: #34454b;
       --shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
       --low: #67b7ff;
@@ -61,6 +62,10 @@
       --link: #7dd3fc;
       --focus: #29b77f;
       --hover: #26363d;
+      --accent: #3b82f6;
+      --accent-bright: #60a5fa;
+      --accent-bg: #172b40;
+      --accent-border: #31577b;
     }
     :root[data-theme="flashbang"] {
       color-scheme: light;
@@ -69,6 +74,7 @@
       --panel-alt: #f7fafc;
       --text: #12263a;
       --muted: #60758c;
+      --secondary-text: #425466;
       --line: #d8e4ee;
       --shadow: 0 10px 30px rgba(16, 35, 62, 0.08);
       --low: #2563eb;
@@ -118,6 +124,10 @@
       --link: #1d4ed8;
       --focus: #15803d;
       --hover: #eef6fb;
+      --accent: #2563eb;
+      --accent-bright: #1d4ed8;
+      --accent-bg: #eff6ff;
+      --accent-border: #bfdbfe;
     }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
@@ -1087,6 +1097,48 @@
       color: var(--text);
       border-color: var(--line);
     }
+    [data-theme="dark"] .section-head h2 {
+      border-left: 3px solid var(--accent);
+      color: var(--text);
+      padding-left: 10px;
+    }
+    [data-theme="dark"] details.group,
+    [data-theme="dark"] details.group[open] {
+      background: var(--surface-primary);
+      border-color: var(--line);
+    }
+    [data-theme="dark"] summary.group-summary {
+      background: var(--surface-secondary);
+      border-bottom-color: var(--line);
+      color: var(--text);
+    }
+    [data-theme="dark"] summary.group-summary:focus-visible {
+      outline: 2px solid var(--accent-bright);
+      outline-offset: -2px;
+    }
+    [data-theme="dark"] .group-title h3,
+    [data-theme="dark"] .group-stats,
+    [data-theme="dark"] .group-guidance { color: var(--text); }
+    [data-theme="dark"] .group-stats,
+    [data-theme="dark"] .group-guidance { color: var(--secondary-text); }
+    [data-theme="dark"] .nav-chips a {
+      background: var(--accent-bg);
+      border-color: var(--accent-border);
+      color: var(--accent-bright);
+    }
+    [data-theme="dark"] .nav-chips a:hover,
+    [data-theme="dark"] .nav-chips a:focus-visible {
+      background: var(--accent);
+      border-color: var(--accent-bright);
+      color: #fff;
+      outline: none;
+    }
+    [data-theme="dark"] .meta-chip {
+      background: var(--surface-secondary);
+      border-color: var(--line);
+      color: var(--text);
+    }
+    [data-theme="dark"] .meta-chip span { color: var(--muted); }
     [data-theme="dark"] .card-meta,
     [data-theme="dark"] .section-note,
     [data-theme="dark"] .group-guidance,

@@ -24,10 +24,10 @@ func TestHTMLReportThemesAreStandaloneAndDarkByDefault(t *testing.T) {
 	checks := []string{
 		`<html lang="en" data-theme="dark">`,
 		`data-theme-choice="dark"`,
-		`data-theme-choice="flashbank"`,
+		`data-theme-choice="flashbang"`,
 		`aria-pressed="true">Dark</button>`,
-		`>Flashbank</button>`,
-		`:root[data-theme="flashbank"]`,
+		`>Flashbang</button>`,
+		`:root[data-theme="flashbang"]`,
 		`sessionStorage`,
 		`snablr-report-theme:`,
 	}

@@ -208,7 +208,7 @@ deferred.
 ## P7 HTML Report Themes (current milestone)
 
 Add a standalone, self-contained report theme switch with `Dark` as the fresh
-report default and `Flashbank` preserving the existing report appearance. The
+report default and `Flashbang` preserving the existing report appearance. The
 switch must change only presentation: findings, credentials, hashes,
 correlations, evidence, counts, filters, search state, provenance, and export
 content must remain unchanged. Recovered credential and hash material remains
@@ -218,7 +218,7 @@ JavaScript, frameworks, servers, or CDN resources, and must keep long paths,
 multiline evidence, UTF-8, and escaped content readable.
 
 P7 validation includes regression coverage for dark-default rendering,
-Flashbank compatibility, theme switching without reload, preserved filtering
+Flashbang compatibility, theme switching without reload, preserved filtering
 and search state, evidence escaping, long strings, UTF-8, stable counts, and
 standalone assets. A realistic independently synthetic report must be produced
 through the real HTML reporting pipeline and made available for operator

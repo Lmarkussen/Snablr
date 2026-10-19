@@ -3,6 +3,7 @@ package output
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -795,6 +796,114 @@ func TestTUIFinalizeDoesNotAutoQuit(t *testing.T) {
 	}
 	if updated.(tuiModel).quitHint != "Scan complete. Press Ctrl-C to close." {
 		t.Fatalf("unexpected completion hint: %q", updated.(tuiModel).quitHint)
+	}
+}
+
+func TestTUICompletionShowsFindingsCommandForDefaultDatabase(t *testing.T) {
+	state, err := store.Open(filepath.Join(t.TempDir(), "snablr.db"), store.Options{ScanID: "completion-default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+
+	writer := &TUIWriter{
+		summary:              newSummaryCollector(),
+		validationMode:       newValidationModeCollector(),
+		status:               "running",
+		findingsDatabasePath: "snablr.db",
+		searchStore:          state,
+	}
+	model := newTUIModel(writer)
+	model.windowLoaded, model.width, model.height = true, 120, 30
+	model.layout()
+	updated, _ := model.Update(tuiFinalizeEvent{Performance: &diff.PerformanceSummary{}})
+	model = updated.(tuiModel)
+
+	header := model.renderHeader()
+	if !strings.Contains(header, "Scan saved · Explore findings: snablr find") {
+		t.Fatalf("default findings command missing: %q", header)
+	}
+	if !strings.Contains(model.renderFooter(), "Alt-K skip folder") || !strings.Contains(model.renderFooter(), "Alt-S skip share") {
+		t.Fatalf("completion footer lost scanner controls: %q", model.renderFooter())
+	}
+}
+
+func TestTUICompletionShowsResolvedCustomDatabaseCommand(t *testing.T) {
+	state, err := store.Open(filepath.Join(t.TempDir(), "scan state.db"), store.Options{ScanID: "completion-custom"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+
+	customPath := filepath.Join(t.TempDir(), "scan state.db")
+	writer := &TUIWriter{
+		summary:              newSummaryCollector(),
+		validationMode:       newValidationModeCollector(),
+		status:               "running",
+		findingsDatabasePath: customPath,
+		searchStore:          state,
+	}
+	model := newTUIModel(writer)
+	model.windowLoaded, model.width, model.height = true, 160, 30
+	model.layout()
+	updated, _ := model.Update(tuiFinalizeEvent{Performance: &diff.PerformanceSummary{}})
+	model = updated.(tuiModel)
+
+	expected := "snablr find --db " + shellQuote(customPath)
+	if !strings.Contains(model.renderHeader(), expected) {
+		t.Fatalf("custom findings command missing: expected %q in %q", expected, model.renderHeader())
+	}
+}
+
+func TestTUICompletionOmitsFindingsHintWhenSQLiteIsUnhealthy(t *testing.T) {
+	state, err := store.Open(filepath.Join(t.TempDir(), "snablr.db"), store.Options{ScanID: "completion-unhealthy", FailAfterBatches: 1, BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	if err := state.RecordFinding(sampleFinding()); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err == nil || state.Healthy() {
+		t.Fatal("expected injected SQLite failure")
+	}
+
+	writer := &TUIWriter{
+		summary:              newSummaryCollector(),
+		validationMode:       newValidationModeCollector(),
+		status:               "running",
+		findingsDatabasePath: "snablr.db",
+		searchStore:          state,
+	}
+	model := newTUIModel(writer)
+	model.windowLoaded, model.width, model.height = true, 120, 30
+	model.layout()
+	updated, _ := model.Update(tuiFinalizeEvent{Performance: &diff.PerformanceSummary{}})
+	if strings.Contains(updated.(tuiModel).renderHeader(), "Explore findings:") {
+		t.Fatal("findings hint shown after SQLite persistence failure")
+	}
+}
+
+func TestTUICompletionOmitsFindingsHintWhenTooNarrow(t *testing.T) {
+	state, err := store.Open(filepath.Join(t.TempDir(), "snablr.db"), store.Options{ScanID: "completion-narrow"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+
+	writer := &TUIWriter{
+		summary:              newSummaryCollector(),
+		validationMode:       newValidationModeCollector(),
+		status:               "running",
+		findingsDatabasePath: "snablr.db",
+		searchStore:          state,
+	}
+	model := newTUIModel(writer)
+	model.windowLoaded, model.width, model.height = true, 40, 24
+	model.layout()
+	updated, _ := model.Update(tuiFinalizeEvent{Performance: &diff.PerformanceSummary{}})
+	if strings.Contains(updated.(tuiModel).renderHeader(), "Explore findings:") {
+		t.Fatal("findings hint should be omitted when it cannot fit")
 	}
 }
 

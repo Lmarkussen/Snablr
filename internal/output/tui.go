@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -59,10 +60,11 @@ type TUIWriter struct {
 	done   chan struct{}
 	runErr error
 
-	cancelMu         sync.Mutex
-	cancelScan       context.CancelFunc
-	userCanceledScan bool
-	searchStore      *store.SQLiteStore
+	cancelMu             sync.Mutex
+	cancelScan           context.CancelFunc
+	userCanceledScan     bool
+	searchStore          *store.SQLiteStore
+	findingsDatabasePath string
 }
 
 type tuiFinalizeEvent struct {
@@ -275,6 +277,12 @@ func (t *TUIWriter) SetValidationManifest(path string) {
 	t.manifest = path
 }
 
+func (t *TUIWriter) SetFindingsDatabasePath(path string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.findingsDatabasePath = strings.TrimSpace(path)
+}
+
 func (t *TUIWriter) SetSuppressionSummary(summary *suppressionSummary) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -410,8 +418,14 @@ func (t *TUIWriter) Close() error {
 		Validation:     validation,
 		Profile:        strings.TrimSpace(t.profile),
 	}
+	searchStore := t.searchStore
 	t.status = "done"
 	t.mu.Unlock()
+	if searchStore != nil {
+		if err := searchStore.Flush(); err != nil {
+			return fmt.Errorf("flush SQLite state before completion: %w", err)
+		}
+	}
 
 	if t.enqueue(final) {
 		<-t.done
@@ -1522,6 +1536,9 @@ func (m tuiModel) renderHeader() string {
 			len(m.final.AccessPaths),
 			m.final.Performance.FilesPerSecond,
 		)))
+		if hint := m.findingsDatabaseHint(); hint != "" && lipgloss.Width(hint) <= m.width && m.height >= len(lines)+lipgloss.Height(m.renderFooter())+3 {
+			lines = append(lines, m.styles.headerMuted.Render(hint))
+		}
 	} else {
 		lines = append(lines, m.styles.headerMuted.Render("Use up/down or j/k to select findings. Evidence is shown only in the right pane."))
 	}
@@ -1540,9 +1557,39 @@ func (m tuiModel) renderFooter() string {
 		message = m.bookmarkStatus + " • " + message
 	}
 	if strings.TrimSpace(m.quitHint) != "" {
-		message = m.quitHint
+		if m.completed {
+			message = m.quitHint + "\n" + message
+		} else {
+			message = m.quitHint
+		}
 	}
 	return clampMultiline(m.styles.footer.Render(message), m.width)
+}
+
+func (m tuiModel) findingsDatabaseHint() string {
+	if m.writer == nil {
+		return ""
+	}
+	m.writer.mu.Lock()
+	path := m.writer.findingsDatabasePath
+	searchStore := m.writer.searchStore
+	m.writer.mu.Unlock()
+	if path == "" || searchStore == nil || !searchStore.Healthy() {
+		return ""
+	}
+	command := "snablr find"
+	if filepath.Clean(path) != "snablr.db" {
+		resolved, err := filepath.Abs(path)
+		if err != nil {
+			resolved = path
+		}
+		command += " --db " + shellQuote(resolved)
+	}
+	return "Scan saved · Explore findings: " + command
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func (m tuiModel) renderPanes(bodyHeight int) (string, string) {

@@ -43,6 +43,10 @@ type validationManifestAware interface {
 	SetValidationManifest(string)
 }
 
+type findingsDatabasePathAware interface {
+	SetFindingsDatabasePath(string)
+}
+
 type summaryCollector struct {
 	mu sync.Mutex
 
@@ -380,6 +384,15 @@ func (m *MultiWriter) SetBaselinePerformance(summary *diff.PerformanceSummary) {
 
 func (m *MultiWriter) SetValidationManifest(path string) {
 	m.broadcastValidation(func(aware validationManifestAware) { aware.SetValidationManifest(path) })
+}
+
+func (m *MultiWriter) SetFindingsDatabasePath(path string) {
+	m.mu.Lock()
+	sinks := append([]scanner.FindingSink(nil), m.sinks...)
+	m.mu.Unlock()
+	for _, sink := range sinks {
+		SetFindingsDatabasePath(sink, path)
+	}
 }
 
 func (m *MultiWriter) SetSuppressionSummary(summary *suppressionSummary) {
@@ -751,6 +764,21 @@ func SetScanInterrupted(sink scanner.FindingSink, reason string) {
 	}
 	if aware, ok := sink.(InterruptionAware); ok {
 		aware.SetScanInterrupted(reason)
+	}
+}
+
+// SetFindingsDatabasePath gives live output writers the path needed to show
+// the offline Findings Engine command after a successful scan.
+func SetFindingsDatabasePath(sink scanner.FindingSink, path string) {
+	if sink == nil {
+		return
+	}
+	if aware, ok := sink.(findingsDatabasePathAware); ok {
+		aware.SetFindingsDatabasePath(path)
+		return
+	}
+	if wrapped, ok := sink.(*suppressionWriter); ok {
+		SetFindingsDatabasePath(wrapped.inner, path)
 	}
 }
 

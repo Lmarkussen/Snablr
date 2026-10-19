@@ -152,6 +152,10 @@ func (s *suppressionWriter) SetValidationManifest(path string) {
 	}
 }
 
+func (s *suppressionWriter) SetFindingsDatabasePath(path string) {
+	SetFindingsDatabasePath(s.inner, path)
+}
+
 func (s *suppressionWriter) SetValidationMode(enabled bool) {
 	if aware, ok := s.inner.(ValidationModeAware); ok {
 		aware.SetValidationMode(enabled)

@@ -369,6 +369,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	}
 	sink = output.WrapWithSuppression(sink, cfg.Suppression)
 	output.AttachSQLiteStore(sink, shadow)
+	output.SetFindingsDatabasePath(sink, sqliteStatePath(cfg))
 	if exporter, ok := sink.(scanner.SensitiveCredentialExporter); ok {
 		engine.SetCredentialExporter(exporter)
 	}

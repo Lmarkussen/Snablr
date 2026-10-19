@@ -5,9 +5,11 @@ import "testing"
 func TestAssessSensitiveValueQualityRejectsPlaceholders(t *testing.T) {
 	t.Parallel()
 
-	quality := assessSensitiveValueQuality("changeme")
-	if !quality.Weak || quality.Label != "low" {
-		t.Fatalf("expected placeholder value to be weak, got %#v", quality)
+	for _, value := range []string{"changeme", "********", "REDACTED", "${PASSWORD}"} {
+		quality := assessSensitiveValueQuality(value)
+		if !quality.Weak || quality.Label != "low" {
+			t.Errorf("expected placeholder value %q to be weak, got %#v", value, quality)
+		}
 	}
 }
 

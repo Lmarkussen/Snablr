@@ -165,6 +165,9 @@ func isBareCredentialNoteKeyword(matched string) bool {
 
 func isPlaceholderSecretValue(value string) bool {
 	value = strings.ToLower(strings.TrimSpace(strings.Trim(value, `"'`)))
+	if credentialanalysis.IsPlaceholderValue(value) {
+		return true
+	}
 	switch {
 	case value == "":
 		return true

@@ -571,10 +571,10 @@ func (m *model) resize() {
 	}
 	listRows = max(1, listRows)
 	m.list.Width, m.list.Height = max(20, m.width-6), listRows
-	// Header, breadcrumb, footer, and each panel's title/borders consume fixed
+	// Header, footer, and each panel's title/borders consume fixed
 	// rows. Only the remaining rows belong to the preview viewport.
 	panelRows := listRows + 3
-	remaining := m.height - 3 - panelRows - 3
+	remaining := m.height - 2 - panelRows - 3
 	// Keep the overview compact on tall terminals; unused space below the
 	// footer is preferable to stretching a small preview into a blank panel.
 	// Give details more room on ordinary terminals while keeping a bounded
@@ -593,17 +593,13 @@ func (m *model) View() string {
 	if scan.Targets != "" {
 		header += "  " + scan.Targets
 	}
-	crumb := ""
-	if m.screen != screenCategories {
-		crumb = breadcrumb(m.screen, m.categories, m.selected, m.subs, m.selectedSub, m.discoveries, m.selectedDisc)
-	}
 	if m.selectingScan {
-		return m.frame(header, "Choose a scan", "Scans", m.list.View(), "", m.preview.View())
+		return m.frame(header, "", "Scans", m.list.View(), "", m.preview.View())
 	}
 	if m.screen == screenCategories {
-		return m.frame(header, crumb, "Categories", m.list.View(), "Preview", m.preview.View())
+		return m.frame(header, "", "Categories", m.list.View(), "Preview", m.preview.View())
 	}
-	return m.frame(header, crumb, "Discoveries", m.list.View(), "Details", m.preview.View())
+	return m.frame(header, "", "Discoveries", m.list.View(), "Details", m.preview.View())
 }
 
 func (m *model) frame(header, crumb, leftTitle, leftContent, rightTitle, rightContent string) string {
@@ -612,7 +608,7 @@ func (m *model) frame(header, crumb, leftTitle, leftContent, rightTitle, rightCo
 	if leftTitle == "" {
 		panel := style.Render(panelHeader(rightTitle, false, m.preview.Width, section) + "\n" + rightContent)
 		footer := "PgUp/PgDn scroll  ←/Esc back  Q quit"
-		return lipgloss.JoinVertical(lipgloss.Left, header, crumb, panel, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(footer+"  "+m.status))
+		return joinFinderSections(header, crumb, panel, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(footer+"  "+m.status))
 	}
 	left := style.Render(panelHeader(leftTitle, m.focus == 0, m.list.Width, section) + "\n" + leftContent)
 	preview := style.Render(panelHeader(rightTitle, m.focus == 1, m.preview.Width, section) + "\n" + rightContent)
@@ -620,7 +616,17 @@ func (m *model) frame(header, crumb, leftTitle, leftContent, rightTitle, rightCo
 	if m.screen == screenCategories || m.selectingScan {
 		footer = "↑/↓ j/k move  Enter/→ select  Q quit"
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, header, crumb, left, preview, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(footer+"  "+m.status))
+	return joinFinderSections(header, crumb, left, preview, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(footer+"  "+m.status))
+}
+
+func joinFinderSections(sections ...string) string {
+	filtered := make([]string, 0, len(sections))
+	for _, section := range sections {
+		if section != "" {
+			filtered = append(filtered, section)
+		}
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, filtered...)
 }
 
 func panelHeader(title string, focused bool, width int, section lipgloss.Style) string {
@@ -744,19 +750,6 @@ func statusStyle(value string) lipgloss.Style {
 	default:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
 	}
-}
-func breadcrumb(level screen, cats []category, cat int, subs []string, sub int, discs []discovery, disc int) string {
-	if len(cats) == 0 {
-		return ""
-	}
-	result := cats[cat].Name
-	if level >= screenSubcategories && len(subs) > 0 {
-		result += " > " + subs[sub]
-	}
-	if level >= screenDiscoveries && len(discs) > 0 {
-		result += " > " + discs[disc].Title
-	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render(result)
 }
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {

@@ -125,6 +125,27 @@ func TestCategoryRowsKeepCountColumnFixed(t *testing.T) {
 	}
 }
 
+func TestFinderHasNoGlobalBreadcrumbAtAnyLevel(t *testing.T) {
+	item := category{Name: "Credentials", Discoveries: []discovery{{Title: "identity", Subcategory: "Passwords", Value: "secret"}}}
+	m := &model{scans: []Scan{{ID: "scan", Status: "completed"}}, categories: []category{item}, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(100, 30)
+	assertNoBreadcrumb := func(level string) {
+		if strings.Contains(m.View(), "Credentials >") {
+			t.Fatalf("%s view retained global breadcrumb: %q", level, m.View())
+		}
+	}
+	assertNoBreadcrumb("categories")
+	m.open()
+	assertNoBreadcrumb("subcategories")
+	m.open()
+	assertNoBreadcrumb("discoveries")
+	m.back()
+	assertNoBreadcrumb("back navigation")
+
+	m.selectingScan = true
+	assertNoBreadcrumb("scan selection")
+}
+
 func TestCategoryCountsDoNotPromoteSupportingFindings(t *testing.T) {
 	items := buildCategories(nil, []Finding{{Finding: scanner.Finding{RuleID: "extension", Category: "configuration", TriageClass: "supporting", Actionable: false}}}, nil)
 	if len(items) != 1 || items[0].Name != "Original Findings" {

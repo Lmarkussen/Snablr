@@ -27,6 +27,8 @@ func TestHTMLReportThemesAreStandaloneAndDarkByDefault(t *testing.T) {
 		`data-theme-choice="flashbang"`,
 		`class="report-banner"`,
 		`@Evilhaxxor`,
+		`class="report-repo-link"`,
+		`https://github.com/Lmarkussen/Snablr`,
 		`aria-pressed="true">Dark</button>`,
 		`>Flashbang</button>`,
 		`:root[data-theme="flashbang"]`,
@@ -43,7 +45,7 @@ func TestHTMLReportThemesAreStandaloneAndDarkByDefault(t *testing.T) {
 			t.Errorf("report is missing theme marker %q", check)
 		}
 	}
-	for _, external := range []string{"https://", "http://", "<link rel=\"stylesheet\""} {
+	for _, external := range []string{"src=\"https://", "src=\"http://", "<link rel=\"stylesheet\""} {
 		if strings.Contains(report, external) {
 			t.Errorf("standalone report unexpectedly references external resource %q", external)
 		}

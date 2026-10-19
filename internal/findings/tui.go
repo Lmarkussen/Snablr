@@ -31,6 +31,7 @@ type discovery struct {
 	PairingStatus, PairingBasis, OriginalVerification  string
 	ConnectionDetails                                  []connectionDetail
 	Sources                                            []string
+	PersistedRefs                                      []string
 	Finding                                            *scanner.Finding
 }
 
@@ -96,7 +97,11 @@ func (m *model) loadScan() error {
 		return err
 	}
 	m.findings = findings
-	m.categories = buildCategories(credentials, findings, correlations)
+	categories, audit := buildCategoriesWithAccounting(m.scans[m.selectedScan].ID, credentials, findings, correlations)
+	if audit.UnaccountedRows != 0 {
+		return fmt.Errorf("findings credential projection accounting failed: %d unaccounted rows (%s)", audit.UnaccountedRows, strings.Join(audit.UnaccountedRefs, ", "))
+	}
+	m.categories = categories
 	m.selected, m.selectedSub, m.selectedDisc = 0, 0, 0
 	m.screen = screenCategories
 	m.status = fmt.Sprintf("%d categories · %d findings · %d logical credentials · %d correlations", len(m.categories), len(findings), len(credentials), len(correlations))
@@ -147,6 +152,11 @@ func readAllCorrelations(ctx context.Context, provider *Provider, scanID string)
 }
 
 func buildCategories(credentials []Credential, findings []Finding, correlations []Correlation) []category {
+	categories, _ := buildCategoriesWithAccounting("", credentials, findings, correlations)
+	return categories
+}
+
+func buildCategoriesWithAccounting(scanID string, credentials []Credential, findings []Finding, correlations []Correlation) ([]category, ProjectionAudit) {
 	ordered := []struct {
 		name, description string
 	}{
@@ -174,11 +184,13 @@ func buildCategories(credentials []Credential, findings []Finding, correlations 
 		pairing := interpretCredential(candidate)
 		name, sub := classifyCandidate(candidate)
 		key := strings.Join([]string{candidate.CredentialType, candidate.Identity, candidate.Domain, candidate.Value}, "\x00")
-		if key == "\x00\x00\x00" {
-			key = item.CredentialKey
+		rowRef := credentialRowRef(item)
+		if key == "\x00\x00\x00" || strings.TrimSpace(candidate.Value) == "" {
+			key = rowRef
 		}
 		if ref, ok := seen[key]; ok && ref.category == name {
 			group := groups[name]
+			group.Discoveries[ref.index].PersistedRefs = appendUnique(group.Discoveries[ref.index].PersistedRefs, rowRef)
 			group.Discoveries[ref.index].Sources = appendUnique(group.Discoveries[ref.index].Sources, sourceLabel(candidate))
 			group.Discoveries[ref.index].SourceContext = appendContext(group.Discoveries[ref.index].SourceContext, sourceContext(candidate))
 			group.Discoveries[ref.index].OriginType = mergeOrigin(group.Discoveries[ref.index].OriginType, originType(candidate))
@@ -205,6 +217,7 @@ func buildCategories(credentials []Credential, findings []Finding, correlations 
 			Reason:               strings.Join(candidate.ReviewReasons, "; "),
 			ConnectionDetails:    connectionDetails(candidate),
 			Sources:              []string{sourceLabel(candidate)},
+			PersistedRefs:        []string{rowRef},
 		}
 		group := groups[name]
 		seen[key] = discoveryRef{category: name, index: len(group.Discoveries)}
@@ -252,7 +265,7 @@ func buildCategories(credentials []Credential, findings []Finding, correlations 
 			result = append(result, *group)
 		}
 	}
-	return result
+	return result, auditCredentialProjection(scanID, credentials, result)
 }
 
 func classifyCandidate(candidate credentialanalysis.Candidate) (string, string) {

@@ -125,3 +125,56 @@ func TestReadAllCredentialsTraversesMoreThanOnePage(t *testing.T) {
 		t.Fatalf("multi-page accounting failed: %#v", audit)
 	}
 }
+
+func TestCredentialProjectionGroupsLogicalPairsWithoutLosingRows(t *testing.T) {
+	credentials := []Credential{
+		accountingCredential("same-a", "password", "alice", "Shared-Pass!", "a.ini", credentialanalysis.Confirmed),
+		accountingCredential("same-b", "password", "alice", "Shared-Pass!", "b.ini", credentialanalysis.Confirmed),
+		accountingCredential("same-c", "password", "bob", "Shared-Pass!", "c.ini", credentialanalysis.Confirmed),
+		accountingCredential("alice-other", "password", "alice", "Other-Pass!", "d.ini", credentialanalysis.Confirmed),
+	}
+	categories, audit := buildCategoriesWithAccounting("scan-dedup", credentials, nil, nil)
+	if audit.UnaccountedRows != 0 || audit.PresentedRows != 3 || audit.GroupedRows != 1 {
+		t.Fatalf("dedup accounting mismatch: %#v", audit)
+	}
+	var logical int
+	var sourceCount int
+	for _, group := range categories {
+		for _, discovery := range group.Discoveries {
+			if discovery.Identity == "alice" {
+				logical++
+				if discovery.Value == "Shared-Pass!" {
+					sourceCount = len(discovery.PersistedRefs)
+				}
+			}
+		}
+	}
+	if logical != 2 || sourceCount != 2 {
+		t.Fatalf("expected two alice discoveries and two grouped source rows, logical=%d sources=%d", logical, sourceCount)
+	}
+}
+
+func TestCredentialProjectionGroupsConnectionPairRowsWithPlainPair(t *testing.T) {
+	credentials := []Credential{
+		accountingCredential("connection", "connection_string", "", "Server=db;User ID=svc;Password=Conn-Pass!", "app.config", credentialanalysis.Confirmed),
+		accountingCredential("plain", "password", "svc", "Conn-Pass!", "app.config", credentialanalysis.Confirmed),
+	}
+	categories, audit := buildCategoriesWithAccounting("scan-connection-dedup", credentials, nil, nil)
+	if audit.UnaccountedRows != 0 || audit.GroupedRows != 1 {
+		t.Fatalf("connection dedup accounting mismatch: %#v", audit)
+	}
+	var discoveries int
+	for _, group := range categories {
+		for _, discovery := range group.Discoveries {
+			if discovery.Identity == "svc" && discovery.RecoveredPassword == "Conn-Pass!" {
+				discoveries++
+				if len(discovery.PersistedRefs) != 2 {
+					t.Fatalf("connection pair refs=%d, want 2", len(discovery.PersistedRefs))
+				}
+			}
+		}
+	}
+	if discoveries != 1 {
+		t.Fatalf("connection pair discoveries=%d, want 1", discoveries)
+	}
+}

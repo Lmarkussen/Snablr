@@ -87,8 +87,8 @@ func TestHarvestNorwegianCredentialFormats(t *testing.T) {
 	}
 
 	generic := Harvest(HarvestInput{Content: norwegianFixture(t, "generic-pairs.txt"), Path: "generic-pairs.txt"})
-	if !hasCandidate(generic, Review, "Generisk-Hemmelighet-123!") {
-		t.Fatalf("generic key/value Passord was not surfaced: %#v", generic)
+	if !hasNorwegianCandidate(generic, Confirmed, "Generisk-Hemmelighet-123!", "svc_backup", "") {
+		t.Fatalf("generic key/value Passord was not paired: %#v", generic)
 	}
 
 	jsonCandidates := Harvest(HarvestInput{Content: norwegianFixture(t, "credentials.json"), Path: "credentials.json"})

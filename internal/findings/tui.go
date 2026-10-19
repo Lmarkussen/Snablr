@@ -195,13 +195,21 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 		}
 		pairing := interpretCredential(candidate)
 		name, sub := classifyCandidate(candidate)
-		key := strings.Join([]string{candidate.CredentialType, candidate.Identity, candidate.Domain, candidate.Value}, "\x00")
+		// Group by the logical credential when a connection string explicitly
+		// contains a username/password pair. The original connection-string
+		// value remains on the representative and every contributing row is
+		// retained in PersistedRefs and Sources.
+		logicalType, logicalIdentity, logicalValue := candidate.CredentialType, candidate.Identity, candidate.Value
+		if hasConnectionPair {
+			logicalType, logicalIdentity, logicalValue = "password", connectionPair.Username, connectionPair.Password
+		}
+		key := strings.Join([]string{logicalType, logicalIdentity, candidate.Domain, logicalValue}, "\x00")
 		rowRef := credentialRowRef(item)
 		if key == "\x00\x00\x00" || strings.TrimSpace(candidate.Value) == "" {
 			key = rowRef
 		}
-		if ref, ok := seen[key]; ok && ref.category == name {
-			group := groups[name]
+		if ref, ok := seen[key]; ok {
+			group := groups[ref.category]
 			group.Discoveries[ref.index].PersistedRefs = appendUnique(group.Discoveries[ref.index].PersistedRefs, rowRef)
 			group.Discoveries[ref.index].Sources = appendUnique(group.Discoveries[ref.index].Sources, sourceLabel(candidate))
 			group.Discoveries[ref.index].SourceContext = appendContext(group.Discoveries[ref.index].SourceContext, sourceContext(candidate))

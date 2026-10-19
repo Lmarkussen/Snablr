@@ -123,9 +123,9 @@ func TestLivePasswordListContentIsHarvested(t *testing.T) {
 		{"PasswordList-smartart.docx", "SmartArt-Hemmelig-123!", "svc_smart", "word/diagrams/data1.xml", credentialanalysis.Confirmed},
 		{"PasswordList-comment.xlsx", "ExcelKommentar-Hemmelig-123!", "svc_excel_kommentar", "xl/comments1.xml", credentialanalysis.Confirmed},
 		{"PasswordList-drawing.xlsx", "Tegning-Hemmelig-123!", "svc_tegning", "xl/drawings/drawing1.xml", credentialanalysis.Confirmed},
-		// Plain text without a section keeps the established review-only policy
-		// for section-less top-level lines; the value must still be surfaced.
-		{"PasswordList.txt", "Txt-Hemmelig-123!", "", "", credentialanalysis.Review},
+		// Explicit adjacent username/password labels establish a bounded pair
+		// even when the plain-text file has no section header.
+		{"PasswordList.txt", "Txt-Hemmelig-123!", "svc_txt", "", credentialanalysis.Confirmed},
 	}
 	for _, test := range cases {
 		evaluation, candidates := evaluateOfficeFixture(t, manager, test.fixture, true)

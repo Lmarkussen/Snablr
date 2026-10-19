@@ -39,6 +39,32 @@ func TestHarvestSuppressesPlaceholdersAndConfirmsEnvironmentPairs(t *testing.T) 
 	}
 }
 
+func TestHarvestPairsAdjacentTopLevelCredentialFieldsWithoutCrossProduct(t *testing.T) {
+	got := Harvest(HarvestInput{Content: []byte("username=alice\npassword=AlicePass!\n\naccount=bob\npassword=BobPass!\n"), Path: "records.txt"})
+	if !hasIdentityValue(got, Confirmed, "alice", "AlicePass!") || !hasIdentityValue(got, Confirmed, "bob", "BobPass!") {
+		t.Fatalf("explicit adjacent records were not paired: %#v", got)
+	}
+	for _, candidate := range got {
+		if candidate.Verification == Confirmed && candidate.Identity == "alice" && candidate.Value == "BobPass!" {
+			t.Fatal("cross-record credential pairing was created")
+		}
+	}
+}
+
+func TestHarvestPairsLabeledAccountAndPassword(t *testing.T) {
+	got := Harvest(HarvestInput{Content: []byte("Deployment account: SYNTHETIC\\svc-r4b\nPassword: R4B-Example-922!\n"), Path: "plain.txt"})
+	if !hasIdentityValue(got, Confirmed, `SYNTHETIC\svc-r4b`, "R4B-Example-922!") {
+		t.Fatalf("labeled account/password was not paired: %#v", got)
+	}
+}
+
+func TestHarvestRecognizesCompoundEnvironmentPasswordAsReview(t *testing.T) {
+	got := Harvest(HarvestInput{Content: []byte("R4B_PASSWORD_ONLY=R4B-Review-Only-771!\n"), Path: "review.env"})
+	if !hasCandidate(got, Review, "R4B-Review-Only-771!") {
+		t.Fatalf("compound environment password was not retained for review: %#v", got)
+	}
+}
+
 func TestHarvestRecognizesStructuredAPIPairs(t *testing.T) {
 	got := Harvest(HarvestInput{Content: []byte(`{"access_key_id":"AKIA0000000000000001","secret_access_key":"api-secret"}`), Path: "api.json"})
 	if !hasCandidate(got, Confirmed, "api-secret") {
@@ -130,6 +156,15 @@ func TestHarvestValidatesPrivateKeys(t *testing.T) {
 func hasCandidate(candidates []Candidate, verification Verification, value string) bool {
 	for _, candidate := range candidates {
 		if candidate.Verification == verification && candidate.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
+func hasIdentityValue(candidates []Candidate, verification Verification, identity, value string) bool {
+	for _, candidate := range candidates {
+		if candidate.Verification == verification && candidate.Identity == identity && candidate.Value == value {
 			return true
 		}
 	}

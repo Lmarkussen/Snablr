@@ -707,7 +707,7 @@ func isSecretElement(name string) bool {
 	return isSecretKey(name)
 }
 
-var assignmentPattern = regexp.MustCompile(`(?im)^\s*([A-Za-z][A-Za-z0-9_.-]{0,63})\s*(?:[:=])\s*(?:["']([^"']*)["']|([^#;\r\n]*))\s*$`)
+var assignmentPattern = regexp.MustCompile(`(?im)^\s*([A-Za-z][A-Za-z0-9_. -]{0,63})\s*(?:[:=])\s*(?:["']([^"']*)["']|([^#;\r\n]*))\s*$`)
 var inlinePairPattern = regexp.MustCompile(`(?is)["']?(username|user|userid|login|account|brukernavn|bruker|kontonavn|konto)["']?\s*[:=]\s*["']([^"']+)["']\s*[,}]\s*["']?(password|passwd|pwd|passord)["']?\s*[:=]\s*["']([^"']+)["']`)
 
 func harvestInlinePairs(text string, add func(Candidate)) {
@@ -733,9 +733,12 @@ func harvestLines(text string, add func(Candidate)) {
 	text = NormalizeCredentialExpressions(text)
 	sections := map[string]map[string]string{"": {}}
 	section := ""
+	pairedTopLevelPasswords := make(map[string]struct{})
+	var previousTopLevel *struct{ key, value string }
 	for index, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") || strings.HasPrefix(line, ";") {
+			previousTopLevel = nil
 			continue
 		}
 		if harvestNetNTLMRecord(line, index+1, add) {
@@ -746,6 +749,7 @@ func harvestLines(text string, add func(Candidate)) {
 		}
 		line = normalizeAssignmentLine(line)
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			previousTopLevel = nil
 			section = strings.ToLower(strings.TrimSpace(line[1 : len(line)-1]))
 			if sections[section] == nil {
 				sections[section] = map[string]string{}
@@ -754,13 +758,27 @@ func harvestLines(text string, add func(Candidate)) {
 		}
 		match := assignmentPattern.FindStringSubmatch(line)
 		if match == nil {
+			previousTopLevel = nil
 			continue
 		}
 		key, value := normalizeKey(match[1]), strings.TrimSpace(firstNonEmpty(match[2], match[3]))
 		if value == "" {
+			previousTopLevel = nil
 			continue
 		}
 		sections[section][key] = value
+		if section == "" {
+			current := &struct{ key, value string }{key: key, value: value}
+			_, sccmPasswordField := sccmPasswordAccounts[key]
+			if previousTopLevel != nil && ClassifyFieldName(previousTopLevel.key) == FieldRoleIdentity && isPasswordKey(key) && !sccmPasswordField && !looksReferenceOrTemplate(value) {
+				identity := strings.TrimSpace(previousTopLevel.value)
+				if identity != "" && !IsPlaceholderIdentity(identity) {
+					add(Candidate{Verification: Confirmed, CredentialType: "password", Identity: identity, Value: value, ValidationBasis: "explicit adjacent credential fields"})
+					pairedTopLevelPasswords[key] = struct{}{}
+				}
+			}
+			previousTopLevel = current
+		}
 		if strings.Contains(key, "connection") && strings.Contains(strings.ToLower(value), "password") {
 			add(Candidate{Verification: Confirmed, CredentialType: "connection_string", Value: value, ValidationBasis: "structured_connection_string"})
 		}
@@ -785,6 +803,9 @@ func harvestLines(text string, add func(Candidate)) {
 			continue
 		}
 		if isSecretKey(key) {
+			if _, paired := pairedTopLevelPasswords[key]; paired {
+				continue
+			}
 			candidate := Candidate{Verification: Review, CredentialType: credentialType(key), Value: value, ReviewReasons: []string{"credential-like value requires semantic review"}}
 			if looksReferenceOrTemplate(value) {
 				candidate.ReviewReasons = append(candidate.ReviewReasons, "value resembles template or variable reference")
@@ -1080,6 +1101,17 @@ func isSecretKey(key string) bool {
 		return false
 	}
 	last := tokens[len(tokens)-1]
+	for index, token := range tokens {
+		if token == "password" || token == "passwd" || token == "pwd" || token == "passord" {
+			if index+1 < len(tokens) {
+				suffix := tokens[index+1]
+				if suffix != "only" && suffix != "value" && suffix != "secret" {
+					continue
+				}
+			}
+			return true
+		}
+	}
 	switch last {
 	case "secret", "token":
 		if last == "token" && len(tokens) >= 2 && tokens[len(tokens)-2] == "key" {

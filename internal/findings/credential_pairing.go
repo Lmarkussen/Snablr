@@ -49,7 +49,7 @@ func interpretCredential(candidate credentialanalysis.Candidate) pairingDecision
 		decision.Confirmed = true
 		return decision
 	}
-	if candidate.Verification == credentialanalysis.Review && hasPersistedPairObservation(candidate) {
+	if candidate.Verification == credentialanalysis.Review && strings.EqualFold(strings.TrimSpace(candidate.CredentialType), "secret") && hasPersistedPairObservation(candidate) {
 		decision.Status = "Confirmed pair (Finder-derived)"
 		decision.Basis = "persisted candidate contains an identity and value in the same observation"
 		decision.Confirmed = true

@@ -406,7 +406,7 @@ func TestKeyPresentationUsesValidatedMaterialType(t *testing.T) {
 func TestAllPersistedMaterialReusesDiscoveryReferencesAndStatuses(t *testing.T) {
 	credentials := []Credential{
 		{CredentialKey: "confirmed", Candidate: credentialanalysis.Candidate{CredentialType: "password", Identity: "DOMAIN\\alice", Value: "SyntheticOne!", Verification: credentialanalysis.Confirmed, Path: "one.ini", Host: "HOST", Share: "Share"}},
-		{CredentialKey: "derived", Candidate: credentialanalysis.Candidate{CredentialType: "password", Identity: "DOMAIN\\bob", Value: "SyntheticTwo!", Verification: credentialanalysis.Review, Path: "two.ini", Host: "HOST", Share: "Share"}},
+		{CredentialKey: "derived", Candidate: credentialanalysis.Candidate{CredentialType: "secret", Identity: "DOMAIN\\bob", Value: "SyntheticTwo!", Verification: credentialanalysis.Review, Path: "two.ini", Host: "HOST", Share: "Share"}},
 		{CredentialKey: "opaque", Candidate: credentialanalysis.Candidate{CredentialType: "password", Identity: "DOMAIN\\opaque", Value: "BASE64-CIPHERTEXT-NOT-PLAINTEXT", Verification: credentialanalysis.Confirmed, Path: "encrypted.xml", Host: "HOST", Share: "Share"}},
 		{CredentialKey: "password-only", Candidate: credentialanalysis.Candidate{CredentialType: "password", Value: "OnlyValue!", Verification: credentialanalysis.Review, Path: "only.ini", Host: "HOST", Share: "Share"}},
 	}
@@ -568,5 +568,20 @@ func TestResizeKeepsDeepSelectionVisible(t *testing.T) {
 	m.resizeTo(80, 24)
 	if !strings.Contains(m.list.View(), "discovery-36") {
 		t.Fatalf("deep selection not visible after compact resize: %q", m.list.View())
+	}
+}
+
+func TestFinderKeepsReviewPasswordIdentityUncertain(t *testing.T) {
+	candidate := credentialanalysis.Candidate{
+		Verification:   credentialanalysis.Review,
+		CredentialType: "password",
+		Identity:       "primary-user",
+		Value:          "SecondaryPass!",
+		Path:           "database/review.properties",
+		Evidence:       []credentialanalysis.Evidence{{Path: "database/review.properties"}},
+	}
+	decision := interpretCredential(candidate)
+	if decision.Confirmed || decision.Status != "Uncertain pairing" {
+		t.Fatalf("review password was promoted: %#v", decision)
 	}
 }

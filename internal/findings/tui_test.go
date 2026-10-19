@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"snablr/internal/credentialanalysis"
 	"snablr/internal/scanner"
 )
@@ -73,6 +74,23 @@ func TestFinderFocusIndicatorAndPaneNavigation(t *testing.T) {
 	}
 	if strings.Contains(subcategoryPreview(item, []string{"Passwords"}, 0), "press Enter") {
 		t.Fatal("subcategory preview retained redundant navigation instructions")
+	}
+}
+
+func TestPanelHeaderEmitsOrangeFocusColor(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(previous)
+
+	header := panelHeader("Categories", true, 80, lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true))
+	if !strings.Contains(header, "[FOCUS]") {
+		t.Fatalf("focus label missing from header: %q", header)
+	}
+	if !strings.Contains(header, "38;2;251;146;60m") {
+		t.Fatalf("orange true-color sequence missing from final header: %q", header)
+	}
+	if strings.Contains(header, "\x1b[38;2;42;") {
+		t.Fatalf("focus header used the green heading color: %q", header)
 	}
 }
 

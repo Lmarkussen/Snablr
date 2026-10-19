@@ -593,7 +593,10 @@ func (m *model) View() string {
 	if scan.Targets != "" {
 		header += "  " + scan.Targets
 	}
-	crumb := breadcrumb(m.screen, m.categories, m.selected, m.subs, m.selectedSub, m.discoveries, m.selectedDisc)
+	crumb := ""
+	if m.screen != screenCategories {
+		crumb = breadcrumb(m.screen, m.categories, m.selected, m.subs, m.selectedSub, m.discoveries, m.selectedDisc)
+	}
 	if m.selectingScan {
 		return m.frame(header, "Choose a scan", "Scans", m.list.View(), "", m.preview.View())
 	}
@@ -625,7 +628,7 @@ func panelHeader(title string, focused bool, width int, section lipgloss.Style) 
 		return section.Render(title)
 	}
 	focusText := "[FOCUS]"
-	focusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("FB923C")).Bold(true)
+	focusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FB923C")).Bold(true)
 	if width < lipgloss.Width(focusText)+2 {
 		return focusStyle.Render(focusText)
 	}

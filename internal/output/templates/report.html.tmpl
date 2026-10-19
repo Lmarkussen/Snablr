@@ -52,6 +52,15 @@
       --diff-removed: #ff9a9a;
       --diff-unchanged-bg: #29343b;
       --diff-unchanged: #b4c5ca;
+      --surface-primary: #171e24;
+      --surface-secondary: #1d272f;
+      --surface-table-head: #243139;
+      --surface-table-row: #171e24;
+      --surface-table-alt: #1d272f;
+      --surface-code: #10171b;
+      --link: #7dd3fc;
+      --focus: #29b77f;
+      --hover: #26363d;
     }
     :root[data-theme="flashbang"] {
       color-scheme: light;
@@ -100,6 +109,15 @@
       --diff-removed: #b91c1c;
       --diff-unchanged-bg: #e2e8f0;
       --diff-unchanged: #475569;
+      --surface-primary: #ffffff;
+      --surface-secondary: #f7fafc;
+      --surface-table-head: #f8fbff;
+      --surface-table-row: #ffffff;
+      --surface-table-alt: #f7fafc;
+      --surface-code: #ffffff;
+      --link: #1d4ed8;
+      --focus: #15803d;
+      --hover: #eef6fb;
     }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
@@ -1045,6 +1063,81 @@
 	        padding: 12px 10px;
 	      }
 	    }
+    [data-theme="dark"] a { color: var(--link); }
+    [data-theme="dark"] a:hover,
+    [data-theme="dark"] a:focus-visible { color: #b8e8ff; }
+    [data-theme="dark"] .hero-actions a:hover,
+    [data-theme="dark"] .download-link:hover,
+    [data-theme="dark"] .filter-reset:hover { background: var(--hover); }
+    [data-theme="dark"] .card,
+    [data-theme="dark"] .category-card,
+    [data-theme="dark"] .host-card,
+    [data-theme="dark"] .table-card,
+    [data-theme="dark"] .finding-card,
+    [data-theme="dark"] .supporting-card,
+    [data-theme="dark"] .finding-panel,
+    [data-theme="dark"] .detail-panel,
+    [data-theme="dark"] .evidence-section,
+    [data-theme="dark"] .evidence-toggle,
+    [data-theme="dark"] .finding-technical,
+    [data-theme="dark"] .duplicate-locations,
+    [data-theme="dark"] .finding-note,
+    [data-theme="dark"] .filter-wrap {
+      background: var(--surface-primary);
+      color: var(--text);
+      border-color: var(--line);
+    }
+    [data-theme="dark"] .card-meta,
+    [data-theme="dark"] .section-note,
+    [data-theme="dark"] .group-guidance,
+    [data-theme="dark"] .finding-location,
+    [data-theme="dark"] .supporting-reason,
+    [data-theme="dark"] .filter-help,
+    [data-theme="dark"] .filter-status { color: var(--muted); }
+    [data-theme="dark"] .filter-input,
+    [data-theme="dark"] .filter-text,
+    [data-theme="dark"] .filter-select,
+    [data-theme="dark"] .filter-reset {
+      background: var(--surface-secondary);
+      color: var(--text);
+      border-color: var(--line);
+    }
+    [data-theme="dark"] .filter-input::placeholder,
+    [data-theme="dark"] .filter-text::placeholder { color: var(--muted); }
+    [data-theme="dark"] .filter-input:focus,
+    [data-theme="dark"] .filter-text:focus,
+    [data-theme="dark"] .filter-select:focus,
+    [data-theme="dark"] .filter-reset:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+    [data-theme="dark"] table { background: var(--surface-primary); color: var(--text); border-color: var(--line); }
+    [data-theme="dark"] thead,
+    [data-theme="dark"] thead th { background: var(--surface-table-head); color: var(--text); border-color: var(--line); }
+    [data-theme="dark"] tbody tr,
+    [data-theme="dark"] tbody tr:nth-child(odd),
+    [data-theme="dark"] tbody tr:nth-child(even),
+    [data-theme="dark"] tbody tr.sev-high,
+    [data-theme="dark"] tbody tr.sev-critical { background: var(--surface-table-row); color: var(--text); }
+    [data-theme="dark"] tbody tr:nth-child(even) { background: var(--surface-table-alt); }
+    [data-theme="dark"] td,
+    [data-theme="dark"] th { color: var(--text); border-color: var(--line); }
+    [data-theme="dark"] .finding-path,
+    [data-theme="dark"] .supporting-path,
+    [data-theme="dark"] .artifact-path-full,
+    [data-theme="dark"] .credential-value,
+    [data-theme="dark"] .finding-text,
+    [data-theme="dark"] .evidence-block,
+    [data-theme="dark"] pre,
+    [data-theme="dark"] code {
+      background: var(--surface-code);
+      color: #e6f5f2;
+      border-color: var(--line);
+    }
+    [data-theme="dark"] .evidence-label,
+    [data-theme="dark"] .panel-title,
+    [data-theme="dark"] .card-label,
+    [data-theme="dark"] .finding-rule-id { color: var(--muted); }
+    [data-theme="dark"] .evidence-toggle summary:hover,
+    [data-theme="dark"] .finding-technical summary:hover,
+    [data-theme="dark"] summary.group-summary:hover { background: var(--hover); }
   </style>
 </head>
 <body>

@@ -899,7 +899,7 @@ func harvestLines(text string, add func(Candidate)) {
 		if section == "" {
 			current := &struct{ key, value string }{key: key, value: value}
 			_, sccmPasswordField := sccmPasswordAccounts[key]
-			if previousTopLevel != nil && ClassifyFieldName(previousTopLevel.key) == FieldRoleIdentity && isPasswordKey(key) && !sccmPasswordField && !looksReferenceOrTemplate(value) {
+			if previousTopLevel != nil && ClassifyFieldName(previousTopLevel.key) == FieldRoleIdentity && isPasswordKey(key) && compatibleAssignmentScope(previousTopLevel.key, key) && !sccmPasswordField && !looksReferenceOrTemplate(value) {
 				identity := strings.TrimSpace(previousTopLevel.value)
 				if identity != "" && !IsPlaceholderIdentity(identity) {
 					add(Candidate{Verification: Confirmed, CredentialType: "password", Identity: identity, Value: value, ValidationBasis: "explicit adjacent credential fields"})
@@ -955,6 +955,27 @@ func harvestLines(text string, add func(Candidate)) {
 	for _, fields := range prefixes {
 		harvestFields(fields, add, "structured environment record")
 	}
+}
+
+func compatibleAssignmentScope(identityKey, passwordKey string) bool {
+	identityScope := assignmentScope(identityKey, []string{"username", "userid", "user", "login", "account", "brukernavn", "bruker", "brukerkonto", "påloggingsnavn", "uid"})
+	passwordScope := assignmentScope(passwordKey, []string{"password", "passwd", "pwd", "pass", "passord"})
+	return identityScope == "" || passwordScope == "" || identityScope == passwordScope
+}
+
+func assignmentScope(key string, suffixes []string) string {
+	key = strings.ToLower(strings.TrimSpace(key))
+	for _, suffix := range suffixes {
+		for _, separator := range []string{"_", ".", "-"} {
+			if strings.HasSuffix(key, separator+suffix) {
+				return strings.TrimSuffix(key, separator+suffix)
+			}
+		}
+		if key == suffix {
+			return ""
+		}
+	}
+	return key
 }
 
 func harvestCommandPairs(text string, add func(Candidate)) {

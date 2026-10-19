@@ -294,3 +294,12 @@ func TestHarvestStructuredAccountNameAlias(t *testing.T) {
 		}
 	}
 }
+
+func TestHarvestDoesNotPairDifferentTopLevelScopes(t *testing.T) {
+	candidates := Harvest(HarvestInput{Content: []byte("primary_user=alice\nsecondary_password=NotAlice!\n"), Path: "database/review.conf"})
+	for _, candidate := range candidates {
+		if candidate.Identity == "alice" && candidate.Value == "NotAlice!" && candidate.Verification == Confirmed {
+			t.Fatalf("different top-level scopes were paired: %#v", candidates)
+		}
+	}
+}

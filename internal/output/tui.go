@@ -1547,7 +1547,7 @@ func (m tuiModel) renderHeader() string {
 }
 
 func (m tuiModel) renderFooter() string {
-	message := "Tab switch pane • Ctrl-F search + creds/hashes • Ctrl-D bookmark • Alt-D bookmarks • Ctrl-C stop\nAlt-K skip folder • Alt-S skip share • Alt-L defer • Alt-Q queue"
+	message := "Tab switch pane • Ctrl-F search • Ctrl-D bookmark • Alt-D bookmarks • Ctrl-C stop\nAlt-K skip folder • Alt-S skip share • Alt-L defer • Alt-Q queue"
 	if m.queueOpen {
 		message = "↑/↓ or j/k move • PgUp/PgDn page • g/G top/bottom • Esc back"
 	}

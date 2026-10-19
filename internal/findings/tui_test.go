@@ -52,6 +52,26 @@ func TestDiscoverySelectionUpdatesFullDetailsWithoutEvidenceScreen(t *testing.T)
 	}
 }
 
+func TestFinderFocusIndicatorAndPaneNavigation(t *testing.T) {
+	item := category{Name: "Credentials", Discoveries: []discovery{{Title: "identity", Subcategory: "Passwords", Value: "secret"}}}
+	m := &model{scans: []Scan{{ID: "scan"}}, categories: []category{item}, screen: screenCategories, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(120, 40)
+	if !strings.Contains(m.View(), "Categories [FOCUS]") || strings.Contains(m.View(), "Preview [FOCUS]") {
+		t.Fatalf("upper focus indicator incorrect: %q", m.View())
+	}
+	oldFocus := m.focus
+	m.toggleFocus()
+	if m.focus == oldFocus || !strings.Contains(m.View(), "Preview [FOCUS]") || strings.Contains(m.View(), "Categories [FOCUS]") {
+		t.Fatalf("tab did not switch only the active focus: %q", m.View())
+	}
+	if m.preview.Height <= 18 {
+		t.Fatalf("details panel did not receive additional room: %d", m.preview.Height)
+	}
+	if strings.Contains(subcategoryPreview(item, []string{"Passwords"}, 0), "press Enter") {
+		t.Fatal("subcategory preview retained redundant navigation instructions")
+	}
+}
+
 func TestCategoryCountsDoNotPromoteSupportingFindings(t *testing.T) {
 	items := buildCategories(nil, []Finding{{Finding: scanner.Finding{RuleID: "extension", Category: "configuration", TriageClass: "supporting", Actionable: false}}}, nil)
 	if len(items) != 1 || items[0].Name != "Original Findings" {

@@ -405,7 +405,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "tab":
-			m.focus = 1 - m.focus
+			m.toggleFocus()
 		case "up", "k":
 			m.move(-1)
 		case "down", "j":
@@ -415,12 +415,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pgdown", "space":
 			m.page(1)
 		case "enter", "right":
-			m.open()
+			if m.focus == 0 {
+				m.open()
+			}
 		case "left", "esc":
 			m.back()
 		}
 	}
 	return m, nil
+}
+
+func (m *model) toggleFocus() {
+	// Focus is local view state only; switching panes performs no database work.
+	m.focus = 1 - m.focus
 }
 
 func (m *model) move(delta int) {
@@ -429,7 +436,7 @@ func (m *model) move(delta int) {
 		m.refresh()
 		return
 	}
-	if m.focus == 1 && m.screen != screenCategories {
+	if m.focus == 1 {
 		m.preview.LineDown(delta)
 		return
 	}
@@ -519,7 +526,7 @@ func subcategoryDiscoveries(item category, sub string) []discovery {
 func (m *model) refresh() {
 	if m.selectingScan {
 		m.list.SetContent(scanList(m.scans, m.selectedScan))
-		m.preview.SetContent("Select a scan and press Enter.")
+		m.preview.SetContent("No scan selected.")
 		return
 	}
 	switch m.screen {
@@ -612,7 +619,9 @@ func (m *model) resize() {
 	remaining := m.height - 3 - panelRows - 3
 	// Keep the overview compact on tall terminals; unused space below the
 	// footer is preferable to stretching a small preview into a blank panel.
-	m.previewHeight = min(max(0, remaining), 18)
+	// Give details more room on ordinary terminals while keeping a bounded
+	// viewport on very tall terminals.
+	m.previewHeight = min(max(0, remaining), 24)
 	m.preview.Width, m.preview.Height = max(20, m.width-6), max(1, m.previewHeight)
 	m.refresh()
 }
@@ -633,24 +642,26 @@ func (m *model) View() string {
 	if m.screen == screenCategories {
 		return m.frame(header, crumb, "Categories", m.list.View(), "Preview", m.preview.View())
 	}
-	return m.frame(header, crumb, "Discoveries", m.list.View(), "Preview", m.preview.View())
+	return m.frame(header, crumb, "Discoveries", m.list.View(), "Details", m.preview.View())
 }
 
 func (m *model) frame(header, crumb, leftTitle, leftContent, rightTitle, rightContent string) string {
 	style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1)
 	section := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-	focus := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	focus := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
 	if leftTitle == "" {
 		panel := style.Render(section.Render(rightTitle) + "\n" + rightContent)
 		footer := "PgUp/PgDn scroll  ←/Esc back  Q quit"
 		return lipgloss.JoinVertical(lipgloss.Left, header, crumb, panel, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(footer+"  "+m.status))
 	}
-	left := style.Render(section.Render(leftTitle) + "\n" + leftContent)
-	rightHeading := rightTitle
-	if strings.Contains(rightTitle, "[FOCUS]") {
-		rightHeading = focus.Render(rightTitle)
-	} else {
-		rightHeading = section.Render(rightTitle)
+	leftHeading := leftTitle
+	if m.focus == 0 {
+		leftHeading += " " + focus.Render("[FOCUS]")
+	}
+	left := style.Render(section.Render(leftHeading) + "\n" + leftContent)
+	rightHeading := section.Render(rightTitle)
+	if m.focus == 1 {
+		rightHeading += " " + focus.Render("[FOCUS]")
 	}
 	preview := style.Render(rightHeading + "\n" + rightContent)
 	footer := "↑/↓ j/k move  Enter/→ open  ←/Esc back  PgUp/PgDn scroll  Q quit"
@@ -742,7 +753,7 @@ func subcategoryPreview(item category, subs []string, selected int) string {
 	if len(subs) == 0 {
 		return "No subcategories are available."
 	}
-	return fmt.Sprintf("%s\n\n%d logical discoveries\n\nSelect a subcategory and press Enter to inspect actual material.", subs[selected], len(subcategoryDiscoveries(item, subs[selected])))
+	return fmt.Sprintf("%s\n\n%d logical discoveries", subs[selected], len(subcategoryDiscoveries(item, subs[selected])))
 }
 func statusStyle(value string) lipgloss.Style {
 	switch strings.ToLower(strings.TrimSpace(value)) {

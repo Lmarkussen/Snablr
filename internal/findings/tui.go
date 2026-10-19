@@ -525,7 +525,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "ctrl+c":
 			return m, tea.Quit
 		case "tab":
 			m.toggleFocus()
@@ -937,17 +937,17 @@ func (m *model) frame(header, crumb, leftTitle, leftContent, rightTitle, rightCo
 	section := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
 	if leftTitle == "" {
 		panel := style.Render(panelHeader(rightTitle, false, m.preview.Width, section) + "\n" + rightContent)
-		footer := "PgUp/PgDn scroll  ←/Esc back  Q quit"
+		footer := "PgUp/PgDn scroll  ←/Esc back  Ctrl-C quit"
 		return joinFinderSections(header, crumb, panel, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(footer+"  "+m.status))
 	}
 	left := style.Render(panelHeader(leftTitle, m.focus == 0, m.list.Width, section) + "\n" + leftContent)
 	preview := style.Render(panelHeader(rightTitle, m.focus == 1, m.preview.Width, section) + "\n" + rightContent)
-	footer := "↑/↓ j/k move  Enter/→ open  ←/Esc back  PgUp/PgDn scroll  Q quit"
+	footer := "↑/↓ j/k move  Enter/→ open  ←/Esc back  PgUp/PgDn scroll  Ctrl-C quit"
 	if m.screen == screenCategories || m.selectingScan {
-		footer = "↑/↓ j/k move  Enter/→ select  Q quit"
+		footer = "↑/↓ j/k move  Enter/→ select  Ctrl-C quit"
 	}
 	if m.screen == screenDiscoveries && m.isAllMaterial() {
-		footer = "↑/↓ j/k move  / filter  Enter/→ open  ←/Esc back  PgUp/PgDn scroll  Q quit"
+		footer = "↑/↓ j/k move  / filter  Enter/→ open  ←/Esc back  PgUp/PgDn scroll  Ctrl-C quit"
 	}
 	return joinFinderSections(header, crumb, left, preview, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(footer+"  "+m.status))
 }

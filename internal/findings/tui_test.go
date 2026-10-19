@@ -290,7 +290,7 @@ func TestCategoryOverviewFitsReportedTerminal(t *testing.T) {
 		if len(lines) > size[1] {
 			t.Fatalf("%dx%d rendered %d rows", size[0], size[1], len(lines))
 		}
-		if !strings.Contains(view, "Categories") || !strings.Contains(view, "Credentials") || !strings.Contains(view, "Q quit") {
+		if !strings.Contains(view, "Categories") || !strings.Contains(view, "Credentials") || !strings.Contains(view, "Ctrl-C quit") {
 			t.Fatalf("%dx%d lost category menu or footer: %q", size[0], size[1], view)
 		}
 		if maxLineWidth(view) > size[0] {
@@ -503,7 +503,7 @@ func TestDiscoveryViewportUsesAvailableHeightAfterOpening(t *testing.T) {
 	if m.preview.Height < 8 {
 		t.Fatalf("details pane became unusably short: height=%d", m.preview.Height)
 	}
-	if !strings.Contains(m.View(), "discovery-01") || !strings.Contains(m.View(), "Q quit") {
+	if !strings.Contains(m.View(), "discovery-01") || !strings.Contains(m.View(), "Ctrl-C quit") {
 		t.Fatalf("rendered discoveries view lost list or footer: %q", m.View())
 	}
 }

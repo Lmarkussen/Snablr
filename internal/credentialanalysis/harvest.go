@@ -320,9 +320,14 @@ func harvestStructuredAssignments(text string, add func(Candidate), toml bool) {
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
 			continue
 		}
-		if toml && strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			flush(fields)
-			fields = make(map[string]string)
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			if toml {
+				flush(fields)
+				fields = make(map[string]string)
+			} else {
+				flushProperties()
+				propertyScopes = make(map[string]map[string]string)
+			}
 			continue
 		}
 		match := assignmentPattern.FindStringSubmatch(line)
@@ -881,7 +886,7 @@ var inlinePairPattern = regexp.MustCompile(`(?is)["']?(username|user|userid|logi
 
 func harvestInlinePairs(text string, add func(Candidate)) {
 	for _, match := range inlinePairPattern.FindAllStringSubmatch(text, -1) {
-		identity, value := match[2], match[4]
+		identity, value := decodeInlineValue(match[2]), decodeInlineValue(match[4])
 		if IsPlaceholderValue(value) {
 			// A placeholder is not credential material; it is not routed to
 			// review either.
@@ -893,6 +898,14 @@ func harvestInlinePairs(text string, add func(Candidate)) {
 		}
 		add(Candidate{Verification: Confirmed, CredentialType: "password", Identity: identity, Value: value, ValidationBasis: "structured credential object"})
 	}
+}
+
+func decodeInlineValue(value string) string {
+	value = strings.TrimSpace(value)
+	if decoded, err := strconv.Unquote(`"` + value + `"`); err == nil {
+		return decoded
+	}
+	return value
 }
 
 func harvestLines(text string, add func(Candidate)) {

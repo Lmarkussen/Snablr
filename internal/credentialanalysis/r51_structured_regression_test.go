@@ -4,10 +4,10 @@ import "testing"
 
 func TestHarvestR51AccountSecretScopes(t *testing.T) {
 	tests := []struct {
-		name string
-		path string
-		content string
-		wantUser string
+		name         string
+		path         string
+		content      string
+		wantUser     string
 		wantPassword string
 	}{
 		{"json object", "fixture.json", `{"services":[{"account":"svc-json","secret":"JsonPass!"}]}`, "svc-json", "JsonPass!"},
@@ -42,5 +42,24 @@ func TestHarvestR51PrefixedAssignmentsDoNotCrossPair(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Fatalf("missing scoped pairs: %#v; candidates=%#v", want, candidates)
+	}
+}
+
+func TestR51JSONEscapedDomainIdentity(t *testing.T) {
+	input := Harvest(HarvestInput{Path: "fixture.py", Content: []byte(`client = {"username": "SYNTHETIC\\local261", "password": "Harbor-782-Delta!"}`)})
+	for _, candidate := range input {
+		if candidate.Identity == `SYNTHETIC\local261` && candidate.Value == "Harbor-782-Delta!" && candidate.Verification == Confirmed {
+			return
+		}
+	}
+	t.Fatalf("escaped identity was not decoded: %#v", input)
+}
+
+func TestR51PropertiesSectionsDoNotCrossPair(t *testing.T) {
+	input := Harvest(HarvestInput{Path: "fixture.properties", Content: []byte("[accounts]\nuser=SYNTHETIC\\local312\n\n[defaults]\npassword=Copper-377-North!\n")})
+	for _, candidate := range input {
+		if candidate.Identity == `SYNTHETIC\local312` && candidate.Value == "Copper-377-North!" && candidate.Verification == Confirmed {
+			t.Fatalf("cross-section pair was confirmed: %#v", candidate)
+		}
 	}
 }

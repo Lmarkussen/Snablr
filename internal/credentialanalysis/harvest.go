@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"encoding/xml"
+	"html"
 	"io"
 	"path/filepath"
 	"regexp"
@@ -18,6 +19,56 @@ import (
 	"snablr/internal/legacyoffice"
 	"snablr/internal/textdecode"
 )
+
+var htmlTagPattern = regexp.MustCompile(`(?is)<[^>]+>`)
+var htmlTableRowPattern = regexp.MustCompile(`(?i)</tr\s*>`)
+var htmlTableCellPattern = regexp.MustCompile(`(?i)</t[dh]\s*>`)
+var htmlTableCellOpenPattern = regexp.MustCompile(`(?i)<t[dh]\b[^>]*>`)
+
+func htmlCredentialText(content string) string {
+	content = htmlTableRowPattern.ReplaceAllString(content, "\n")
+	content = htmlTableCellPattern.ReplaceAllString(content, ",")
+	content = htmlTableCellOpenPattern.ReplaceAllString(content, "")
+	content = htmlTagPattern.ReplaceAllString(content, "\n")
+	content = html.UnescapeString(content)
+	content = strings.ReplaceAll(content, "\r", "")
+	lines := strings.Split(content, "\n")
+	compact := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if line = strings.TrimSpace(line); line != "" {
+			compact = append(compact, line)
+		}
+	}
+	return strings.Join(compact, "\n")
+}
+
+func markdownTableText(content string) string {
+	rows := make([][]string, 0)
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "|") || !strings.HasSuffix(line, "|") {
+			continue
+		}
+		cells := strings.Split(strings.Trim(line, "|"), "|")
+		for i := range cells {
+			cells[i] = strings.TrimSpace(cells[i])
+		}
+		separator := true
+		for _, cell := range cells {
+			if strings.Trim(cell, "-:") != "" {
+				separator = false
+				break
+			}
+		}
+		if !separator {
+			rows = append(rows, cells)
+		}
+	}
+	if len(rows) < 2 {
+		return ""
+	}
+	return RenderTableText(rows, "markdown")
+}
 
 const (
 	maxHarvestBytes = 8 << 20
@@ -45,7 +96,7 @@ func NeedsContent(path, name string, size int64) bool {
 		ext = strings.ToLower(filepath.Ext(path))
 	}
 	switch ext {
-	case ".json", ".yaml", ".yml", ".xml", ".config", ".ini", ".env", ".conf", ".toml", ".properties", ".props", ".txt", ".md", ".ps1", ".py", ".sh", ".pem", ".key", ".ed25519", ".openssh":
+	case ".json", ".yaml", ".yml", ".xml", ".config", ".ini", ".env", ".conf", ".toml", ".properties", ".props", ".txt", ".md", ".markdown", ".csv", ".tsv", ".html", ".htm", ".ps1", ".py", ".sh", ".pem", ".key", ".ed25519", ".openssh":
 		return true
 	case ".jpg", ".jpeg", ".png", ".gif", ".zip", ".7z", ".gz", ".exe", ".dll", ".so", ".pdf", ".wim", ".dit":
 		return false
@@ -139,6 +190,16 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 		return out
 	}
 	textContent := textdecode.Normalize(content)
+	if ext == ".html" || ext == ".htm" {
+		textContent = htmlCredentialText(textContent)
+		if rendered := delimitedRecordText(textContent); rendered != "" {
+			textContent = rendered
+		}
+	} else if ext == ".md" || ext == ".markdown" {
+		if rendered := markdownTableText(textContent); rendered != "" {
+			textContent = rendered
+		}
+	}
 	if strings.TrimSpace(textContent) == "" {
 		return out
 	}

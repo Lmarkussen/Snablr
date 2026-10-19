@@ -109,6 +109,34 @@ func TestHarvestCSVPolicyMetadataIsNotACredential(t *testing.T) {
 	}
 }
 
+func TestHarvestHTMLCredentialTextKeepsLabelsAndUnescapesValues(t *testing.T) {
+	got := Harvest(HarvestInput{
+		Content: []byte(`<html><body><table><tr><th>Username</th><th>Password</th></tr><tr><td>svc-html</td><td>Html&amp;Pass-482!</td></tr></table></body></html>`),
+		Path:    "credentials.html",
+	})
+	if !hasCandidatePayload(got, Confirmed, "Html&Pass-482!", "svc-html", "") {
+		t.Fatalf("HTML credential was not surfaced from rendered text: %#v", got)
+	}
+}
+
+func TestHarvestMarkdownCredentialTableKeepsRowsSeparate(t *testing.T) {
+	got := Harvest(HarvestInput{
+		Content: []byte("| Username | Password |\n| --- | --- |\n| alice | Alice-Pass! |\n| bob | Bob-Pass! |\n"),
+		Path:    "credentials.md",
+	})
+	if !hasCandidatePayload(got, Confirmed, "Alice-Pass!", "alice", "") || !hasCandidatePayload(got, Confirmed, "Bob-Pass!", "bob", "") {
+		t.Fatalf("Markdown table credentials were not kept row-scoped: %#v", got)
+	}
+}
+
+func TestNeedsContentIncludesDocumentAndDelimitedCredentialFormats(t *testing.T) {
+	for _, path := range []string{"credentials.csv", "credentials.tsv", "credentials.html", "credentials.htm", "credentials.markdown"} {
+		if !NeedsContent(path, path, 128) {
+			t.Errorf("%s should be eligible for credential content inspection", path)
+		}
+	}
+}
+
 func hasCandidatePayload(candidates []Candidate, verification Verification, value, identity, domain string) bool {
 	for _, candidate := range candidates {
 		if candidate.Value != value || candidate.Verification != verification {

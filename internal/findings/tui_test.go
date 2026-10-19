@@ -2,10 +2,12 @@ package findings
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/lipgloss"
 	"snablr/internal/credentialanalysis"
 	"snablr/internal/scanner"
 )
@@ -56,12 +58,14 @@ func TestFinderFocusIndicatorAndPaneNavigation(t *testing.T) {
 	item := category{Name: "Credentials", Discoveries: []discovery{{Title: "identity", Subcategory: "Passwords", Value: "secret"}}}
 	m := &model{scans: []Scan{{ID: "scan"}}, categories: []category{item}, screen: screenCategories, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
 	m.resizeTo(120, 40)
-	if !strings.Contains(m.View(), "Categories [FOCUS]") || strings.Contains(m.View(), "Preview [FOCUS]") {
+	view := m.View()
+	if !strings.Contains(view, "Categories") || strings.Count(view, "[FOCUS]") != 1 || strings.Contains(view, "Preview") && strings.Contains(view, "Preview [FOCUS]") {
 		t.Fatalf("upper focus indicator incorrect: %q", m.View())
 	}
 	oldFocus := m.focus
 	m.toggleFocus()
-	if m.focus == oldFocus || !strings.Contains(m.View(), "Preview [FOCUS]") || strings.Contains(m.View(), "Categories [FOCUS]") {
+	view = m.View()
+	if m.focus == oldFocus || !strings.Contains(view, "Preview") || strings.Count(view, "[FOCUS]") != 1 {
 		t.Fatalf("tab did not switch only the active focus: %q", m.View())
 	}
 	if m.preview.Height <= 18 {
@@ -69,6 +73,37 @@ func TestFinderFocusIndicatorAndPaneNavigation(t *testing.T) {
 	}
 	if strings.Contains(subcategoryPreview(item, []string{"Passwords"}, 0), "press Enter") {
 		t.Fatal("subcategory preview retained redundant navigation instructions")
+	}
+}
+
+func TestCategoryRowsKeepCountColumnFixed(t *testing.T) {
+	items := []category{
+		{Name: "Credentials", Discoveries: make([]discovery, 1)},
+		{Name: "Connection & Database Secrets", Discoveries: make([]discovery, 12)},
+		{Name: "A deliberately long category label that must be clipped", Discoveries: make([]discovery, 1234)},
+	}
+	var expected int
+	for selected := range items {
+		lines := strings.Split(categoryList(items, selected, 80), "\n")
+		if len(lines) != len(items) {
+			t.Fatalf("selected=%d rendered %d rows", selected, len(lines))
+		}
+		for i, line := range lines {
+			count := len(fmt.Sprintf("%d", len(items[i].Discoveries)))
+			position := lipgloss.Width(line) - count
+			if i == 0 && selected == 0 {
+				expected = position
+			}
+			if lipgloss.Width(line) != 80 {
+				t.Fatalf("selected=%d row=%d width=%d, want 80", selected, i, lipgloss.Width(line))
+			}
+			if i == 0 && selected != 0 && lipgloss.Width(line)-count != expected {
+				t.Fatalf("selected=%d count alignment changed", selected)
+			}
+			if strings.Contains(line, "CRITICAL") || strings.Contains(line, "HIGH") || strings.Contains(line, "INFO") {
+				t.Fatalf("category row retained severity text: %q", line)
+			}
+		}
 	}
 }
 

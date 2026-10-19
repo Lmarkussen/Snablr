@@ -32,8 +32,8 @@ type discovery struct {
 }
 
 type category struct {
-	Name, Description, Severity string
-	Discoveries                 []discovery
+	Name, Description string
+	Discoveries       []discovery
 }
 
 type model struct {
@@ -154,7 +154,7 @@ func buildCategories(credentials []Credential, findings []Finding, correlations 
 	}
 	groups := make(map[string]*category, len(ordered))
 	for _, item := range ordered {
-		groups[item.name] = &category{Name: item.name, Description: item.description, Severity: "INFO"}
+		groups[item.name] = &category{Name: item.name, Description: item.description}
 	}
 	type discoveryRef struct {
 		category string
@@ -230,14 +230,6 @@ func buildCategories(credentials []Credential, findings []Finding, correlations 
 			Title: item.Key, Subcategory: "Cross-file Relationships", MaterialType: "correlation", Value: item.Payload,
 			Verification: "persisted", Confidence: "contextual",
 		})
-	}
-	for i := range ordered {
-		group := groups[ordered[i].name]
-		if len(group.Discoveries) == 0 {
-			continue
-		}
-		group.Severity = categorySeverity(group.Discoveries)
-		ordered[i].name = group.Name
 	}
 	result := make([]category, 0, len(ordered))
 	for _, item := range ordered {
@@ -357,40 +349,6 @@ func appendUnique(values []string, value string) []string {
 		}
 	}
 	return append(values, value)
-}
-
-func categorySeverity(items []discovery) string {
-	best := "INFO"
-	for _, item := range items {
-		severity := "INFO"
-		if item.Finding != nil {
-			severity = strings.ToUpper(item.Finding.Severity)
-		} else if item.Verification == string(credentialanalysis.Confirmed) {
-			severity = "HIGH"
-		} else if item.Verification == string(credentialanalysis.Review) {
-			severity = "REVIEW"
-		}
-		if severityRank(severity) > severityRank(best) {
-			best = severity
-		}
-	}
-	return best
-}
-
-func severityRank(value string) int {
-	switch strings.ToUpper(value) {
-	case "CRITICAL":
-		return 5
-	case "HIGH":
-		return 4
-	case "MEDIUM":
-		return 3
-	case "LOW":
-		return 2
-	case "REVIEW":
-		return 1
-	}
-	return 0
 }
 
 func (m *model) Init() tea.Cmd { return nil }
@@ -531,7 +489,7 @@ func (m *model) refresh() {
 	}
 	switch m.screen {
 	case screenCategories:
-		m.list.SetContent(categoryList(m.categories, m.selected))
+		m.list.SetContent(categoryList(m.categories, m.selected, m.list.Width))
 		m.preview.SetContent(categoryPreview(m.categories, m.selected))
 	case screenSubcategories:
 		m.list.SetContent(subcategoryList(m.subs, m.selectedSub))
@@ -648,27 +606,34 @@ func (m *model) View() string {
 func (m *model) frame(header, crumb, leftTitle, leftContent, rightTitle, rightContent string) string {
 	style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1)
 	section := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-	focus := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
 	if leftTitle == "" {
-		panel := style.Render(section.Render(rightTitle) + "\n" + rightContent)
+		panel := style.Render(panelHeader(rightTitle, false, m.preview.Width, section) + "\n" + rightContent)
 		footer := "PgUp/PgDn scroll  ←/Esc back  Q quit"
 		return lipgloss.JoinVertical(lipgloss.Left, header, crumb, panel, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(footer+"  "+m.status))
 	}
-	leftHeading := leftTitle
-	if m.focus == 0 {
-		leftHeading += " " + focus.Render("[FOCUS]")
-	}
-	left := style.Render(section.Render(leftHeading) + "\n" + leftContent)
-	rightHeading := section.Render(rightTitle)
-	if m.focus == 1 {
-		rightHeading += " " + focus.Render("[FOCUS]")
-	}
-	preview := style.Render(rightHeading + "\n" + rightContent)
+	left := style.Render(panelHeader(leftTitle, m.focus == 0, m.list.Width, section) + "\n" + leftContent)
+	preview := style.Render(panelHeader(rightTitle, m.focus == 1, m.preview.Width, section) + "\n" + rightContent)
 	footer := "↑/↓ j/k move  Enter/→ open  ←/Esc back  PgUp/PgDn scroll  Q quit"
 	if m.screen == screenCategories || m.selectingScan {
 		footer = "↑/↓ j/k move  Enter/→ select  Q quit"
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, crumb, left, preview, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(footer+"  "+m.status))
+}
+
+func panelHeader(title string, focused bool, width int, section lipgloss.Style) string {
+	if !focused {
+		return section.Render(title)
+	}
+	focusText := "[FOCUS]"
+	focusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("FB923C")).Bold(true)
+	if width < lipgloss.Width(focusText)+2 {
+		return focusStyle.Render(focusText)
+	}
+	gap := width - lipgloss.Width(title) - lipgloss.Width(focusText)
+	if gap < 1 {
+		gap = 1
+	}
+	return section.Render(title) + strings.Repeat(" ", gap) + focusStyle.Render(focusText)
 }
 
 func scanList(scans []Scan, selected int) string {
@@ -682,23 +647,35 @@ func scanList(scans []Scan, selected int) string {
 	}
 	return strings.Join(lines, "\n")
 }
-func categoryList(items []category, selected int) string {
+func categoryList(items []category, selected, width int) string {
 	var lines []string
 	arrow := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 	selectedName := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-	severity := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	const arrowWidth = 2
+	const countWidth = 8
+	nameWidth := max(12, width-arrowWidth-countWidth-2)
 	for i, item := range items {
+		name := truncateDisplay(item.Name, nameWidth)
 		marker := "  "
 		if i == selected {
 			marker = arrow.Render("▸") + " "
-		}
-		name := item.Name
-		if i == selected {
 			name = selectedName.Render(name)
 		}
-		lines = append(lines, marker+fmt.Sprintf("%-32s %5d  %s", name, len(item.Discoveries), severity.Render(item.Severity)))
+		namePadding := max(0, nameWidth-lipgloss.Width(name))
+		lines = append(lines, marker+name+strings.Repeat(" ", namePadding)+"  "+fmt.Sprintf("%*d", countWidth, len(item.Discoveries)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func truncateDisplay(value string, width int) string {
+	if lipgloss.Width(value) <= width {
+		return value
+	}
+	runes := []rune(value)
+	if width <= 1 {
+		return string(runes[:min(len(runes), width)])
+	}
+	return string(runes[:min(len(runes), width-1)]) + "…"
 }
 func subcategoryList(items []string, selected int) string {
 	var lines []string
@@ -740,7 +717,7 @@ func categoryPreview(items []category, selected int) string {
 	}
 	item := items[selected]
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\n%s\n\nSeverity: %s\nLogical discoveries: %d\n\n", item.Name, item.Description, item.Severity, len(item.Discoveries))
+	fmt.Fprintf(&b, "%s\n\n%s\n\nLogical discoveries: %d\n\n", item.Name, item.Description, len(item.Discoveries))
 	for i, d := range item.Discoveries {
 		if i == 8 {
 			break

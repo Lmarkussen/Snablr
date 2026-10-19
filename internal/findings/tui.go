@@ -58,6 +58,7 @@ type model struct {
 	selectedSub   int
 	selectedDisc  int
 	categories    []category
+	allMaterial   category
 	subs          []string
 	discoveries   []discovery
 	findings      []Finding
@@ -65,6 +66,8 @@ type model struct {
 	list, preview viewport.Model
 	previewHeight int
 	status        string
+	filter        string
+	filterMode    bool
 }
 
 // Run starts the offline viewer. It only queries the supplied read-only provider.
@@ -102,7 +105,10 @@ func (m *model) loadScan() error {
 		return fmt.Errorf("findings credential projection accounting failed: %d unaccounted rows (%s)", audit.UnaccountedRows, strings.Join(audit.UnaccountedRefs, ", "))
 	}
 	m.categories = categories
+	m.allMaterial = buildAllPersistedMaterial(categories)
 	m.selected, m.selectedSub, m.selectedDisc = 0, 0, 0
+	m.filter = ""
+	m.filterMode = false
 	m.screen = screenCategories
 	m.status = fmt.Sprintf("%d categories · %d findings · %d logical credentials · %d correlations", len(m.categories), len(findings), len(credentials), len(correlations))
 	m.refresh()
@@ -497,6 +503,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.resize()
 	case tea.KeyMsg:
+		if m.filterMode {
+			m.handleFilterKey(msg)
+			return m, nil
+		}
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -510,6 +520,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.page(-1)
 		case "pgdown", "space":
 			m.page(1)
+		case "/":
+			if m.screen == screenDiscoveries && m.isAllMaterial() {
+				m.filterMode = true
+				m.status = "Filter: " + m.filter
+			}
 		case "enter", "right":
 			if m.focus == 0 {
 				m.open()
@@ -571,14 +586,21 @@ func (m *model) open() {
 	}
 	switch m.screen {
 	case screenCategories:
-		m.subs = categorySubcategories(m.categories[m.selected])
+		items := m.categoryItems()
+		m.subs = categorySubcategories(items[m.selected])
 		m.selectedSub = 0
 		m.screen = screenSubcategories
+		m.filter = ""
 	case screenSubcategories:
-		m.discoveries = subcategoryDiscoveries(m.categories[m.selected], m.subs[m.selectedSub])
+		items := m.categoryItems()
+		m.discoveries = subcategoryDiscoveries(items[m.selected], m.subs[m.selectedSub])
+		if m.isAllMaterial() {
+			m.discoveries = filterDiscoveries(m.discoveries, m.filter)
+		}
 		m.selectedDisc = 0
 		m.screen = screenDiscoveries
 	}
+	m.filterMode = false
 	m.focus = 0
 	m.refresh()
 }
@@ -587,6 +609,7 @@ func (m *model) back() {
 	switch m.screen {
 	case screenDiscoveries:
 		m.screen = screenSubcategories
+		m.filter = ""
 	case screenSubcategories:
 		m.screen = screenCategories
 	default:
@@ -627,12 +650,20 @@ func (m *model) refresh() {
 	}
 	switch m.screen {
 	case screenCategories:
-		m.list.SetContent(categoryList(m.categories, m.selected, m.list.Width))
-		m.preview.SetContent(categoryPreview(m.categories, m.selected))
+		items := m.categoryItems()
+		m.selected = clamp(m.selected, 0, max(0, len(items)-1))
+		m.list.SetContent(categoryList(items, m.selected, m.list.Width))
+		m.preview.SetContent(categoryPreview(items, m.selected))
 	case screenSubcategories:
+		items := m.categoryItems()
 		m.list.SetContent(subcategoryList(m.subs, m.selectedSub))
-		m.preview.SetContent(subcategoryPreview(m.categories[m.selected], m.subs, m.selectedSub))
+		m.preview.SetContent(subcategoryPreview(items[m.selected], m.subs, m.selectedSub))
 	case screenDiscoveries:
+		if m.isAllMaterial() {
+			items := m.categoryItems()
+			m.discoveries = filterDiscoveries(subcategoryDiscoveries(items[m.selected], m.subs[m.selectedSub]), m.filter)
+			m.selectedDisc = clamp(m.selectedDisc, 0, max(0, len(m.discoveries)-1))
+		}
 		m.list.SetContent(discoveryList(m.discoveries, m.selectedDisc))
 		m.preview.GotoTop()
 		m.preview.SetContent(m.evidenceText())
@@ -645,7 +676,7 @@ func (m *model) evidenceText() string {
 	}
 	d := m.discoveries[m.selectedDisc]
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n%s\n\nMaterial family: %s\nMaterial type: %s\nVerification: %s\nConfidence: %s\n", evidenceSection("DISCOVERY"), d.Title, firstNonEmpty(d.MaterialFamily, "unknown"), firstNonEmpty(d.MaterialType, "unknown"), firstNonEmpty(d.Verification, "unknown"), firstNonEmpty(d.Confidence, "unknown"))
+	fmt.Fprintf(&b, "%s\n%s\n\nMaterial family: %s\nMaterial type: %s\nVerification: %s\nConfidence: %s\nPersisted rows: %d\nSource observations: %d\n", evidenceSection("DISCOVERY"), d.Title, firstNonEmpty(d.MaterialFamily, "unknown"), firstNonEmpty(d.MaterialType, "unknown"), firstNonEmpty(d.Verification, "unknown"), firstNonEmpty(d.Confidence, "unknown"), len(d.PersistedRefs), len(d.Sources))
 	if strings.EqualFold(d.MaterialFamily, "Credentials") && d.Value != "" {
 		if d.Identity != "" {
 			fmt.Fprintf(&b, "\n%s\n", evidenceSection("USERNAME + PASSWORD COMBINATION"))
@@ -686,10 +717,14 @@ func (m *model) evidenceText() string {
 		fmt.Fprintf(&b, "Source context: %s\n", d.SourceContext)
 	}
 	fmt.Fprintf(&b, "Host: %s\nShare: %s\nSource: %s\n", firstNonEmpty(d.Host, "not persisted"), firstNonEmpty(d.Share, "not persisted"), firstNonEmpty(d.Path, "not persisted"))
-	if len(d.Sources) > 0 {
+	if len(d.Sources) > 0 || len(d.PersistedRefs) > 0 {
 		fmt.Fprintf(&b, "\n%s\n", evidenceSection("SOURCE OBSERVATIONS"))
-		b.WriteString(strings.Join(d.Sources, "\n"))
-		b.WriteByte('\n')
+		for _, source := range d.Sources {
+			fmt.Fprintf(&b, "%s\n", source)
+		}
+		for _, ref := range d.PersistedRefs {
+			fmt.Fprintf(&b, "Persisted row: %s\n", ref)
+		}
 	}
 	if d.PairingStatus != "" {
 		fmt.Fprintf(&b, "\n%s\n", evidenceSection("EVIDENCE QUALITY"))
@@ -842,6 +877,9 @@ func (m *model) frame(header, crumb, leftTitle, leftContent, rightTitle, rightCo
 	footer := "↑/↓ j/k move  Enter/→ open  ←/Esc back  PgUp/PgDn scroll  Q quit"
 	if m.screen == screenCategories || m.selectingScan {
 		footer = "↑/↓ j/k move  Enter/→ select  Q quit"
+	}
+	if m.screen == screenDiscoveries && m.isAllMaterial() {
+		footer = "↑/↓ j/k move  / filter  Enter/→ open  ←/Esc back  PgUp/PgDn scroll  Q quit"
 	}
 	return joinFinderSections(header, crumb, left, preview, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(footer+"  "+m.status))
 }
@@ -1007,4 +1045,102 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func (m *model) categoryItems() []category {
+	if len(m.allMaterial.Discoveries) == 0 {
+		return m.categories
+	}
+	items := make([]category, 0, len(m.categories)+1)
+	items = append(items, m.allMaterial)
+	return append(items, m.categories...)
+}
+
+func (m *model) isAllMaterial() bool {
+	items := m.categoryItems()
+	return m.screen != screenCategories && m.selected >= 0 && m.selected < len(items) && items[m.selected].Name == "All Persisted Material"
+}
+
+func buildAllPersistedMaterial(categories []category) category {
+	all := category{Name: "All Persisted Material", Description: "Every persisted credential-material discovery, grouped by evidence status"}
+	for _, group := range categories {
+		for _, original := range group.Discoveries {
+			if len(original.PersistedRefs) == 0 {
+				continue
+			}
+			item := original
+			item.Subcategory = persistedMaterialStatus(original)
+			all.Discoveries = append(all.Discoveries, item)
+		}
+	}
+	return all
+}
+
+func persistedMaterialStatus(item discovery) string {
+	status := strings.TrimSpace(item.PairingStatus)
+	lowerStatus := strings.ToLower(status)
+	reason := strings.ToLower(item.Reason)
+	if strings.Contains(reason, "suppress") || strings.Contains(reason, "placeholder") || strings.Contains(reason, "invalid") {
+		return "Suppressed / Invalid (Audit Only)"
+	}
+	switch {
+	case strings.EqualFold(status, "Confirmed pair"):
+		return "Confirmed Username + Password"
+	case strings.EqualFold(status, "Confirmed pair (Finder-derived)"):
+		return "Finder-Derived Pair"
+	case strings.Contains(lowerStatus, "encrypted"), strings.Contains(lowerStatus, "opaque"):
+		return "Encrypted / Opaque"
+	case strings.TrimSpace(item.Value) == "" && strings.TrimSpace(item.Identity) != "":
+		return "Identity / Account Reference"
+	case strings.TrimSpace(item.Value) == "":
+		return "Supporting / Reference Only"
+	case strings.TrimSpace(item.Identity) == "":
+		return "Password Only"
+	case strings.Contains(lowerStatus, "uncertain"), strings.EqualFold(strings.TrimSpace(item.OriginalVerification), "review"):
+		return "Uncertain / Review"
+	default:
+		return "Other Persisted Material"
+	}
+}
+
+func filterDiscoveries(items []discovery, query string) []discovery {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return items
+	}
+	result := make([]discovery, 0, len(items))
+	for _, item := range items {
+		fields := []string{item.Title, item.Subcategory, item.MaterialType, item.Identity, item.Domain, item.Value, item.Host, item.Share, item.Path, item.SourceContext, item.OriginType, item.PairingStatus}
+		fields = append(fields, item.Sources...)
+		matched := false
+		for _, field := range fields {
+			if strings.Contains(strings.ToLower(field), query) {
+				matched = true
+				break
+			}
+		}
+		if matched {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func (m *model) handleFilterKey(msg tea.KeyMsg) {
+	switch msg.String() {
+	case "esc":
+		m.filterMode = false
+	case "enter":
+		m.filterMode = false
+	case "backspace":
+		if len(m.filter) > 0 {
+			m.filter = string([]rune(m.filter)[:len([]rune(m.filter))-1])
+		}
+	default:
+		if msg.Type == tea.KeyRunes {
+			m.filter += string(msg.Runes)
+		}
+	}
+	m.status = "Filter: " + m.filter
+	m.refresh()
 }

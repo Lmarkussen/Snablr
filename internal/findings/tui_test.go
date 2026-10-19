@@ -384,3 +384,76 @@ func TestKeyPresentationUsesValidatedMaterialType(t *testing.T) {
 		}
 	}
 }
+
+func TestAllPersistedMaterialReusesDiscoveryReferencesAndStatuses(t *testing.T) {
+	credentials := []Credential{
+		{CredentialKey: "confirmed", Candidate: credentialanalysis.Candidate{CredentialType: "password", Identity: "DOMAIN\\alice", Value: "SyntheticOne!", Verification: credentialanalysis.Confirmed, Path: "one.ini", Host: "HOST", Share: "Share"}},
+		{CredentialKey: "derived", Candidate: credentialanalysis.Candidate{CredentialType: "password", Identity: "DOMAIN\\bob", Value: "SyntheticTwo!", Verification: credentialanalysis.Review, Path: "two.ini", Host: "HOST", Share: "Share"}},
+		{CredentialKey: "opaque", Candidate: credentialanalysis.Candidate{CredentialType: "password", Identity: "DOMAIN\\opaque", Value: "BASE64-CIPHERTEXT-NOT-PLAINTEXT", Verification: credentialanalysis.Confirmed, Path: "encrypted.xml", Host: "HOST", Share: "Share"}},
+		{CredentialKey: "password-only", Candidate: credentialanalysis.Candidate{CredentialType: "password", Value: "OnlyValue!", Verification: credentialanalysis.Review, Path: "only.ini", Host: "HOST", Share: "Share"}},
+	}
+	categories, audit := buildCategoriesWithAccounting("scan", credentials, nil, nil)
+	if audit.UnaccountedRows != 0 {
+		t.Fatalf("normal projection lost rows: %#v", audit)
+	}
+	all := buildAllPersistedMaterial(categories)
+	if len(all.Discoveries) != 4 {
+		t.Fatalf("all material count = %d, want 4", len(all.Discoveries))
+	}
+	statuses := map[string]bool{}
+	for _, item := range all.Discoveries {
+		statuses[item.Subcategory] = true
+		if len(item.PersistedRefs) != 1 {
+			t.Fatalf("discovery lost persisted reference: %#v", item)
+		}
+	}
+	for _, want := range []string{"Confirmed Username + Password", "Finder-Derived Pair", "Encrypted / Opaque", "Password Only"} {
+		if !statuses[want] {
+			t.Fatalf("missing all-material status %q: %#v", want, statuses)
+		}
+	}
+}
+
+func TestAllPersistedMaterialFilterMatchesMaterialAndProvenance(t *testing.T) {
+	items := []discovery{
+		{Title: "DOMAIN\\alice", Subcategory: "Confirmed Username + Password", MaterialType: "password", Identity: "DOMAIN\\alice", Value: "SyntheticOne!", Host: "HOST-A", Share: "Share-A", Path: "configs/one.ini", Sources: []string{"\\\\HOST-A\\Share-A\\configs/one.ini"}},
+		{Title: "DOMAIN\\bob", Subcategory: "Password Only", MaterialType: "password", Value: "SyntheticTwo!", Host: "HOST-B", Share: "Share-B", Path: "configs/two.ini", Sources: []string{"\\\\HOST-B\\Share-B\\configs/two.ini"}},
+	}
+	for query, want := range map[string]string{"alice": "DOMAIN\\alice", "host-b": "DOMAIN\\bob", "password only": "DOMAIN\\bob", "one.ini": "DOMAIN\\alice"} {
+		filtered := filterDiscoveries(items, query)
+		if len(filtered) != 1 || filtered[0].Title != want {
+			t.Fatalf("filter %q = %#v, want %q", query, filtered, want)
+		}
+	}
+	if got := filterDiscoveries(items, "not-present"); len(got) != 0 {
+		t.Fatalf("empty filter returned %d discoveries", len(got))
+	}
+}
+
+func TestAllPersistedMaterialNavigationAndRowTrace(t *testing.T) {
+	credentials := []Credential{{CredentialKey: "same-a", Candidate: credentialanalysis.Candidate{CredentialType: "password", Identity: "user", Value: "same", Verification: credentialanalysis.Confirmed, Path: "a.ini"}}, {CredentialKey: "same-b", Candidate: credentialanalysis.Candidate{CredentialType: "password", Identity: "user", Value: "same", Verification: credentialanalysis.Confirmed, Path: "b.ini"}}}
+	categories, audit := buildCategoriesWithAccounting("scan", credentials, nil, nil)
+	m := &model{scans: []Scan{{ID: "scan"}}, categories: categories, allMaterial: buildAllPersistedMaterial(categories), list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(120, 40)
+	if !strings.Contains(m.View(), "All Persisted Material") {
+		t.Fatalf("all-material entry missing from overview: %q", m.View())
+	}
+	m.open()
+	if m.screen != screenSubcategories || len(m.subs) != 1 || m.subs[0] != "Confirmed Username + Password" {
+		t.Fatalf("unexpected all-material subcategories: %#v", m.subs)
+	}
+	m.open()
+	if m.screen != screenDiscoveries || len(m.discoveries) != 1 || len(m.discoveries[0].PersistedRefs) != 2 {
+		t.Fatalf("grouped row references not preserved: %#v", m.discoveries)
+	}
+	if !strings.Contains(m.preview.View(), "Persisted rows: 2") {
+		t.Fatalf("details did not expose persisted row count: %q", m.preview.View())
+	}
+	m.preview.SetYOffset(1000)
+	if !strings.Contains(m.preview.View(), "Persisted row: same-a") || !strings.Contains(m.preview.View(), "Persisted row: same-b") {
+		t.Fatalf("details did not expose persisted row trace while scrolled: %q", m.preview.View())
+	}
+	if audit.TotalPersistedRows != 2 || audit.PresentedRows != 1 || audit.GroupedRows != 1 || audit.UnaccountedRows != 0 {
+		t.Fatalf("accounting changed by all-material navigation: %#v", audit)
+	}
+}

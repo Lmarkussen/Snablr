@@ -560,6 +560,13 @@ func (r sqliteResumeReader) LookupFile(host, share, path string) (state.SQLiteFi
 	return state.SQLiteFileState{Key: file.Key, Host: file.Host, Share: file.Share, Path: file.Path, Status: file.Status, Semantics: file.Semantics, Size: file.Size, ModifiedAt: file.ModifiedAt, FirstSeen: file.FirstSeen, LastSeen: file.LastSeen, UpdatedAt: file.UpdatedAt}, found, err
 }
 
+func (r sqliteResumeReader) IsScopeExcluded(kind, host, share, path string) (bool, error) {
+	if !r.semanticsMatch {
+		return false, nil
+	}
+	return r.shadow.IsScopeExcluded(kind, host, share, path)
+}
+
 func replaySQLiteState(sink scanner.FindingSink, resume store.ResumeState) error {
 	for _, finding := range resume.Findings {
 		if !resume.FileWasCompleted(finding.Host, finding.Share, finding.FilePath) && finding.FilePath != "" {
@@ -674,6 +681,14 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		return fmt.Errorf("%s: none of the explicitly requested shares are accessible", host)
 	}
 	shareScheduler := newShareScheduler(plannedShares)
+	if stateManager != nil {
+		shareScheduler.setSkipHandlers(
+			func(plan planner.PlannedTarget) error { return stateManager.SkipShare(plan.Host, plan.Share) },
+			func(plan planner.PlannedTarget, path string) error {
+				return stateManager.SkipFolder(plan.Host, plan.Share, path)
+			},
+		)
+	}
 	output.SetShareScheduler(sink, shareScheduler.hooks())
 	if recorder != nil {
 		recorder.AddSharesEnumerated(len(plannedShares))
@@ -703,7 +718,11 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 			break
 		}
 		if !forceRescan && stateManager != nil && stateManager.ShouldSkipShare(host, sharePlan.Share) {
-			logger.Infof("resume: skipping completed share %s/%s", host, sharePlan.Share)
+			if stateManager.IsScopeExcluded("share", host, sharePlan.Share, "") {
+				logger.Infof("resume: skipping excluded share %s/%s", host, sharePlan.Share)
+			} else {
+				logger.Infof("resume: skipping completed share %s/%s", host, sharePlan.Share)
+			}
 			shareScheduler.complete()
 			continue
 		}
@@ -852,11 +871,21 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 			IncludePaths: append([]string{}, cfg.Scan.Path...),
 			ExcludePaths: append([]string{}, cfg.Scan.ExcludePath...),
 			MaxDepth:     cfg.Scan.MaxDepth,
+			ShouldDescend: func(path string) bool {
+				if shareScheduler.shouldDescend(path) {
+					return stateManager == nil || stateManager.ShouldDescend(host, shareName, path)
+				}
+				return false
+			},
+			CurrentDirectory: shareScheduler.setCurrentDirectory,
 		}, func(remote smb.RemoteFile) error {
 			if shareScheduler.consumeDefer(sharePlan) {
 				return errShareDeferred
 			}
 			if remote.IsDir {
+				return nil
+			}
+			if shareScheduler.isCurrentSkipped() {
 				return nil
 			}
 			fileSource := sharePlan.Source

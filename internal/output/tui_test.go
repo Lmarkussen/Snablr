@@ -1179,3 +1179,29 @@ func TestTUIMainHeaderAndFooterKeepOnlyUsefulLiveControls(t *testing.T) {
 		}
 	}
 }
+
+func TestTUIAltKAndAltSSkipExactScopes(t *testing.T) {
+	folderCalls, shareCalls := 0, 0
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running", shareScheduler: ShareSchedulerHooks{
+		SkipFolder: func() string {
+			folderCalls++
+			return `Skipped folder \\host\share\1/2/3`
+		},
+		SkipShare: func() string {
+			shareCalls++
+			return `Skipped share \\host\share`
+		},
+	}}
+	model := newTUIModel(writer)
+	model.windowLoaded, model.width, model.height = true, 100, 20
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}, Alt: true})
+	model = updated.(tuiModel)
+	if folderCalls != 1 || model.scheduleStatus != `Skipped folder \\host\share\1/2/3` {
+		t.Fatalf("Alt-K skip failed: calls=%d status=%q", folderCalls, model.scheduleStatus)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}, Alt: true})
+	model = updated.(tuiModel)
+	if shareCalls != 1 || model.scheduleStatus != `Skipped share \\host\share` {
+		t.Fatalf("Alt-S skip failed: calls=%d status=%q", shareCalls, model.scheduleStatus)
+	}
+}

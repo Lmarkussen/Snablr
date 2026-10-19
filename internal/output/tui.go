@@ -125,6 +125,8 @@ type ShareQueueSnapshot struct {
 
 type ShareSchedulerHooks struct {
 	DeferCurrent func() string
+	SkipFolder   func() string
+	SkipShare    func() string
 	Snapshot     func() ShareQueueSnapshot
 }
 
@@ -702,6 +704,23 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if isAltSkipFolderKey(msg) || isAltSkipShareKey(msg) {
+		m.writer.mu.Lock()
+		hooks := m.writer.shareScheduler
+		m.writer.mu.Unlock()
+		if isAltSkipFolderKey(msg) {
+			if hooks.SkipFolder == nil {
+				m.scheduleStatus = "No active folder to skip"
+			} else {
+				m.scheduleStatus = hooks.SkipFolder()
+			}
+		} else if hooks.SkipShare == nil {
+			m.scheduleStatus = "No active share to skip"
+		} else {
+			m.scheduleStatus = hooks.SkipShare()
+		}
+		return m, nil
+	}
 	if isCtrlBookmarkKey(msg) {
 		if m.selected < 0 || m.selected >= len(m.findings) {
 			m.bookmarkStatus = "No file selected"
@@ -791,6 +810,14 @@ func isAltQueueKey(msg tea.KeyMsg) bool {
 
 func isAltDeferKey(msg tea.KeyMsg) bool {
 	return isAltRuneKey(msg, 'l')
+}
+
+func isAltSkipFolderKey(msg tea.KeyMsg) bool {
+	return isAltRuneKey(msg, 'k')
+}
+
+func isAltSkipShareKey(msg tea.KeyMsg) bool {
+	return isAltRuneKey(msg, 's')
 }
 
 func isAltRuneKey(msg tea.KeyMsg, expected rune) bool {

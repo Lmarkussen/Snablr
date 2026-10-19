@@ -13,6 +13,14 @@ type WalkOptions struct {
 	IncludePaths []string
 	ExcludePaths []string
 	MaxDepth     int
+	// ShouldDescend is consulted at directory boundaries after the directory
+	// callback and again before reading a queued directory. It is intentionally
+	// cooperative: active SMB calls are allowed to finish.
+	ShouldDescend func(string) bool
+	// CurrentDirectory reports the directory immediately before its entries
+	// are read, allowing cooperative operator actions to identify the actual
+	// traversal scope rather than a selected finding.
+	CurrentDirectory func(string)
 }
 
 func (c *Client) WalkShare(share string, fn func(RemoteFile) error) error {
@@ -43,6 +51,12 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 	for len(stack) > 0 {
 		item := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
+		if item.path != "" && opts.ShouldDescend != nil && !opts.ShouldDescend(normalizeRemotePath(item.path)) {
+			continue
+		}
+		if opts.CurrentDirectory != nil {
+			opts.CurrentDirectory(normalizeRemotePath(item.path))
+		}
 
 		entries, err := fs.ReadDir(item.path)
 		if err != nil {
@@ -76,7 +90,9 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 					return err
 				}
 
-				stack = append(stack, walkItem{path: remotePath, depth: dirDepth})
+				if opts.ShouldDescend == nil || opts.ShouldDescend(normalizedPath) {
+					stack = append(stack, walkItem{path: remotePath, depth: dirDepth})
+				}
 				continue
 			}
 

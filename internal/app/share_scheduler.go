@@ -12,17 +12,21 @@ import (
 var errShareDeferred = fmt.Errorf("share deferred by operator")
 
 type shareScheduler struct {
-	mu        sync.Mutex
-	entries   map[string]*shareScheduleEntry
-	order     []string
-	current   string
-	deferNext bool
+	mu         sync.Mutex
+	entries    map[string]*shareScheduleEntry
+	order      []string
+	current    string
+	deferNext  bool
+	skipShare  func(planner.PlannedTarget) error
+	skipFolder func(planner.PlannedTarget, string) error
+	currentDir string
 }
 
 type shareScheduleEntry struct {
 	plan      planner.PlannedTarget
 	deferred  bool
 	completed bool
+	skipped   bool
 }
 
 func newShareScheduler(plans []planner.PlannedTarget) *shareScheduler {
@@ -50,10 +54,11 @@ func (s *shareScheduler) next() (planner.PlannedTarget, bool) {
 	}
 	for _, key := range s.order {
 		entry := s.entries[key]
-		if entry == nil || entry.completed {
+		if entry == nil || entry.completed || entry.skipped {
 			continue
 		}
 		s.current = key
+		s.currentDir = ""
 		return entry.plan, true
 	}
 	return planner.PlannedTarget{}, false
@@ -63,16 +68,91 @@ func (s *shareScheduler) begin(plan planner.PlannedTarget) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.current = shareScheduleKey(plan.Host, plan.Share)
+	s.currentDir = ""
 }
 
 func (s *shareScheduler) complete() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if entry := s.entries[s.current]; entry != nil {
-		entry.completed = true
+		if !entry.skipped {
+			entry.completed = true
+		}
 	}
 	s.current = ""
+	s.currentDir = ""
 	s.deferNext = false
+}
+
+func (s *shareScheduler) setSkipHandlers(share func(planner.PlannedTarget) error, folder func(planner.PlannedTarget, string) error) {
+	s.mu.Lock()
+	s.skipShare, s.skipFolder = share, folder
+	s.mu.Unlock()
+}
+
+func (s *shareScheduler) setCurrentDirectory(path string) {
+	s.mu.Lock()
+	s.currentDir = path
+	s.mu.Unlock()
+}
+
+func (s *shareScheduler) shouldDescend(string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.current == "" {
+		return true
+	}
+	entry := s.entries[s.current]
+	return entry != nil && !entry.skipped
+}
+
+func (s *shareScheduler) isCurrentSkipped() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry := s.entries[s.current]
+	return entry != nil && entry.skipped
+}
+
+func (s *shareScheduler) requestSkipShare() string {
+	s.mu.Lock()
+	if s.current == "" || s.entries[s.current] == nil || s.entries[s.current].completed {
+		s.mu.Unlock()
+		return "No active share to skip"
+	}
+	key, plan, handler := s.current, s.entries[s.current].plan, s.skipShare
+	s.mu.Unlock()
+	if handler == nil {
+		return "Persistent share skipping is unavailable"
+	}
+	if err := handler(plan); err != nil {
+		return fmt.Sprintf("Could not skip \\\\%s\\%s: %v", plan.Host, plan.Share, err)
+	}
+	s.mu.Lock()
+	if entry := s.entries[key]; entry != nil {
+		entry.skipped = true
+	}
+	s.mu.Unlock()
+	return fmt.Sprintf("Skipped share \\\\%s\\%s", plan.Host, plan.Share)
+}
+
+func (s *shareScheduler) requestSkipFolder() string {
+	s.mu.Lock()
+	if s.current == "" || s.entries[s.current] == nil || s.entries[s.current].completed {
+		s.mu.Unlock()
+		return "No active folder to skip"
+	}
+	plan, path, handler := s.entries[s.current].plan, s.currentDir, s.skipFolder
+	s.mu.Unlock()
+	if path == "" {
+		return "No active traversal folder to skip"
+	}
+	if handler == nil {
+		return "Persistent folder skipping is unavailable"
+	}
+	if err := handler(plan, path); err != nil {
+		return fmt.Sprintf("Could not skip folder \\\\%s\\%s\\%s: %v", plan.Host, plan.Share, path, err)
+	}
+	return fmt.Sprintf("Skipped folder \\\\%s\\%s\\%s", plan.Host, plan.Share, path)
 }
 
 func (s *shareScheduler) requestDefer() string {
@@ -125,6 +205,7 @@ func (s *shareScheduler) consumeDefer(plan planner.PlannedTarget) bool {
 	}
 	s.deferNext = false
 	s.current = ""
+	s.currentDir = ""
 	return true
 }
 
@@ -144,6 +225,8 @@ func (s *shareScheduler) snapshot() output.ShareQueueSnapshot {
 		state := "pending"
 		if entry.completed {
 			state = "completed"
+		} else if entry.skipped {
+			state = "skipped"
 		} else if key == s.current {
 			state = "current"
 		}
@@ -161,6 +244,8 @@ func (s *shareScheduler) snapshot() output.ShareQueueSnapshot {
 func (s *shareScheduler) hooks() output.ShareSchedulerHooks {
 	return output.ShareSchedulerHooks{
 		DeferCurrent: s.requestDefer,
+		SkipFolder:   s.requestSkipFolder,
+		SkipShare:    s.requestSkipShare,
 		Snapshot:     s.snapshot,
 	}
 }

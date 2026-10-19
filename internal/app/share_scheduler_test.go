@@ -148,3 +148,51 @@ func TestShareSchedulerConcurrentDeferAndSnapshot(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestShareSchedulerSkipShareIsPersistentQueueState(t *testing.T) {
+	scheduler := newShareScheduler(syntheticSharePlans()[:2])
+	first, _ := scheduler.next()
+	if first.Share != "A" {
+		t.Fatalf("first share = %q", first.Share)
+	}
+	called := false
+	scheduler.setSkipHandlers(func(plan planner.PlannedTarget) error {
+		called = true
+		if plan.Share != "A" {
+			t.Fatalf("skip plan = %q", plan.Share)
+		}
+		return nil
+	}, nil)
+	if got := scheduler.requestSkipShare(); got != `Skipped share \\host-a\A` {
+		t.Fatalf("skip message = %q", got)
+	}
+	if !called {
+		t.Fatal("skip persistence handler was not called")
+	}
+	item := scheduler.snapshot().Items[0]
+	if item.State != "skipped" {
+		t.Fatalf("queue state = %q, want skipped", item.State)
+	}
+	scheduler.complete()
+	next, ok := scheduler.next()
+	if !ok || next.Share != "B" {
+		t.Fatalf("next share = %#v, ok=%v", next, ok)
+	}
+}
+
+func TestShareSchedulerSkipFolderUsesCurrentTraversalDirectory(t *testing.T) {
+	scheduler := newShareScheduler(syntheticSharePlans()[:1])
+	_, _ = scheduler.next()
+	scheduler.setCurrentDirectory(`1/2/3`)
+	var gotPath string
+	scheduler.setSkipHandlers(nil, func(_ planner.PlannedTarget, path string) error {
+		gotPath = path
+		return nil
+	})
+	if got := scheduler.requestSkipFolder(); got != `Skipped folder \\host-a\A\1/2/3` {
+		t.Fatalf("skip message = %q", got)
+	}
+	if gotPath != `1/2/3` {
+		t.Fatalf("persisted path = %q", gotPath)
+	}
+}

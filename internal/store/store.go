@@ -20,6 +20,11 @@ import (
 
 const SchemaVersion = 2
 
+const (
+	ScopeExclusionShare  = "share"
+	ScopeExclusionFolder = "folder"
+)
+
 type Options struct {
 	ScanID        string
 	SnablrVersion string
@@ -129,7 +134,9 @@ func initializeSchema(db *sql.DB) error {
 		if storedVersion == "1" {
 			if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS bookmarks (scan_id TEXT NOT NULL, file_key TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (scan_id, file_key), FOREIGN KEY (scan_id, file_key) REFERENCES files(scan_id, file_key));
+CREATE TABLE IF NOT EXISTS scope_exclusions (scan_id TEXT NOT NULL, kind TEXT NOT NULL, host TEXT NOT NULL, share TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (scan_id, kind, host, share, path), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE INDEX IF NOT EXISTS bookmarks_scan_created_idx ON bookmarks(scan_id, created_at, file_key);
+CREATE INDEX IF NOT EXISTS scope_exclusions_identity_idx ON scope_exclusions(scan_id, kind, host, share, path);
 UPDATE metadata SET value='2' WHERE key='schema_version';
 `); err != nil {
 				return fmt.Errorf("migrate SQLite scan database schema: %w", err)
@@ -154,13 +161,88 @@ CREATE TABLE IF NOT EXISTS findings (id INTEGER PRIMARY KEY, scan_id TEXT NOT NU
 CREATE TABLE IF NOT EXISTS credentials (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, credential_key TEXT NOT NULL, credential_type TEXT, identity TEXT, value TEXT, payload TEXT NOT NULL, UNIQUE(scan_id, credential_key), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS correlations (scan_id TEXT NOT NULL, correlation_key TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY (scan_id, correlation_key), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS bookmarks (scan_id TEXT NOT NULL, file_key TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (scan_id, file_key), FOREIGN KEY (scan_id, file_key) REFERENCES files(scan_id, file_key));
+CREATE TABLE IF NOT EXISTS scope_exclusions (scan_id TEXT NOT NULL, kind TEXT NOT NULL, host TEXT NOT NULL, share TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (scan_id, kind, host, share, path), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE INDEX IF NOT EXISTS files_status_idx ON files(scan_id, status);
 CREATE INDEX IF NOT EXISTS files_identity_idx ON files(scan_id, host, share, path);
 CREATE INDEX IF NOT EXISTS findings_path_idx ON findings(scan_id, path);
 CREATE INDEX IF NOT EXISTS bookmarks_scan_created_idx ON bookmarks(scan_id, created_at, file_key);
+CREATE INDEX IF NOT EXISTS scope_exclusions_identity_idx ON scope_exclusions(scan_id, kind, host, share, path);
 INSERT INTO metadata(key, value) VALUES ('schema_version', '2') ON CONFLICT(key) DO UPDATE SET value=excluded.value;
 `)
 	return err
+}
+
+// RecordScopeExclusion waits for the authoritative transaction to commit.
+func (s *SQLiteStore) RecordScopeExclusion(kind, host, share, path string, at time.Time) error {
+	if s == nil {
+		return errors.New("sqlite state store is nil")
+	}
+	host, share, path = normalizeScopeIdentity(host, share, path)
+	if kind != ScopeExclusionShare && kind != ScopeExclusionFolder {
+		return fmt.Errorf("unsupported scope exclusion kind %q", kind)
+	}
+	if kind == ScopeExclusionShare {
+		path = ""
+	} else if path == "" {
+		return errors.New("folder exclusion path cannot be empty")
+	}
+	if host == "" || share == "" {
+		return errors.New("scope exclusion requires host and share")
+	}
+	if err := s.enqueue(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`INSERT OR IGNORE INTO scope_exclusions(scan_id,kind,host,share,path,created_at) VALUES(?,?,?,?,?,?)`, s.scanID, kind, host, share, path, at.UTC().Format(time.RFC3339Nano))
+		return err
+	}); err != nil {
+		return err
+	}
+	return s.Flush()
+}
+
+func (s *SQLiteStore) IsScopeExcluded(kind, host, share, path string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, errors.New("sqlite state store is closed")
+	}
+	host, share, path = normalizeScopeIdentity(host, share, path)
+	if kind == ScopeExclusionShare {
+		path = ""
+	}
+	var marker int
+	if kind == ScopeExclusionFolder {
+		rows, err := s.db.Query(`SELECT path FROM scope_exclusions WHERE scan_id=? AND kind=? AND host=? AND share=?`, s.scanID, kind, host, share)
+		if err != nil {
+			return false, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var excluded string
+			if err := rows.Scan(&excluded); err != nil {
+				return false, err
+			}
+			if path == excluded || strings.HasPrefix(path, excluded+"/") {
+				return true, nil
+			}
+		}
+		return false, rows.Err()
+	}
+	err := s.db.QueryRow(`SELECT 1 FROM scope_exclusions WHERE scan_id=? AND kind=? AND host=? AND share=? AND path=?`, s.scanID, kind, host, share, path).Scan(&marker)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return marker == 1, err
+}
+
+func normalizeScopeIdentity(host, share, path string) (string, string, string) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	share = strings.ToLower(strings.Trim(strings.TrimSpace(share), `/\\`))
+	path = strings.ReplaceAll(strings.TrimSpace(path), `\\`, "/")
+	path = strings.Trim(path, "/")
+	parts := make([]string, 0)
+	for _, part := range strings.Split(path, "/") {
+		if part != "" && part != "." {
+			parts = append(parts, strings.ToLower(part))
+		}
+	}
+	return host, share, strings.Join(parts, "/")
 }
 
 func (s *SQLiteStore) run() {

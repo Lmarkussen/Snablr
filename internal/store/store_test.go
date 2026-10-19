@@ -308,3 +308,81 @@ func TestAuthoritativeWriteFailureIsReportedWithoutCorruptingCommittedBatch(t *t
 		t.Fatalf("committed batch integrity lost: targets=%d shares=%d", targets, shares)
 	}
 }
+
+func TestSQLiteStoreScopeExclusionsNormalizeAndRespectBoundaries(t *testing.T) {
+	s, path := openTestStore(t)
+	defer s.Close()
+	if err := s.RecordScopeExclusion(ScopeExclusionFolder, "HOST.TEST", `\\Share`, `\\1\\2\\3`, storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{"1/2/3", true},
+		{"1/2/3/Nested", true},
+		{"1/2/30", false},
+		{"1/2", false},
+	} {
+		got, err := s.IsScopeExcluded(ScopeExclusionFolder, "host.test", "share", tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Fatalf("folder exclusion %q = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+	if err := s.RecordScopeExclusion(ScopeExclusionShare, "host.test", "share", "ignored", storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.IsScopeExcluded(ScopeExclusionShare, "HOST.TEST", "\\SHARE\\", "")
+	if err != nil || !got {
+		t.Fatalf("share exclusion = %v, err=%v", got, err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, _, reused, err := OpenLatestForReuse(path, ResumeOptions{ExpectedSemantics: "semantics-synthetic"})
+	if err != nil || !reused {
+		t.Fatalf("reopen exclusion state: reused=%v err=%v", reused, err)
+	}
+	defer reopened.Close()
+	got, err = reopened.IsScopeExcluded(ScopeExclusionFolder, "host.test", "share", "1/2/3/Nested")
+	if err != nil || !got {
+		t.Fatalf("persisted folder exclusion = %v, err=%v", got, err)
+	}
+}
+
+func TestSQLiteStoreScopeExclusionFailureDoesNotClaimSuccess(t *testing.T) {
+	s, _ := openTestStore(t)
+	defer s.Close()
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	s.failAfterBatches = s.committedBatches
+	if err := s.RecordScopeExclusion(ScopeExclusionShare, "host", "share", "", storeTestTime); err == nil {
+		t.Fatal("expected authoritative exclusion write failure")
+	}
+}
+
+func TestSQLiteStoreFreshScanScopeDoesNotInheritExclusions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	first, err := Open(path, Options{ScanID: "scan-first", Semantics: "semantics-synthetic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.RecordScopeExclusion(ScopeExclusionShare, "host", "share", "", storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := Open(path, Options{ScanID: "scan-force", Semantics: "semantics-synthetic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fresh.Close()
+	if excluded, err := fresh.IsScopeExcluded(ScopeExclusionShare, "host", "share", ""); err != nil || excluded {
+		t.Fatalf("fresh scan inherited exclusion: excluded=%v err=%v", excluded, err)
+	}
+}

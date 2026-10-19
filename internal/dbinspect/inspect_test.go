@@ -203,3 +203,14 @@ func TestInspectorNorwegianConnectionAliases(t *testing.T) {
 	}
 	t.Fatalf("Norwegian connection aliases were not recognized: %#v", matches)
 }
+
+func TestInspectRawDatabaseURLUserinfo(t *testing.T) {
+	for _, value := range []string{
+		`postgresql://déploiement-256:Harbor-496-Cobalt!@db.synthetic:5432/app`,
+		`postgresql://SYNTHETIC\Komtek468:Copper-327-Cobalt!@db.synthetic:5432/app`,
+	} {
+		if matches := inspectConfigText("raw-uri", value); len(matches) == 0 {
+			t.Fatalf("raw database URI was not inspected: %q", value)
+		}
+	}
+}

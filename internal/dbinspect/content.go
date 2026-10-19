@@ -398,6 +398,9 @@ func inspectJDBCURL(candidate string, lineNumber int) (stringObservation, bool) 
 	trimmed := trimWrapper(strings.TrimPrefix(candidate, "jdbc:"))
 	parsed, err := url.Parse(trimmed)
 	if err != nil || parsed.Scheme == "" {
+		if values, ok := parseRawDatabaseURL(trimmed); ok {
+			return inspectKVFragment(summarizeKV(values), lineNumber)
+		}
 		return stringObservation{}, false
 	}
 
@@ -442,6 +445,9 @@ func inspectDBURL(candidate string, lineNumber int) (stringObservation, bool) {
 	trimmed := trimWrapper(candidate)
 	parsed, err := url.Parse(trimmed)
 	if err != nil || parsed.Scheme == "" || meaningfulValue(parsed.Hostname()) == "" {
+		if values, ok := parseRawDatabaseURL(trimmed); ok {
+			return inspectKVFragment(summarizeKV(values), lineNumber)
+		}
 		return stringObservation{}, false
 	}
 
@@ -461,6 +467,46 @@ func inspectDBURL(candidate string, lineNumber int) (stringObservation, bool) {
 		values[normalizeKVKey(key)] = list[0]
 	}
 	return inspectKVFragment(summarizeKV(values), lineNumber)
+}
+
+func parseRawDatabaseURL(value string) (map[string]string, bool) {
+	schemeEnd := strings.Index(value, "://")
+	if schemeEnd <= 0 {
+		return nil, false
+	}
+	scheme := strings.ToLower(value[:schemeEnd])
+	switch scheme {
+	case "postgres", "postgresql", "mysql", "mariadb", "sqlserver":
+	default:
+		return nil, false
+	}
+	rest := value[schemeEnd+3:]
+	at := strings.LastIndexByte(rest, '@')
+	if at <= 0 {
+		return nil, false
+	}
+	userinfo := rest[:at]
+	colon := strings.IndexByte(userinfo, ':')
+	if colon <= 0 || colon == len(userinfo)-1 {
+		return nil, false
+	}
+	username, err := url.PathUnescape(userinfo[:colon])
+	if err != nil {
+		return nil, false
+	}
+	password, err := url.PathUnescape(userinfo[colon+1:])
+	if err != nil || meaningfulValue(username) == "" || meaningfulValue(password) == "" {
+		return nil, false
+	}
+	hostPart := rest[at+1:]
+	hostEnd := strings.IndexAny(hostPart, "/?")
+	if hostEnd >= 0 {
+		hostPart = hostPart[:hostEnd]
+	}
+	if hostPart == "" {
+		return nil, false
+	}
+	return map[string]string{"driver": scheme, "server": hostPart, "user": username, "password": password}, true
 }
 
 func matchFromObservation(observation stringObservation, raw string) Match {

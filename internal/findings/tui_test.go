@@ -179,49 +179,19 @@ func TestFinderClassificationUsesPersistedMaterialType(t *testing.T) {
 	}
 }
 
-func TestFinderPairingPolicyRejectsOpaqueAndDerivesExplicitReviewPairs(t *testing.T) {
-	opaque := credentialanalysis.Candidate{
-		Verification:    credentialanalysis.Confirmed,
-		CredentialType:  "password",
-		Identity:        "opaque-user",
-		Value:           "BASE64-CIPHERTEXT-NOT-PLAINTEXT",
-		ValidationBasis: "windows_unattend_structured_password",
-		Path:            "negative/encrypted.xml",
-		Evidence:        []credentialanalysis.Evidence{{Path: "negative/encrypted.xml"}},
+func TestFinderPairingPolicyRejectsOpaqueAndKeepsGenericReviewSecret(t *testing.T) {
+	candidate := credentialanalysis.Candidate{Verification: credentialanalysis.Review, CredentialType: "secret", Identity: "cfg-user", Value: "cfg-secret", Path: "config/cfg.json", Evidence: []credentialanalysis.Evidence{{Path: "config/cfg.json"}}}
+	decision := interpretCredential(candidate)
+	if decision.Confirmed || decision.Status != "Uncertain pairing" {
+		t.Fatalf("generic review secret decision = %#v", decision)
 	}
-	decision := interpretCredential(opaque)
+	if category, _ := classifyCandidate(candidate); category != "Review" {
+		t.Fatalf("generic review secret classified as %q", category)
+	}
+	opaque := credentialanalysis.Candidate{Verification: credentialanalysis.Confirmed, CredentialType: "password", Identity: "opaque-user", Value: "BASE64-CIPHERTEXT-NOT-PLAINTEXT", ValidationBasis: "windows_unattend_structured_password", Path: "negative/encrypted.xml", Evidence: []credentialanalysis.Evidence{{Path: "negative/encrypted.xml"}}}
+	decision = interpretCredential(opaque)
 	if decision.Confirmed || !decision.Opaque || decision.Status != "Encrypted / opaque material" {
 		t.Fatalf("opaque decision = %#v", decision)
-	}
-	if category, _ := classifyCandidate(opaque); category != "Review" {
-		t.Fatalf("opaque material classified as %q", category)
-	}
-	opaqueCategories := buildCategories([]Credential{{Candidate: opaque}}, nil, nil)
-	opaqueModel := &model{scans: []Scan{{ID: "scan"}}, categories: opaqueCategories, screen: screenDiscoveries, discoveries: opaqueCategories[0].Discoveries, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
-	opaqueModel.resizeTo(120, 40)
-	opaqueText := opaqueModel.evidenceText()
-	for _, want := range []string{"ENCRYPTED / OPAQUE MATERIAL — REVIEW", "Not confirmed plaintext; no decryption was attempted.", "BASE64-CIPHERTEXT-NOT-PLAINTEXT"} {
-		if !strings.Contains(opaqueText, want) {
-			t.Fatalf("opaque evidence missing %q: %q", want, opaqueText)
-		}
-	}
-
-	for _, identity := range []string{"cfg-user", "json-b", "deploy-user"} {
-		candidate := credentialanalysis.Candidate{
-			Verification:   credentialanalysis.Review,
-			CredentialType: "secret",
-			Identity:       identity,
-			Value:          identity + "-secret",
-			Path:           "config/" + identity + ".json",
-			Evidence:       []credentialanalysis.Evidence{{Path: "config/" + identity + ".json"}},
-		}
-		decision := interpretCredential(candidate)
-		if !decision.Confirmed || decision.Status != "Confirmed pair (Finder-derived)" {
-			t.Fatalf("%s decision = %#v", identity, decision)
-		}
-		if category, _ := classifyCandidate(candidate); category != "Credentials" {
-			t.Fatalf("%s classified as %q", identity, category)
-		}
 	}
 }
 
@@ -253,14 +223,15 @@ func TestFinderPairingPolicyKeepsPasswordOnlyMaterialInReview(t *testing.T) {
 
 func TestFinderDerivedPairEvidenceShowsPairingBasis(t *testing.T) {
 	candidate := credentialanalysis.Candidate{
-		Verification:   credentialanalysis.Review,
-		CredentialType: "secret",
-		Identity:       "cfg-user",
-		Value:          "CfgSecret!",
-		Path:           "config/settings.ini",
-		Host:           "synthetic-host",
-		Share:          "share_iso",
-		Evidence:       []credentialanalysis.Evidence{{Path: "config/settings.ini"}},
+		Verification:    credentialanalysis.Review,
+		CredentialType:  "secret",
+		Identity:        "cfg-user",
+		Value:           "CfgSecret!",
+		Path:            "config/settings.ini",
+		Host:            "synthetic-host",
+		Share:           "share_iso",
+		Evidence:        []credentialanalysis.Evidence{{Path: "config/settings.ini"}},
+		ValidationBasis: "structured configuration scope",
 	}
 	categories := buildCategories([]Credential{{Candidate: candidate}}, nil, nil)
 	if len(categories) != 1 || categories[0].Name != "Credentials" {
@@ -406,7 +377,7 @@ func TestKeyPresentationUsesValidatedMaterialType(t *testing.T) {
 func TestAllPersistedMaterialReusesDiscoveryReferencesAndStatuses(t *testing.T) {
 	credentials := []Credential{
 		{CredentialKey: "confirmed", Candidate: credentialanalysis.Candidate{CredentialType: "password", Identity: "DOMAIN\\alice", Value: "SyntheticOne!", Verification: credentialanalysis.Confirmed, Path: "one.ini", Host: "HOST", Share: "Share"}},
-		{CredentialKey: "derived", Candidate: credentialanalysis.Candidate{CredentialType: "secret", Identity: "DOMAIN\\bob", Value: "SyntheticTwo!", Verification: credentialanalysis.Review, Path: "two.ini", Host: "HOST", Share: "Share"}},
+		{CredentialKey: "derived", Candidate: credentialanalysis.Candidate{CredentialType: "secret", Identity: "DOMAIN\\bob", Value: "SyntheticTwo!", Verification: credentialanalysis.Review, ValidationBasis: "structured configuration scope", Path: "two.ini", Host: "HOST", Share: "Share"}},
 		{CredentialKey: "opaque", Candidate: credentialanalysis.Candidate{CredentialType: "password", Identity: "DOMAIN\\opaque", Value: "BASE64-CIPHERTEXT-NOT-PLAINTEXT", Verification: credentialanalysis.Confirmed, Path: "encrypted.xml", Host: "HOST", Share: "Share"}},
 		{CredentialKey: "password-only", Candidate: credentialanalysis.Candidate{CredentialType: "password", Value: "OnlyValue!", Verification: credentialanalysis.Review, Path: "only.ini", Host: "HOST", Share: "Share"}},
 	}

@@ -66,3 +66,14 @@ func TestCompareCreditsJDBCQueryCredentials(t *testing.T) {
 		t.Fatalf("JDBC query pair was not matched: %#v", report)
 	}
 }
+
+func TestExtractPairsCreditsOnlyConfirmedExplicitSecret(t *testing.T) {
+	material := ObservedMaterial{MaterialType: "secret", Identity: "svc", Value: "Pass!", Verification: "confirmed"}
+	if got := ExtractPairs(material); len(got) != 1 || got[0] != (Pair{Username: "svc", Password: "Pass!"}) {
+		t.Fatalf("confirmed explicit secret was not credited: %#v", got)
+	}
+	material.Verification = "review"
+	if got := ExtractPairs(material); len(got) != 0 {
+		t.Fatalf("review secret was incorrectly credited: %#v", got)
+	}
+}

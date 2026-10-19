@@ -53,6 +53,9 @@ func ExtractPairs(material ObservedMaterial) []Pair {
 	if strings.EqualFold(material.MaterialType, "password") && material.Identity != "" && material.Value != "" {
 		return []Pair{{Username: material.Identity, Password: material.Value}}
 	}
+	if strings.EqualFold(material.MaterialType, "secret") && strings.EqualFold(strings.TrimSpace(material.Verification), "confirmed") && material.Identity != "" && material.Value != "" {
+		return []Pair{{Username: material.Identity, Password: material.Value}}
+	}
 	if !strings.EqualFold(material.MaterialType, "connection_string") && !strings.EqualFold(material.MaterialType, "dsn") {
 		return nil
 	}

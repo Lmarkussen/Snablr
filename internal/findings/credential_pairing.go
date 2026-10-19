@@ -49,9 +49,10 @@ func interpretCredential(candidate credentialanalysis.Candidate) pairingDecision
 		decision.Confirmed = true
 		return decision
 	}
-	if candidate.Verification == credentialanalysis.Review && strings.EqualFold(strings.TrimSpace(candidate.CredentialType), "secret") && hasPersistedPairObservation(candidate) {
+	if candidate.Verification == credentialanalysis.Review && strings.EqualFold(strings.TrimSpace(candidate.CredentialType), "secret") &&
+		hasPersistedPairObservation(candidate) && strings.Contains(strings.ToLower(candidate.ValidationBasis), "structured") {
 		decision.Status = "Confirmed pair (Finder-derived)"
-		decision.Basis = "persisted candidate contains an identity and value in the same observation"
+		decision.Basis = "explicit structured account/secret scope persisted with this observation"
 		decision.Confirmed = true
 		return decision
 	}

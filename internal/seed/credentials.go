@@ -111,11 +111,14 @@ func generateCredentialCorpus(opts GenerateOptions) ([]SeedFile, error) {
 func credentialZip() ([]byte, error) {
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
-	entries := map[string]string{
-		"credentials.ini": "[service]\nusername=zip-user\npassword=ZipSecret!\n",
-		"negative.txt":    "username=example-only\npassword=CHANGE_ME\n",
+	entries := []struct {
+		name, content string
+	}{
+		{"credentials.ini", "[service]\nusername=zip-user\npassword=ZipSecret!\n"},
+		{"negative.txt", "username=example-only\npassword=CHANGE_ME\n"},
 	}
-	for name, content := range entries {
+	for _, entry := range entries {
+		name, content := entry.name, entry.content
 		part, err := writer.Create(name)
 		if err != nil {
 			return nil, fmt.Errorf("create credential archive member: %w", err)
@@ -133,10 +136,14 @@ func credentialZip() ([]byte, error) {
 func officeContainer(member, content string) ([]byte, error) {
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
-	for name, value := range map[string]string{
-		"[Content_Types].xml": "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"></Types>",
-		member:                content,
-	} {
+	entries := []struct {
+		name, value string
+	}{
+		{"[Content_Types].xml", "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"></Types>"},
+		{member, content},
+	}
+	for _, entry := range entries {
+		name, value := entry.name, entry.value
 		part, err := writer.Create(name)
 		if err != nil {
 			return nil, fmt.Errorf("create office member: %w", err)

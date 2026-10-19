@@ -135,6 +135,7 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 		MediumSeverityRatio: opts.MediumSeverityRatio,
 		Expanded:            opts.Expanded,
 		Credentials:         opts.Credentials,
+		CredentialsV2:       opts.CredentialsV2,
 	})
 	if err != nil {
 		return Manifest{}, err
@@ -154,6 +155,9 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 	}
 	if opts.Credentials {
 		manifest.FixtureVersion = "credentials-finder-v1"
+	}
+	if opts.CredentialsV2 {
+		manifest.FixtureVersion = "credentials-finder-v2"
 	}
 	stats := newSeedRunStats(len(files))
 	pool := newSeedClientPool(opts)
@@ -208,6 +212,11 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 			ExpectedObservations: file.ExpectedObservations,
 			ExpectedInspectable:  file.ExpectedInspectable,
 			ExpectedArchive:      file.ExpectedArchive,
+			FixtureID:            file.FixtureID,
+			Subset:               file.Subset,
+			SeedVariant:          file.SeedVariant,
+			ExpectedPairsDetail:  append([]ExpectedCredentialPair{}, file.ExpectedPairsDetail...),
+			NegativeReason:       file.NegativeReason,
 		}
 
 		if opts.DryRun {

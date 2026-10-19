@@ -26,32 +26,54 @@ type SeedFile struct {
 	ExpectedObservations int
 	ExpectedInspectable  bool
 	ExpectedArchive      bool
+	FixtureID            string
+	Subset               string
+	SeedVariant          string
+	ExpectedPairsDetail  []ExpectedCredentialPair `json:"-"`
+	NegativeReason       string
+}
+
+// ExpectedCredentialPair is synthetic ground truth for the credential audit
+// corpus. It is deliberately kept on the manifest side of the seeder and is
+// never consumed by the scanner or Finder.
+type ExpectedCredentialPair struct {
+	ID            string `json:"id"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	Pairing       string `json:"pairing"`
+	Origin        string `json:"origin,omitempty"`
+	SourceContext string `json:"source_context,omitempty"`
 }
 
 type SeedManifestEntry struct {
-	Host                 string   `json:"host"`
-	Share                string   `json:"share"`
-	Path                 string   `json:"path"`
-	Category             string   `json:"category"`
-	Format               string   `json:"format"`
-	IntendedAs           string   `json:"intended_as,omitempty"`
-	ExpectedClass        string   `json:"expected_class,omitempty"`
-	ExpectedTriageClass  string   `json:"expected_triage_class,omitempty"`
-	ExpectedConfidence   string   `json:"expected_confidence,omitempty"`
-	ExpectedCorrelated   bool     `json:"expected_correlated,omitempty"`
-	ExpectedSignalTypes  []string `json:"expected_signal_types,omitempty"`
-	ExpectedTags         []string `json:"expected_tags,omitempty"`
-	ExpectedRuleThemes   []string `json:"expected_rule_themes,omitempty"`
-	ExpectedSeverity     string   `json:"expected_severity,omitempty"`
-	ExpectedUsername     string   `json:"expected_username,omitempty"`
-	ExpectedPassword     string   `json:"expected_password,omitempty"`
-	ExpectedPairing      string   `json:"expected_pairing,omitempty"`
-	ExpectedOrigin       string   `json:"expected_origin,omitempty"`
-	ExpectedPairs        int      `json:"expected_pairs"`
-	ExpectedObservations int      `json:"expected_observations"`
-	ExpectedInspectable  bool     `json:"expected_inspectable,omitempty"`
-	ExpectedArchive      bool     `json:"expected_archive_provenance,omitempty"`
-	Status               string   `json:"status,omitempty"`
+	Host                 string                   `json:"host"`
+	Share                string                   `json:"share"`
+	Path                 string                   `json:"path"`
+	Category             string                   `json:"category"`
+	Format               string                   `json:"format"`
+	IntendedAs           string                   `json:"intended_as,omitempty"`
+	ExpectedClass        string                   `json:"expected_class,omitempty"`
+	ExpectedTriageClass  string                   `json:"expected_triage_class,omitempty"`
+	ExpectedConfidence   string                   `json:"expected_confidence,omitempty"`
+	ExpectedCorrelated   bool                     `json:"expected_correlated,omitempty"`
+	ExpectedSignalTypes  []string                 `json:"expected_signal_types,omitempty"`
+	ExpectedTags         []string                 `json:"expected_tags,omitempty"`
+	ExpectedRuleThemes   []string                 `json:"expected_rule_themes,omitempty"`
+	ExpectedSeverity     string                   `json:"expected_severity,omitempty"`
+	ExpectedUsername     string                   `json:"expected_username,omitempty"`
+	ExpectedPassword     string                   `json:"expected_password,omitempty"`
+	ExpectedPairing      string                   `json:"expected_pairing,omitempty"`
+	ExpectedOrigin       string                   `json:"expected_origin,omitempty"`
+	ExpectedPairs        int                      `json:"expected_pairs"`
+	ExpectedObservations int                      `json:"expected_observations"`
+	ExpectedInspectable  bool                     `json:"expected_inspectable,omitempty"`
+	ExpectedArchive      bool                     `json:"expected_archive_provenance,omitempty"`
+	Status               string                   `json:"status,omitempty"`
+	FixtureID            string                   `json:"fixture_id,omitempty"`
+	Subset               string                   `json:"subset,omitempty"`
+	SeedVariant          string                   `json:"seed_variant,omitempty"`
+	ExpectedPairsDetail  []ExpectedCredentialPair `json:"expected_pairs_detail,omitempty"`
+	NegativeReason       string                   `json:"negative_reason,omitempty"`
 }
 
 type Manifest struct {
@@ -76,6 +98,7 @@ type GenerateOptions struct {
 	MediumSeverityRatio int
 	Expanded            bool
 	Credentials         bool
+	CredentialsV2       bool
 }
 
 type WriteOptions struct {
@@ -101,6 +124,7 @@ type WriteOptions struct {
 	MaxFiles            int
 	Expanded            bool
 	Credentials         bool
+	CredentialsV2       bool
 }
 
 type ShareTarget struct {

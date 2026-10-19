@@ -15,6 +15,68 @@ import (
 	"snablr/pkg/logx"
 )
 
+func TestGenerateCredentialCorpusV2IsDeterministicAndSplit(t *testing.T) {
+	first, err := Generate(GenerateOptions{CredentialsV2: true, SeedPrefix: "Credentials-Finder-V2", RandomSeed: 424242, MaxFiles: 360})
+	if err != nil {
+		t.Fatalf("generate v2 corpus: %v", err)
+	}
+	second, err := Generate(GenerateOptions{CredentialsV2: true, SeedPrefix: "Credentials-Finder-V2", RandomSeed: 424242, MaxFiles: 360})
+	if err != nil {
+		t.Fatalf("regenerate v2 corpus: %v", err)
+	}
+	if len(first) != 360 || len(second) != 360 {
+		t.Fatalf("expected 360 files, got %d and %d", len(first), len(second))
+	}
+	positive, negative, review, multiPair := 0, 0, 0, 0
+	for index, file := range first {
+		if file.FixtureID != second[index].FixtureID || string(file.Content) != string(second[index].Content) {
+			t.Fatalf("seed changed at index %d", index)
+		}
+		if file.Subset == "holdout" && index < 288 {
+			t.Fatalf("holdout began at unexpected index %d", index)
+		}
+		switch {
+		case len(file.ExpectedPairsDetail) > 0:
+			positive++
+			if len(file.ExpectedPairsDetail) > 1 {
+				multiPair++
+			}
+		case file.ExpectedClass == "negative":
+			negative++
+		default:
+			review++
+		}
+	}
+	if positive != 252 || negative != 72 || review != 36 {
+		t.Fatalf("unexpected classes: positive=%d negative=%d review=%d", positive, negative, review)
+	}
+	if multiPair == 0 {
+		t.Fatal("expected at least one multi-pair fixture")
+	}
+	if first[287].Subset != "evaluation" || first[288].Subset != "holdout" {
+		t.Fatalf("unexpected evaluation/holdout boundary")
+	}
+	if first[0].FixtureID == first[288].FixtureID || first[0].SeedVariant == first[288].SeedVariant {
+		t.Fatalf("holdout did not use an independent fixture identity/grammar")
+	}
+}
+
+func TestGenerateCredentialCorpusV2HasValidContainers(t *testing.T) {
+	files, err := Generate(GenerateOptions{CredentialsV2: true, SeedPrefix: "V2", RandomSeed: 7, MaxFiles: 120})
+	if err != nil {
+		t.Fatalf("generate v2 corpus: %v", err)
+	}
+	for _, file := range files {
+		if file.Format != "zip" && file.Format != "docx" && file.Format != "xlsx" {
+			continue
+		}
+		reader, err := zip.NewReader(bytes.NewReader(file.Content), int64(len(file.Content)))
+		if err != nil || len(reader.File) < 2 {
+			t.Fatalf("invalid %s container for %s: %v", file.Format, file.FixtureID, err)
+		}
+	}
+}
+
 func TestGenerateRespectsScaleDepthAndExpectedSignals(t *testing.T) {
 	t.Parallel()
 

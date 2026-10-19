@@ -60,7 +60,7 @@ func harvestNetNTLMv2(fields []string, lineNumber int, add func(Candidate)) bool
 func harvestNetNTLMv2Fields(user, domain, challenge, proof, blob string, lineNumber int, add func(Candidate)) bool {
 	if !meaningfulHashIdentity(user) || !meaningfulHashIdentity(domain) ||
 		!validHexLength(challenge, 16) || !validHexLength(proof, 32) ||
-		len(blob) < 16 || len(blob) > maxNetNTLMv2BlobLength || len(blob)%2 != 0 ||
+		len(blob) < 32 || len(blob) > maxNetNTLMv2BlobLength || len(blob)%2 != 0 ||
 		!validHexLength(blob, len(blob)) || !strings.HasPrefix(blob, "01010000") {
 		return true
 	}

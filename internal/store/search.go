@@ -83,6 +83,11 @@ LIMIT ? OFFSET ?`
 		s.scanID, query, query, query, query,
 	}
 	results := make([]SearchResult, 0, options.Limit)
+	type credentialSearchCandidate struct {
+		candidate   credentialanalysis.Candidate
+		resultIndex int
+	}
+	seenCredentials := make([]credentialSearchCandidate, 0)
 	logicalOffset := 0
 	rawOffset := 0
 	batchSize := options.Limit
@@ -105,7 +110,40 @@ LIMIT ? OFFSET ?`
 				_ = rows.Close()
 				return nil, err
 			}
-			if result.Type == SearchResultCredential && suppressedCredentialPayload(credentialPayload, credentialType, credentialIdentity, credentialValue) {
+			if result.Type == SearchResultCredential {
+				candidate, suppressed, decoded := persistedCandidate(credentialPayload, credentialType, credentialIdentity, credentialValue)
+				if suppressed {
+					continue
+				}
+				if decoded {
+					duplicate := false
+					for index := range seenCredentials {
+						if !credentialanalysis.SameLogicalCredential(seenCredentials[index].candidate, candidate) {
+							continue
+						}
+						duplicate = true
+						if preferCredentialCandidate(candidate, seenCredentials[index].candidate) {
+							seenCredentials[index].candidate = candidate
+							results[seenCredentials[index].resultIndex] = credentialSearchResult(result, candidate)
+						}
+						break
+					}
+					if duplicate {
+						continue
+					}
+				}
+				if logicalOffset < options.Offset {
+					logicalOffset++
+					continue
+				}
+				resultIndex := len(results)
+				results = append(results, credentialSearchResult(result, candidate))
+				if decoded {
+					seenCredentials = append(seenCredentials, credentialSearchCandidate{candidate: candidate, resultIndex: resultIndex})
+				}
+				if len(results) >= options.Limit {
+					break
+				}
 				continue
 			}
 			if logicalOffset < options.Offset {
@@ -130,19 +168,45 @@ LIMIT ? OFFSET ?`
 	return results, nil
 }
 
-func suppressedCredentialPayload(payload, credentialType, identity, value string) bool {
-	if strings.TrimSpace(payload) == "" {
-		return false
-	}
+func persistedCandidate(payload, credentialType, identity, value string) (credentialanalysis.Candidate, bool, bool) {
 	var candidate credentialanalysis.Candidate
+	if strings.TrimSpace(payload) == "" {
+		return candidate, false, false
+	}
 	if err := json.Unmarshal([]byte(payload), &candidate); err != nil {
-		return false
+		return candidate, false, false
 	}
 	candidate.CredentialType = credentialType
 	candidate.Identity = identity
 	candidate.Value = value
 	_, suppressed := credentialanalysis.SuppressionReason(candidate)
-	return suppressed
+	return candidate, suppressed, true
+}
+
+func preferCredentialCandidate(candidate, existing credentialanalysis.Candidate) bool {
+	if strings.TrimSpace(candidate.Identity) != "" && strings.TrimSpace(existing.Identity) == "" {
+		return true
+	}
+	if candidate.Verification == credentialanalysis.Confirmed && existing.Verification != credentialanalysis.Confirmed {
+		return true
+	}
+	return len(candidate.Evidence) > len(existing.Evidence)
+}
+
+func credentialSearchResult(result SearchResult, candidate credentialanalysis.Candidate) SearchResult {
+	result.Title = firstSearchString(candidate.Identity, candidate.CredentialType, "credential")
+	result.Context = candidate.CredentialType
+	result.Detail = result.Title + " | " + candidate.Value
+	return result
+}
+
+func firstSearchString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func escapeLike(value string) string {

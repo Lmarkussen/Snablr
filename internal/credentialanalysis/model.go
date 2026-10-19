@@ -279,6 +279,13 @@ func SuppressionReason(candidate Candidate) (string, bool) {
 	return "", false
 }
 
+// SameLogicalCredential exposes the analysis ledger's equivalence policy to
+// presentation layers that project persisted candidates. It deliberately keeps
+// different users, types, values, and unrelated origins separate.
+func SameLogicalCredential(left, right Candidate) bool {
+	return sameLogicalCredential(left, right)
+}
+
 func candidateKey(candidate Candidate) string {
 	return strings.ToLower(candidate.CredentialType) + "\x00" + strings.ToLower(candidate.Domain) + "\x00" + strings.ToLower(candidate.Identity) + "\x00" + candidate.Value
 }

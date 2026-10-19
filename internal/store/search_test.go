@@ -80,8 +80,11 @@ func TestSearchOmitsSuppressedCredentialCandidatesButKeepsValidMaterial(t *testi
 	candidates := []credentialanalysis.Candidate{
 		{CredentialType: "password", Identity: "masked-user", Value: "********"},
 		{CredentialType: "secret", Identity: "", Value: "synthetic"},
+		{CredentialType: "password", Value: "Odd punctuation !? [value]", Path: "same.txt"},
 		{CredentialType: "password", Identity: "valid-user", Value: "Odd punctuation !? [value]"},
+		{CredentialType: "password", Identity: "other-user", Value: "Odd punctuation !? [value]", Path: "other.txt"},
 		{CredentialType: "nt_hash", Identity: "hash-user", Value: "0123456789abcdef0123456789abcdef"},
+		{CredentialType: "netntlmv2", Identity: "hash-user", Value: "hash-capture-material"},
 	}
 	for _, candidate := range candidates {
 		if err := state.RecordCredential(candidate); err != nil {
@@ -115,6 +118,15 @@ func TestSearchOmitsSuppressedCredentialCandidatesButKeepsValidMaterial(t *testi
 	}
 	if !seenValid || !seenHash {
 		t.Fatalf("valid credential/hash missing from search: %#v", results)
+	}
+	passwordRows := 0
+	for _, result := range results {
+		if result.Type == SearchResultCredential && result.Context == "password" {
+			passwordRows++
+		}
+	}
+	if passwordRows != 2 {
+		t.Fatalf("same-source identity variants should merge while unrelated users remain distinct, got %d rows: %#v", passwordRows, results)
 	}
 }
 

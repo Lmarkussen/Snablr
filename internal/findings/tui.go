@@ -25,10 +25,17 @@ const (
 type discovery struct {
 	Title, Subcategory, MaterialType, Identity, Domain string
 	MaterialFamily, SourceContext                      string
+	OriginType                                         string
 	Value, Host, Share, Path, Confidence, Verification string
 	Reason                                             string
+	ConnectionDetails                                  []connectionDetail
 	Sources                                            []string
 	Finding                                            *scanner.Finding
+}
+
+type connectionDetail struct {
+	Label string
+	Value string
 }
 
 type category struct {
@@ -172,24 +179,27 @@ func buildCategories(credentials []Credential, findings []Finding, correlations 
 			group := groups[name]
 			group.Discoveries[ref.index].Sources = appendUnique(group.Discoveries[ref.index].Sources, sourceLabel(candidate))
 			group.Discoveries[ref.index].SourceContext = appendContext(group.Discoveries[ref.index].SourceContext, sourceContext(candidate))
+			group.Discoveries[ref.index].OriginType = mergeOrigin(group.Discoveries[ref.index].OriginType, originType(candidate))
 			continue
 		}
 		d := discovery{
-			Title:          discoveryTitle(candidate),
-			Subcategory:    sub,
-			MaterialType:   candidate.CredentialType,
-			Identity:       candidate.Identity,
-			Domain:         candidate.Domain,
-			Value:          candidate.Value,
-			Host:           candidate.Host,
-			Share:          candidate.Share,
-			Path:           candidate.Path,
-			Confidence:     string(candidate.Verification),
-			Verification:   string(candidate.Verification),
-			MaterialFamily: name,
-			SourceContext:  sourceContext(candidate),
-			Reason:         strings.Join(candidate.ReviewReasons, "; "),
-			Sources:        []string{sourceLabel(candidate)},
+			Title:             discoveryTitle(candidate),
+			Subcategory:       sub,
+			MaterialType:      candidate.CredentialType,
+			Identity:          candidate.Identity,
+			Domain:            candidate.Domain,
+			Value:             candidate.Value,
+			Host:              candidate.Host,
+			Share:             candidate.Share,
+			Path:              candidate.Path,
+			Confidence:        string(candidate.Verification),
+			Verification:      string(candidate.Verification),
+			MaterialFamily:    name,
+			SourceContext:     sourceContext(candidate),
+			OriginType:        originType(candidate),
+			Reason:            strings.Join(candidate.ReviewReasons, "; "),
+			ConnectionDetails: connectionDetails(candidate),
+			Sources:           []string{sourceLabel(candidate)},
 		}
 		group := groups[name]
 		seen[key] = discoveryRef{category: name, index: len(group.Discoveries)}
@@ -262,11 +272,117 @@ func classifyCandidate(candidate credentialanalysis.Candidate) (string, string) 
 		return "Application & Cloud Secrets", "Tokens / API Secrets"
 	case "password", "passwd", "pwd", "passord", "secret", "shared_secret":
 		if candidate.Identity != "" {
-			return "Credentials", "Username + Password"
+			return "Credentials", credentialOriginSubcategory(originType(candidate))
 		}
 		return "Credentials", "Password Only"
 	default:
 		return "Credentials", "Other Credential Material"
+	}
+}
+
+func credentialOriginSubcategory(origin string) string {
+	switch origin {
+	case "AD / Domain Credential":
+		return "AD / Domain"
+	case "SCCM / MECM Credential":
+		return "SCCM / MECM"
+	case "MSSQL / Database Credential", "Database Credential":
+		return "Database / MSSQL"
+	case "Web / Application Credential":
+		return "Web / Application"
+	case "Local Account Credential", "Local / Generic Credential":
+		return "Local / Generic"
+	default:
+		return "Unknown Origin"
+	}
+}
+
+func originType(candidate credentialanalysis.Candidate) string {
+	typ := strings.ToLower(strings.TrimSpace(candidate.CredentialType))
+	context := sourceContext(candidate)
+	if context == "SCCM / MECM" {
+		return "SCCM / MECM Credential"
+	}
+	if typ == "connection_string" || typ == "dsn" {
+		if connectionLooksLikeMSSQL(candidate.Value) {
+			return "MSSQL / Database Credential"
+		}
+		return "Connection String Credential"
+	}
+	if candidate.Domain != "" {
+		return "AD / Domain Credential"
+	}
+	if typ == "token" || typ == "bearer_token" || typ == "access_token" || typ == "session_token" || typ == "api_key" || typ == "apikey" || typ == "api_secret" || typ == "access_key" || typ == "secret_key" || typ == "client_secret" {
+		return "Web / Application Credential"
+	}
+	if strings.Contains(strings.ToLower(candidate.AccountType), "local") {
+		return "Local Account Credential"
+	}
+	if typ == "password" || typ == "passwd" || typ == "pwd" || typ == "passord" || typ == "secret" || typ == "shared_secret" {
+		return "Unknown Origin Credential"
+	}
+	return "Unknown Origin Credential"
+}
+
+func mergeOrigin(existing, next string) string {
+	if existing == "" {
+		return next
+	}
+	if next == "" || existing == next {
+		return existing
+	}
+	return "Unknown Origin Credential"
+}
+
+func connectionLooksLikeMSSQL(value string) bool {
+	value = strings.ToLower(value)
+	return strings.Contains(value, "sql server") || strings.Contains(value, "mssql") || strings.Contains(value, "sqloledb") || strings.Contains(value, "sqlncli")
+}
+
+func connectionDetails(candidate credentialanalysis.Candidate) []connectionDetail {
+	if typ := strings.ToLower(strings.TrimSpace(candidate.CredentialType)); typ != "connection_string" && typ != "dsn" {
+		return nil
+	}
+	var details []connectionDetail
+	for _, part := range strings.Split(candidate.Value, ";") {
+		key, value, ok := strings.Cut(part, "=")
+		if !ok || strings.TrimSpace(value) == "" {
+			continue
+		}
+		label := connectionFieldLabel(key)
+		if label == "" {
+			continue
+		}
+		duplicate := false
+		for _, existing := range details {
+			if existing.Label == label {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			details = append(details, connectionDetail{Label: label, Value: strings.TrimSpace(value)})
+		}
+	}
+	return details
+}
+
+func connectionFieldLabel(key string) string {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "server", "data source", "address", "addr", "host":
+		return "Server / Host"
+	case "initial catalog", "database", "catalog":
+		return "Database / Catalog"
+	case "user id", "uid", "username", "user":
+		return "Username"
+	case "password", "pwd":
+		return "Password"
+	case "provider", "provider name", "driver":
+		return "Provider / Driver"
+	case "dsn":
+		return "DSN"
+	default:
+		return ""
 	}
 }
 
@@ -508,12 +624,42 @@ func (m *model) evidenceText() string {
 	d := m.discoveries[m.selectedDisc]
 	var b strings.Builder
 	fmt.Fprintf(&b, "DISCOVERY\n%s\n\nMaterial family: %s\nMaterial type: %s\nVerification: %s\nConfidence: %s\n", d.Title, firstNonEmpty(d.MaterialFamily, "unknown"), firstNonEmpty(d.MaterialType, "unknown"), firstNonEmpty(d.Verification, "unknown"), firstNonEmpty(d.Confidence, "unknown"))
-	if d.Value != "" {
+	if strings.EqualFold(d.MaterialFamily, "Credentials") && d.Value != "" {
+		if d.Identity != "" {
+			b.WriteString("\nUSERNAME + PASSWORD COMBINATION\n")
+			fmt.Fprintf(&b, "Username: %s\nPassword: %s\n", qualifiedIdentity(d), d.Value)
+		} else {
+			b.WriteString("\nPASSWORD MATERIAL\n")
+			b.WriteString("Username: not safely established\n")
+			fmt.Fprintf(&b, "Password: %s\n", d.Value)
+		}
+		fmt.Fprintf(&b, "Credential kind: %s\nOrigin type: %s\n", firstNonEmpty(credentialKind(d.MaterialType), "credential material"), firstNonEmpty(d.OriginType, "Unknown Origin Credential"))
+	} else if strings.EqualFold(d.MaterialFamily, "Keys & Certificates") {
+		b.WriteString("\nKEY / CERTIFICATE MATERIAL\n")
+		fmt.Fprintf(&b, "Key or certificate type: %s\n", firstNonEmpty(keyType(d), "validated material"))
+		if d.Identity != "" {
+			fmt.Fprintf(&b, "Associated identity: %s\n", qualifiedIdentity(d))
+		}
+		if d.Value != "" {
+			b.WriteString("\nRecovered material\n")
+			b.WriteString(d.Value)
+			b.WriteByte('\n')
+		}
+	} else if d.Value != "" {
 		b.WriteString("\nRECOVERED MATERIAL\n")
 		b.WriteString(d.Value)
 		b.WriteByte('\n')
 	}
-	fmt.Fprintf(&b, "\nIDENTITY\n%s\n", firstNonEmpty(d.Identity, "not persisted"))
+	if d.OriginType != "" && !strings.EqualFold(d.MaterialFamily, "Credentials") {
+		fmt.Fprintf(&b, "\nOrigin type: %s\n", d.OriginType)
+	}
+	if len(d.ConnectionDetails) > 0 {
+		b.WriteString("\nCONNECTION STRING FIELDS\n")
+		for _, detail := range d.ConnectionDetails {
+			fmt.Fprintf(&b, "%s: %s\n", detail.Label, detail.Value)
+		}
+	}
+	fmt.Fprintf(&b, "\nIDENTITY\n%s\n", firstNonEmpty(qualifiedIdentity(d), "not persisted"))
 	if d.SourceContext != "" {
 		fmt.Fprintf(&b, "Source context: %s\n", d.SourceContext)
 	}
@@ -551,6 +697,33 @@ func (m *model) evidenceText() string {
 		}
 	}
 	return b.String()
+}
+
+func qualifiedIdentity(d discovery) string {
+	if d.Identity == "" {
+		return ""
+	}
+	if d.Domain != "" && !strings.Contains(d.Identity, `\`) {
+		return d.Domain + `\` + d.Identity
+	}
+	return d.Identity
+}
+
+func credentialKind(materialType string) string {
+	return credentialanalysis.CredentialTypeDisplayName(materialType)
+}
+
+func keyType(d discovery) string {
+	switch d.Subcategory {
+	case "RSA Keys":
+		return "RSA private key"
+	case "OpenSSH Keys":
+		return "OpenSSH private key"
+	case "Certificates":
+		return "certificate"
+	default:
+		return d.MaterialType
+	}
 }
 
 func (m *model) resize() {

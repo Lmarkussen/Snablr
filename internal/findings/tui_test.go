@@ -237,3 +237,68 @@ func maxLineWidth(value string) int {
 	}
 	return maxWidth
 }
+
+func TestCredentialOriginClassificationAndPresentation(t *testing.T) {
+	cases := []struct {
+		name, domain, source, basis, wantOrigin, wantSubcategory string
+	}{
+		{name: "domain", domain: "SYNTHETIC", wantOrigin: "AD / Domain Credential", wantSubcategory: "AD / Domain"},
+		{name: "sccm", source: "SCCM task sequence", wantOrigin: "SCCM / MECM Credential", wantSubcategory: "SCCM / MECM"},
+		{name: "unknown", wantOrigin: "Unknown Origin Credential", wantSubcategory: "Unknown Origin"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := credentialanalysis.Candidate{CredentialType: "password", Identity: "svc", Domain: test.domain, Source: test.source, ValidationBasis: test.basis, Value: "synthetic-value", Verification: credentialanalysis.Confirmed}
+			category, subcategory := classifyCandidate(candidate)
+			if category != "Credentials" || subcategory != test.wantSubcategory {
+				t.Fatalf("classification = %q / %q, want Credentials / %q", category, subcategory, test.wantSubcategory)
+			}
+			if got := originType(candidate); got != test.wantOrigin {
+				t.Fatalf("origin = %q, want %q", got, test.wantOrigin)
+			}
+		})
+	}
+
+	categories := buildCategories([]Credential{{Candidate: credentialanalysis.Candidate{
+		CredentialType: "password", Identity: "join-xml", Domain: "SYNTHETIC", Value: "Synthetic-SCCM-XML-482!", Source: "SCCM task sequence", Host: "HOST", Share: "Share", Path: "task.xml", Verification: credentialanalysis.Confirmed,
+	}}}, nil, nil)
+	m := &model{scans: []Scan{{ID: "scan"}}, categories: categories, screen: screenDiscoveries, discoveries: categories[0].Discoveries, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(120, 40)
+	details := m.preview.View()
+	for _, want := range []string{"USERNAME + PASSWORD COMBINATION", "Username: SYNTHETIC\\join-xml", "Password: Synthetic-SCCM-XML-482!", "Origin type: SCCM / MECM Credential", "Source context: SCCM / MECM", "Host: HOST", "Share: Share", "Source: task.xml"} {
+		if !strings.Contains(details, want) {
+			t.Fatalf("details missing %q: %q", want, details)
+		}
+	}
+}
+
+func TestConnectionStringDetailsAreStructuredWithoutChangingValue(t *testing.T) {
+	candidate := credentialanalysis.Candidate{CredentialType: "connection_string", Value: "Server=db01;Initial Catalog=Snablr;User ID=app-user;Password=Odd;Provider=SQLOLEDB", Verification: credentialanalysis.Confirmed}
+	if got := originType(candidate); got != "MSSQL / Database Credential" {
+		t.Fatalf("origin = %q, want MSSQL / Database Credential", got)
+	}
+	details := connectionDetails(candidate)
+	if len(details) != 5 || details[0].Label != "Server / Host" || details[1].Value != "Snablr" || details[3].Value != "Odd" {
+		t.Fatalf("connection details = %#v", details)
+	}
+	categories := buildCategories([]Credential{{Candidate: candidate}}, nil, nil)
+	m := &model{scans: []Scan{{ID: "scan"}}, categories: categories, screen: screenDiscoveries, discoveries: categories[0].Discoveries, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(120, 40)
+	for _, want := range []string{"CONNECTION STRING FIELDS", "Server / Host: db01", "Database / Catalog: Snablr", "Username: app-user", "Password: Odd", "Provider / Driver: SQLOLEDB", "Server=db01;Initial Catalog=Snablr"} {
+		if !strings.Contains(m.preview.View(), want) {
+			t.Fatalf("connection details missing %q: %q", want, m.preview.View())
+		}
+	}
+}
+
+func TestKeyPresentationUsesValidatedMaterialType(t *testing.T) {
+	candidate := credentialanalysis.Candidate{CredentialType: "private_key", Value: "-----BEGIN OPENSSH PRIVATE KEY-----\nsynthetic\n-----END OPENSSH PRIVATE KEY-----", Verification: credentialanalysis.Confirmed, Path: "keys/id_ed25519"}
+	categories := buildCategories([]Credential{{Candidate: candidate}}, nil, nil)
+	m := &model{scans: []Scan{{ID: "scan"}}, categories: categories, screen: screenDiscoveries, discoveries: categories[0].Discoveries, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(120, 40)
+	for _, want := range []string{"KEY / CERTIFICATE MATERIAL", "Key or certificate type: OpenSSH private key", "BEGIN OPENSSH PRIVATE KEY"} {
+		if !strings.Contains(m.preview.View(), want) {
+			t.Fatalf("key details missing %q: %q", want, m.preview.View())
+		}
+	}
+}

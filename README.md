@@ -1,5 +1,7 @@
 # Snablr
 
+![SNABLR SMB Triage Tool](assets/snablr-banner.png)
+
 Snablr is a Go-based SMB/share scanner for authorized defensive review of Windows file shares. It discovers likely scan targets, enumerates accessible shares, walks files, applies YAML-driven detection rules, and produces structured, low-noise findings for remediation and hygiene review.
 
 The project is inspired by the general Snaffler workflow, but it is implemented as a clean Go codebase with a rules-first design, resumable scans, offline rule testing, and reporting aimed at defensive triage rather than exploitation.
@@ -7,6 +9,31 @@ The project is inspired by the general Snaffler workflow, but it is implemented 
 ## Authorized Use
 
 Snablr is intended for authorized defensive security work only. Run it only against systems, shares, and directories that you own or have explicit permission to assess.
+
+## Scan To Finder
+
+Snablr's operator workflow is:
+
+1. scan an authorized SMB target or share
+2. persist findings, credential material, and source evidence in local SQLite
+3. reopen the database in the offline Findings Engine Finder
+
+```bash
+snablr find
+snablr find --db /path/to/scan.db
+```
+
+`snablr find` checks the default `snablr.db` in the scan workspace. Use
+`--db` to select an existing database explicitly. Finder is read-only: it
+does not reconnect to SMB or authenticate with discovered values.
+
+The category-first UI separates scanner findings, persisted rows, logical
+discoveries, source observations, and contextual correlations. Duplicate
+observations can be grouped into one logical discovery while their individual
+source paths remain available. Details shows evidence and provenance,
+including archive-member locations, wraps long values, and supports vertical
+scrolling. Confirmed and Review classifications remain distinct; a
+correlation is contextual evidence, not an automatically verified credential.
 
 ## Feature Overview
 
@@ -36,6 +63,14 @@ Snablr is intended for authorized defensive security work only. Run it only agai
 - Ranked top access-path summaries for correlated AD, backup, AWS credential profile, credential-store, private-key, browser, and app/database exposure clusters
 - Baseline and diff mode for repeated scans and change tracking
 - Synthetic seeding and manifest-based verification with `snablr-seed`
+
+Credential evidence currently includes scope-aware account/password recovery
+from supported scripts and command lines, Windows `.cmd`/`.bat` files,
+structured configuration, database connection strings, text/Markdown/CSV/HTML,
+valid DOCX/XLSX documents, and bounded ZIP members. Norwegian labels and
+Unicode values are preserved, and logical grouping retains distinct source
+observations. This is evidence discovery; Snablr does not log in with found
+credentials or claim that every string resembling a secret is usable.
 
 ## Architecture Summary
 
@@ -741,9 +776,7 @@ The [`examples`](examples) directory includes:
 - [Reporting](docs/reporting.md)
 - [Architecture](docs/architecture.md)
 - [Workflows](docs/workflows.md)
-- [Validation Report](docs/synthetic-validation-notes.md)
 - [Troubleshooting](docs/troubleshooting.md)
-- [Roadmap](docs/roadmap.md)
 - [Security Policy](SECURITY.md)
 
 ## Development

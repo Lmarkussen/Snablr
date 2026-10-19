@@ -1041,9 +1041,37 @@ func harvestScopedFields(fields map[string]string, add func(Candidate), basis st
 		}
 		scopes[scope][field] = value
 	}
+	// Office renderers wrap each logical record in a synthetic section. A
+	// record such as account=alice plus user_password=Secret then produces an
+	// unscoped identity and a user-scoped password even though both fields came
+	// from the same bounded record. Merge that one unscoped identity scope only
+	// when there is exactly one explicit companion scope and the fields form an
+	// identity/password pair. Multiple explicit scopes remain isolated.
+	if base, ok := scopes[""]; ok && len(scopes) == 2 {
+		for scope, scoped := range scopes {
+			if scope == "" || !hasFieldRole(base, FieldRoleIdentity) || !hasFieldRole(scoped, FieldRolePassword) {
+				continue
+			}
+			for key, value := range base {
+				if _, exists := scoped[key]; !exists {
+					scoped[key] = value
+				}
+			}
+			break
+		}
+	}
 	for _, scoped := range scopes {
 		harvestFields(scoped, add, basis)
 	}
+}
+
+func hasFieldRole(fields map[string]string, role FieldRole) bool {
+	for key := range fields {
+		if ClassifyFieldName(key) == role {
+			return true
+		}
+	}
+	return false
 }
 
 func compatibleAssignmentScope(identityKey, passwordKey string) bool {

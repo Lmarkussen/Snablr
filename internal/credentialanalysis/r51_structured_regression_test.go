@@ -45,6 +45,28 @@ func TestHarvestR51PrefixedAssignmentsDoNotCrossPair(t *testing.T) {
 	}
 }
 
+func TestHarvestOfficeSectionKeepsCompoundPasswordWithAccount(t *testing.T) {
+	input := Harvest(HarvestInput{
+		Path:    "word/document.xml",
+		Content: []byte("[word body block 1]\naccount: office-user\nuser_password: Office-Pass!\n"),
+	})
+	if !hasCandidatePayload(input, Confirmed, "Office-Pass!", "office-user", "") {
+		t.Fatalf("office section pair was not confirmed: %#v", input)
+	}
+}
+
+func TestHarvestOfficeSectionDoesNotCrossExplicitScopes(t *testing.T) {
+	input := Harvest(HarvestInput{
+		Path:    "worksheet.xml",
+		Content: []byte("[worksheet record 1]\naccount=alice\nuser_password=Alice-Pass!\nalternate_password=Other-Pass!\n"),
+	})
+	for _, candidate := range input {
+		if candidate.Verification == Confirmed && candidate.Identity == "alice" && candidate.Value == "Other-Pass!" {
+			t.Fatalf("office section produced a cross-scope pair: %#v", input)
+		}
+	}
+}
+
 func TestR51JSONEscapedDomainIdentity(t *testing.T) {
 	input := Harvest(HarvestInput{Path: "fixture.py", Content: []byte(`client = {"username": "SYNTHETIC\\local261", "password": "Harbor-782-Delta!"}`)})
 	for _, candidate := range input {

@@ -609,3 +609,49 @@ func TestDetailsViewportScrollsUpFromBottomWithoutFocusReset(t *testing.T) {
 		})
 	}
 }
+
+func TestDetailsWrapPreservesLongEvidenceAndUnicode(t *testing.T) {
+	long := `{"type":"same_identity_value","sources":[{"path":"\\\\host\\share\\very-long-directory\\credential-æøå-file.txt"}],"value":"` + strings.Repeat("x", 180) + `"}`
+	wrapped := wrapDetails(long, 24)
+	if strings.ReplaceAll(wrapped, "\n", "") != long {
+		t.Fatalf("wrapped evidence lost content: %q", wrapped)
+	}
+	for _, line := range strings.Split(wrapped, "\n") {
+		if lipgloss.Width(line) > 24 {
+			t.Fatalf("wrapped line exceeds viewport: width=%d line=%q", lipgloss.Width(line), line)
+		}
+	}
+}
+
+func TestCorrelationDetailsExplainSourcesAndPreserveRawRecord(t *testing.T) {
+	payload := `{"type":"same_identity_value","identity":"shared-observation","credential_type":"password","sources":[{"host":"host","share":"share","path":"one.txt"},{"host":"host","share":"share","path":"two.txt"},{"host":"host","share":"share","path":"two.txt"}],"observation_count":2,"confidence":"high","confidence_rationale":"same identity and material in distinct source files"}`
+	categories := buildCategories(nil, nil, []Correlation{{Key: "credential:test", Payload: payload}})
+	if len(categories) != 1 || len(categories[0].Discoveries) != 1 {
+		t.Fatalf("unexpected correlation projection: %#v", categories)
+	}
+	d := categories[0].Discoveries[0]
+	if d.Title != "Same identity/value relationship — 2 source observations" {
+		t.Fatalf("unexpected correlation title: %q", d.Title)
+	}
+	m := &model{scans: []Scan{{ID: "scan"}}, screen: screenDiscoveries, discoveries: []discovery{d}, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(80, 24)
+	text := m.evidenceText()
+	for _, want := range []string{"CROSS-FILE RELATIONSHIP", "same identity and material", `\\host\share\one.txt`, `\\host\share\two.txt`, "RAW RECORD", `"same_identity_value"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("correlation details missing %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "Persisted rows: 0") || strings.Contains(text, "Source observations: 0") {
+		t.Fatalf("correlation details exposed misleading material counts: %s", text)
+	}
+}
+
+func TestMalformedCorrelationKeepsRawPayload(t *testing.T) {
+	payload := `{"type":"unknown","sources":[broken]}`
+	categories := buildCategories(nil, nil, []Correlation{{Key: "credential:malformed", Payload: payload}})
+	d := categories[0].Discoveries[0]
+	text := correlationEvidenceText(d)
+	if !strings.Contains(text, "Raw record is not valid JSON") || !strings.Contains(text, payload) {
+		t.Fatalf("malformed correlation payload was not preserved: %s", text)
+	}
+}

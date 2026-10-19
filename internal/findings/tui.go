@@ -1,7 +1,9 @@
 package findings
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -10,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"snablr/internal/credentialanalysis"
 	"snablr/internal/scanner"
 )
@@ -23,17 +26,21 @@ const (
 )
 
 type discovery struct {
-	Title, Subcategory, MaterialType, Identity, Domain string
-	MaterialFamily, SourceContext                      string
-	OriginType                                         string
-	Value, Host, Share, Path, Confidence, Verification string
-	RecoveredPassword                                  string
-	Reason                                             string
-	PairingStatus, PairingBasis, OriginalVerification  string
-	ConnectionDetails                                  []connectionDetail
-	Sources                                            []string
-	PersistedRefs                                      []string
-	Finding                                            *scanner.Finding
+	Title, Subcategory, MaterialType, Identity, Domain   string
+	MaterialFamily, SourceContext                        string
+	OriginType                                           string
+	Value, Host, Share, Path, Confidence, Verification   string
+	RecoveredPassword                                    string
+	Reason                                               string
+	PairingStatus, PairingBasis, OriginalVerification    string
+	ConnectionDetails                                    []connectionDetail
+	CorrelationKey, CorrelationType, CorrelationIdentity string
+	CorrelationDomain, CorrelationConfidenceRationale    string
+	CorrelationSources                                   []credentialanalysis.CorrelationSource
+	CorrelationParsed                                    bool
+	Sources                                              []string
+	PersistedRefs                                        []string
+	Finding                                              *scanner.Finding
 }
 
 type connectionDetail struct {
@@ -275,9 +282,15 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 		})
 	}
 	for _, item := range correlations {
+		var record credentialanalysis.Correlation
+		parsed := json.Unmarshal([]byte(item.Payload), &record) == nil
+		title := correlationTitle(item.Key, record, parsed)
 		groups["Correlations"].Discoveries = append(groups["Correlations"].Discoveries, discovery{
-			Title: item.Key, Subcategory: "Cross-file Relationships", MaterialType: "correlation", Value: item.Payload,
-			Verification: "persisted", Confidence: "contextual",
+			Title: title, Subcategory: "Cross-file Relationships", MaterialType: "correlation", Value: item.Payload,
+			Verification: "persisted correlation", Confidence: firstNonEmpty(record.Confidence, "contextual"),
+			CorrelationKey: item.Key, CorrelationType: record.Type, CorrelationIdentity: record.Identity,
+			CorrelationDomain: record.Domain, CorrelationConfidenceRationale: record.ConfidenceRationale,
+			CorrelationSources: append([]credentialanalysis.CorrelationSource(nil), record.Sources...), CorrelationParsed: parsed,
 		})
 	}
 	result := make([]category, 0, len(ordered))
@@ -704,7 +717,7 @@ func (m *model) refresh() {
 		m.list.SetContent(discoveryList(m.discoveries, m.selectedDisc))
 		m.keepListSelectionVisible(m.selectedDisc)
 		m.preview.GotoTop()
-		m.preview.SetContent(m.evidenceText())
+		m.preview.SetContent(wrapDetails(m.evidenceText(), m.preview.Width))
 	}
 }
 
@@ -728,6 +741,9 @@ func (m *model) evidenceText() string {
 	}
 	d := m.discoveries[m.selectedDisc]
 	var b strings.Builder
+	if d.MaterialType == "correlation" {
+		return correlationEvidenceText(d)
+	}
 	fmt.Fprintf(&b, "%s\n%s\n\nMaterial family: %s\nMaterial type: %s\nVerification: %s\nConfidence: %s\nPersisted rows: %d\nSource observations: %d\n", evidenceSection("DISCOVERY"), d.Title, firstNonEmpty(d.MaterialFamily, "unknown"), firstNonEmpty(d.MaterialType, "unknown"), firstNonEmpty(d.Verification, "unknown"), firstNonEmpty(d.Confidence, "unknown"), len(d.PersistedRefs), len(d.Sources))
 	if d.RecoveredPassword != "" && d.Identity != "" {
 		fmt.Fprintf(&b, "\n%s\n", evidenceSection("USERNAME + PASSWORD COMBINATION"))
@@ -830,6 +846,105 @@ func (m *model) evidenceText() string {
 		}
 	}
 	return b.String()
+}
+
+func correlationTitle(key string, record credentialanalysis.Correlation, parsed bool) string {
+	if !parsed {
+		return "Cross-file relationship — " + key
+	}
+	typ := firstNonEmpty(record.Type, "correlation")
+	sources := uniqueCorrelationSourceCount(record.Sources)
+	return fmt.Sprintf("%s — %d source observations", correlationLabel(typ), sources)
+}
+
+func correlationLabel(typ string) string {
+	switch strings.ToLower(strings.TrimSpace(typ)) {
+	case "same_identity_value":
+		return "Same identity/value relationship"
+	case "same_identity_type":
+		return "Same identity/type relationship"
+	default:
+		return "Cross-file relationship (" + firstNonEmpty(typ, "unknown type") + ")"
+	}
+}
+
+func correlationSourceLabel(source credentialanalysis.CorrelationSource) string {
+	path := source.Path
+	if source.Container != "" && !strings.HasPrefix(path, source.Container+"!") {
+		path = source.Container + "!" + path
+	}
+	if source.Host != "" && source.Share != "" {
+		return fmt.Sprintf("\\\\%s\\%s\\%s", source.Host, source.Share, strings.TrimPrefix(path, "\\"))
+	}
+	if source.Share != "" {
+		return fmt.Sprintf("%s\\%s", source.Share, strings.TrimPrefix(path, "\\"))
+	}
+	return path
+}
+
+func uniqueCorrelationSourceCount(sources []credentialanalysis.CorrelationSource) int {
+	seen := make(map[string]struct{}, len(sources))
+	for _, source := range sources {
+		label := correlationSourceLabel(source)
+		if label == "" {
+			label = "(source path unavailable)"
+		}
+		seen[label] = struct{}{}
+	}
+	return len(seen)
+}
+
+func correlationEvidenceText(d discovery) string {
+	var b strings.Builder
+	sources := d.CorrelationSources
+	count := uniqueCorrelationSourceCount(sources)
+	fmt.Fprintf(&b, "%s\n%s\n\nRelationship: %s\nMaterial type: %s\nVerification: %s\nConfidence: %s\nRelated source observations: %d\n", evidenceSection("CROSS-FILE RELATIONSHIP"), d.Title, correlationLabel(d.CorrelationType), firstNonEmpty(d.CorrelationType, "unknown"), firstNonEmpty(d.Verification, "persisted correlation"), firstNonEmpty(d.Confidence, "contextual"), count)
+	if d.CorrelationIdentity != "" {
+		fmt.Fprintf(&b, "Identity reference: %s\n", d.CorrelationIdentity)
+	}
+	if d.CorrelationDomain != "" {
+		fmt.Fprintf(&b, "Domain: %s\n", d.CorrelationDomain)
+	}
+	if d.CorrelationConfidenceRationale != "" {
+		fmt.Fprintf(&b, "Rationale: %s\n", d.CorrelationConfidenceRationale)
+	}
+	fmt.Fprintf(&b, "\n%s\n", evidenceSection("RELATED SOURCES"))
+	seen := make(map[string]struct{}, len(sources))
+	for _, source := range sources {
+		label := correlationSourceLabel(source)
+		if label == "" {
+			label = "(source path unavailable)"
+		}
+		if _, ok := seen[label]; ok {
+			continue
+		}
+		seen[label] = struct{}{}
+		fmt.Fprintf(&b, "%d. %s\n", len(seen), label)
+	}
+	if len(seen) == 0 {
+		b.WriteString("Source provenance unavailable in this correlation record.\n")
+	}
+	if d.CorrelationConfidenceRationale != "" {
+		fmt.Fprintf(&b, "\n%s\n%s\n", evidenceSection("RELATIONSHIP EVIDENCE"), d.CorrelationConfidenceRationale)
+	}
+	fmt.Fprintf(&b, "\n%s\nCorrelation key: %s\n", evidenceSection("RAW RECORD"), firstNonEmpty(d.CorrelationKey, "not persisted"))
+	if d.CorrelationParsed {
+		var pretty bytes.Buffer
+		if err := json.Indent(&pretty, []byte(d.Value), "", "  "); err == nil {
+			b.WriteString(pretty.String())
+		} else {
+			b.WriteString(d.Value)
+		}
+	} else {
+		b.WriteString("Raw record is not valid JSON; displaying the persisted payload exactly.\n")
+		b.WriteString(d.Value)
+	}
+	b.WriteByte('\n')
+	return b.String()
+}
+
+func wrapDetails(value string, width int) string {
+	return ansi.Wrap(value, max(1, width), " \t/:!?=,;|\\")
 }
 
 func evidenceSection(title string) string {

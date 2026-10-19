@@ -269,6 +269,9 @@ func (m *Manager) RecordFileResult(host, share, path string, size int64, modifie
 	if !progress.failed {
 		m.store.MarkShareComplete(host, share)
 		m.shareStatus[key] = "completed"
+		if m.stateStore != nil {
+			_ = m.stateStore.RecordShare(host, share, "completed", time.Now().UTC())
+		}
 	} else {
 		m.shareStatus[key] = "failed"
 	}

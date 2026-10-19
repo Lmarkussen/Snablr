@@ -9,6 +9,7 @@ import (
 	"io"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -958,8 +959,8 @@ func harvestLines(text string, add func(Candidate)) {
 }
 
 func compatibleAssignmentScope(identityKey, passwordKey string) bool {
-	identityScope := assignmentScope(identityKey, []string{"username", "userid", "user", "login", "account", "brukernavn", "bruker", "brukerkonto", "påloggingsnavn", "uid"})
-	passwordScope := assignmentScope(passwordKey, []string{"password", "passwd", "pwd", "pass", "passord"})
+	identityScope := assignmentScope(identityKey, []string{"username", "userid", "user", "user_id", "login", "account", "account_name", "service_user", "brukernavn", "bruker", "brukerkonto", "påloggingsnavn", "uid"})
+	passwordScope := assignmentScope(passwordKey, []string{"password", "passwd", "pwd", "pass", "passord", "account_password", "user_password"})
 	return identityScope == "" || passwordScope == "" || identityScope == passwordScope
 }
 
@@ -1130,6 +1131,7 @@ func harvestFieldsMode(fields map[string]string, add func(Candidate), basis stri
 	}
 	identity := fieldIdentity(fields)
 	domain := fieldDomain(fields)
+	identityKey := fieldIdentityKey(fields)
 	harvestNTHashFields(fields, add, basis)
 	// A prose/label fragment or SQL expression cannot be an account identity
 	// either; drop it so a real password value is not confirmed against a bogus
@@ -1157,7 +1159,7 @@ func harvestFieldsMode(fields map[string]string, add func(Candidate), basis stri
 			}
 		}
 		candidate := Candidate{Verification: Review, CredentialType: credType, Identity: identity, Domain: domain, Value: value, ReviewReasons: []string{"credential-like value requires semantic review"}}
-		if (identity != "" && !identityPlaceholder && isPasswordKey(key) || strongAPI || strongClient) && !looksReferenceOrTemplate(value) {
+		if (identity != "" && !identityPlaceholder && isPasswordKey(key) && compatibleAssignmentScope(identityKey, key) || strongAPI || strongClient) && !looksReferenceOrTemplate(value) {
 			candidate.Verification = Confirmed
 			candidate.ValidationBasis = basis
 			candidate.ReviewReasons = nil
@@ -1418,6 +1420,20 @@ func keyTokens(key string) []string {
 
 func fieldIdentity(fields map[string]string) string {
 	return SelectFieldValue(fields, FieldRoleIdentity)
+}
+
+func fieldIdentityKey(fields map[string]string) string {
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		if ClassifyFieldName(key) == FieldRoleIdentity {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	if len(keys) == 0 {
+		return ""
+	}
+	return keys[0]
 }
 
 func fieldDomain(fields map[string]string) string {

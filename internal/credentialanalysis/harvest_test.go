@@ -303,3 +303,12 @@ func TestHarvestDoesNotPairDifferentTopLevelScopes(t *testing.T) {
 		}
 	}
 }
+
+func TestHarvestStructuredFieldsKeepDifferentScopesReviewOnly(t *testing.T) {
+	candidates := Harvest(HarvestInput{Content: []byte("primary_user=alice\nsecondary_password=NotAlice!\n"), Path: "database/review.properties"})
+	for _, candidate := range candidates {
+		if candidate.Identity == "alice" && candidate.Value == "NotAlice!" && candidate.Verification == Confirmed {
+			t.Fatalf("different structured scopes were paired: %#v", candidates)
+		}
+	}
+}

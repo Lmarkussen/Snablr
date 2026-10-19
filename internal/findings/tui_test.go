@@ -457,3 +457,98 @@ func TestAllPersistedMaterialNavigationAndRowTrace(t *testing.T) {
 		t.Fatalf("accounting changed by all-material navigation: %#v", audit)
 	}
 }
+
+func makeDiscoveryList(count int) []discovery {
+	items := make([]discovery, count)
+	for index := range items {
+		items[index] = discovery{Title: fmt.Sprintf("discovery-%02d", index+1), Subcategory: "Confirmed Username + Password", MaterialType: "password", Identity: fmt.Sprintf("user-%02d", index+1), Value: fmt.Sprintf("value-%02d", index+1), Verification: "confirmed", Path: fmt.Sprintf("%02d.ini", index+1)}
+	}
+	return items
+}
+
+func TestDiscoverySelectionKeepsListViewportAndDetailsSynchronized(t *testing.T) {
+	items := makeDiscoveryList(50)
+	m := &model{scans: []Scan{{ID: "scan"}}, screen: screenDiscoveries, discoveries: items, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(120, 40)
+	m.list.Height = 12
+	m.refresh()
+	for index := 0; index < 29; index++ {
+		m.move(1)
+	}
+	if m.selectedDisc != 29 {
+		t.Fatalf("selected index = %d, want 29", m.selectedDisc)
+	}
+	if m.list.YOffset <= 0 {
+		t.Fatalf("list viewport did not advance: offset=%d", m.list.YOffset)
+	}
+	if !strings.Contains(m.list.View(), "discovery-30") {
+		t.Fatalf("selected discovery is not visible: offset=%d view=%q", m.list.YOffset, m.list.View())
+	}
+	if !strings.Contains(m.preview.View(), "value-30") {
+		t.Fatalf("details are stale for selected discovery: %q", m.preview.View())
+	}
+	for index := 29; index > 0; index-- {
+		m.move(-1)
+		if !strings.Contains(m.list.View(), fmt.Sprintf("discovery-%02d", index)) {
+			t.Fatalf("selection %d is not visible while moving upward: offset=%d view=%q", index, m.list.YOffset, m.list.View())
+		}
+	}
+	if m.list.YOffset != 0 || !strings.Contains(m.list.View(), "discovery-01") {
+		t.Fatalf("list did not return to top: offset=%d view=%q", m.list.YOffset, m.list.View())
+	}
+}
+
+func TestDiscoveryViewportUsesAvailableHeightAfterOpening(t *testing.T) {
+	items := category{Name: "Credentials", Discoveries: makeDiscoveryList(50)}
+	m := &model{scans: []Scan{{ID: "scan"}}, categories: []category{items}, allMaterial: category{}, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(120, 40)
+	m.open()
+	m.open()
+	if m.screen != screenDiscoveries {
+		t.Fatalf("screen = %d, want discoveries", m.screen)
+	}
+	if m.list.Height < 18 {
+		t.Fatalf("discoveries pane remained too short: height=%d", m.list.Height)
+	}
+	if m.preview.Height < 8 {
+		t.Fatalf("details pane became unusably short: height=%d", m.preview.Height)
+	}
+	if !strings.Contains(m.View(), "discovery-01") || !strings.Contains(m.View(), "Q quit") {
+		t.Fatalf("rendered discoveries view lost list or footer: %q", m.View())
+	}
+}
+
+func TestFilteredDiscoverySelectionAndEmptyDetails(t *testing.T) {
+	items := makeDiscoveryList(50)
+	m := &model{scans: []Scan{{ID: "scan"}}, screen: screenDiscoveries, discoveries: items, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(100, 30)
+	m.preview.Height = 100
+	m.allMaterial = category{Name: "All Persisted Material", Discoveries: items}
+	m.selected = 0
+	m.subs = []string{"Confirmed Username + Password"}
+	m.selectedSub = 0
+	m.filter = "user-30"
+	m.refresh()
+	if len(m.discoveries) != 1 || m.selectedDisc != 0 || !strings.Contains(m.preview.View(), "value-30") {
+		t.Fatalf("filtered discovery state incorrect: selected=%d discoveries=%d details=%q", m.selectedDisc, len(m.discoveries), m.preview.View())
+	}
+	m.filter = "does-not-exist"
+	m.refresh()
+	if len(m.discoveries) != 0 || strings.Contains(m.preview.View(), "value-30") || !strings.Contains(m.preview.View(), "No discovery selected") {
+		t.Fatalf("empty filter retained stale details: discoveries=%d details=%q", len(m.discoveries), m.preview.View())
+	}
+}
+
+func TestResizeKeepsDeepSelectionVisible(t *testing.T) {
+	items := makeDiscoveryList(50)
+	m := &model{scans: []Scan{{ID: "scan"}}, screen: screenDiscoveries, discoveries: items, selectedDisc: 35, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(160, 50)
+	m.refresh()
+	if !strings.Contains(m.list.View(), "discovery-36") {
+		t.Fatalf("deep selection not visible after large resize: %q", m.list.View())
+	}
+	m.resizeTo(80, 24)
+	if !strings.Contains(m.list.View(), "discovery-36") {
+		t.Fatalf("deep selection not visible after compact resize: %q", m.list.View())
+	}
+}

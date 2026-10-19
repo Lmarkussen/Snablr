@@ -553,7 +553,7 @@ func (m *model) move(delta int) {
 	}
 	switch m.screen {
 	case screenCategories:
-		m.selected = clamp(m.selected+delta, 0, len(m.categories)-1)
+		m.selected = clamp(m.selected+delta, 0, len(m.categoryItems())-1)
 	case screenSubcategories:
 		m.selectedSub = clamp(m.selectedSub+delta, 0, len(m.subs)-1)
 	case screenDiscoveries:
@@ -581,7 +581,11 @@ func (m *model) open() {
 		} else {
 			m.selectingScan = false
 		}
-		m.refresh()
+		if m.width > 0 && m.height > 0 {
+			m.resize()
+		} else {
+			m.refresh()
+		}
 		return
 	}
 	switch m.screen {
@@ -602,7 +606,11 @@ func (m *model) open() {
 	}
 	m.filterMode = false
 	m.focus = 0
-	m.refresh()
+	if m.width > 0 && m.height > 0 {
+		m.resize()
+	} else {
+		m.refresh()
+	}
 }
 
 func (m *model) back() {
@@ -616,7 +624,11 @@ func (m *model) back() {
 		return
 	}
 	m.focus = 0
-	m.refresh()
+	if m.width > 0 && m.height > 0 {
+		m.resize()
+	} else {
+		m.refresh()
+	}
 }
 
 func categorySubcategories(item category) []string {
@@ -653,10 +665,13 @@ func (m *model) refresh() {
 		items := m.categoryItems()
 		m.selected = clamp(m.selected, 0, max(0, len(items)-1))
 		m.list.SetContent(categoryList(items, m.selected, m.list.Width))
+		m.keepListSelectionVisible(m.selected)
 		m.preview.SetContent(categoryPreview(items, m.selected))
 	case screenSubcategories:
 		items := m.categoryItems()
+		m.selectedSub = clamp(m.selectedSub, 0, max(0, len(m.subs)-1))
 		m.list.SetContent(subcategoryList(m.subs, m.selectedSub))
+		m.keepListSelectionVisible(m.selectedSub)
 		m.preview.SetContent(subcategoryPreview(items[m.selected], m.subs, m.selectedSub))
 	case screenDiscoveries:
 		if m.isAllMaterial() {
@@ -664,10 +679,26 @@ func (m *model) refresh() {
 			m.discoveries = filterDiscoveries(subcategoryDiscoveries(items[m.selected], m.subs[m.selectedSub]), m.filter)
 			m.selectedDisc = clamp(m.selectedDisc, 0, max(0, len(m.discoveries)-1))
 		}
+		m.selectedDisc = clamp(m.selectedDisc, 0, max(0, len(m.discoveries)-1))
 		m.list.SetContent(discoveryList(m.discoveries, m.selectedDisc))
+		m.keepListSelectionVisible(m.selectedDisc)
 		m.preview.GotoTop()
 		m.preview.SetContent(m.evidenceText())
 	}
+}
+
+func (m *model) keepListSelectionVisible(selected int) {
+	visible := m.list.VisibleLineCount()
+	if visible <= 0 {
+		return
+	}
+	offset := m.list.YOffset
+	if selected < offset {
+		offset = selected
+	} else if selected >= offset+visible {
+		offset = selected - visible + 1
+	}
+	m.list.SetYOffset(offset)
 }
 
 func (m *model) evidenceText() string {
@@ -822,7 +853,7 @@ func (m *model) resize() {
 	listRows := 1
 	switch m.screen {
 	case screenCategories:
-		listRows = len(m.categories)
+		listRows = len(m.categoryItems())
 	case screenSubcategories:
 		listRows = len(m.subs)
 	case screenDiscoveries:
@@ -1127,14 +1158,18 @@ func filterDiscoveries(items []discovery, query string) []discovery {
 }
 
 func (m *model) handleFilterKey(msg tea.KeyMsg) {
+	previous := ""
+	if len(m.discoveries) > 0 && m.selectedDisc >= 0 && m.selectedDisc < len(m.discoveries) {
+		previous = discoveryReference(m.discoveries[m.selectedDisc])
+	}
 	switch msg.String() {
 	case "esc":
 		m.filterMode = false
 	case "enter":
 		m.filterMode = false
 	case "backspace":
-		if len(m.filter) > 0 {
-			m.filter = string([]rune(m.filter)[:len([]rune(m.filter))-1])
+		if runes := []rune(m.filter); len(runes) > 0 {
+			m.filter = string(runes[:len(runes)-1])
 		}
 	default:
 		if msg.Type == tea.KeyRunes {
@@ -1143,4 +1178,20 @@ func (m *model) handleFilterKey(msg tea.KeyMsg) {
 	}
 	m.status = "Filter: " + m.filter
 	m.refresh()
+	if previous != "" {
+		for index, item := range m.discoveries {
+			if discoveryReference(item) == previous {
+				m.selectedDisc = index
+				m.refresh()
+				break
+			}
+		}
+	}
+}
+
+func discoveryReference(item discovery) string {
+	if len(item.PersistedRefs) > 0 {
+		return item.PersistedRefs[0]
+	}
+	return item.MaterialType + "\x00" + item.Identity + "\x00" + item.Path + "\x00" + item.Title
 }

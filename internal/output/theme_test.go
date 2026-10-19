@@ -25,6 +25,8 @@ func TestHTMLReportThemesAreStandaloneAndDarkByDefault(t *testing.T) {
 		`<html lang="en" data-theme="dark">`,
 		`data-theme-choice="dark"`,
 		`data-theme-choice="flashbang"`,
+		`class="report-banner"`,
+		`@Evilhaxxor`,
 		`aria-pressed="true">Dark</button>`,
 		`>Flashbang</button>`,
 		`:root[data-theme="flashbang"]`,

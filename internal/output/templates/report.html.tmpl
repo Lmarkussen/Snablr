@@ -237,6 +237,26 @@
       flex-wrap: wrap;
       margin-bottom: 18px;
     }
+    .report-banner {
+      margin: 0 0 20px;
+      max-width: 100%;
+      overflow-x: auto;
+      padding: 2px 0 8px;
+      color: #34d399;
+      font: 0.72rem/1.05 "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      letter-spacing: 0;
+      white-space: pre;
+      background: linear-gradient(90deg, #a7f3d0 0%, #34d399 32%, #22c55e 62%, #67e8f9 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    [data-theme="flashbang"] .report-banner {
+      background: linear-gradient(90deg, #047857 0%, #059669 38%, #0f766e 70%, #0369a1 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
     .hero h1 {
       font-size: 2.1rem;
       letter-spacing: -0.03em;
@@ -1193,6 +1213,17 @@
 <body>
   <main>
     <section class="hero">
+      <pre class="report-banner" aria-label="Snablr">  ██████  ███▄    █  ▄▄▄       ▄▄▄▄    ██▓     ██▀███
+▒██    ▒  ██ ▀█   █ ▒████▄    ▓█████▄ ▓██▒    ▓██ ▒ ██▒
+░ ▓██▄   ▓██  ▀█ ██▒▒██  ▀█▄  ▒██▒ ▄██▒██░    ▓██ ░▄█ ▒
+  ▒   ██▒▓██▒  ▐▌██▒░██▄▄▄▄██ ▒██░█▀  ▒██░    ▒██▀▀█▄
+▒██████▒▒▒██░   ▓██░ ▓█   ▓██▒░▓█  ▀█▓░██████▒░██▓ ▒██▒
+▒ ▒▓▒ ▒ ░░ ▒░   ▒ ▒  ▒▒   ▓█░░▒▓███▀▒░ ▒░▓  ░░ ▒▓ ░▒▓░
+░ ░▒  ░ ░░ ░░   ░ ▒░  ▒   ▒▒ ░▒░▒   ░ ░ ░ ▒  ░  ░▒ ░ ▒░
+░  ░  ░     ░   ░ ░   ░   ▒    ░    ░ ░     ░░   ░
+      ░           ░       ░  ░ ░          ░  ░   ░
+                                    ░
+					@Evilhaxxor</pre>
       <div class="hero-top">
         <div>
           <span class="report-kicker">Snablr</span>

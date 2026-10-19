@@ -61,7 +61,7 @@ func TestNorwegianMetadataIsNotACredentialKey(t *testing.T) {
 }
 
 func TestNorwegianIdentityAndDomainSemantics(t *testing.T) {
-	identity := []string{"Bruker", "Brukernavn", "BrukerNavn", "Konto", "Kontonavn", "KontoNavn", "username", "user"}
+	identity := []string{"Bruker", "Brukernavn", "BrukerNavn", "Brukerkonto", "Påloggingsnavn", "Konto", "Kontonavn", "KontoNavn", "username", "user"}
 	for _, key := range identity {
 		if role := ClassifyFieldName(key); role != FieldRoleIdentity {
 			t.Errorf("identity %q classified as %v, want identity", key, role)

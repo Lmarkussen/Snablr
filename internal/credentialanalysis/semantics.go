@@ -37,7 +37,7 @@ var passwordSubjectAliases = map[string]struct{}{
 // identityTokenAliases holds terminal tokens that denote an account identity.
 var identityTokenAliases = map[string]struct{}{
 	"user": {}, "username": {}, "login": {}, "account": {}, "email": {},
-	"bruker": {}, "brukernavn": {}, "konto": {}, "kontonavn": {}, // Norwegian
+	"bruker": {}, "brukernavn": {}, "brukerkonto": {}, "påloggingsnavn": {}, "konto": {}, "kontonavn": {}, // Norwegian
 	"brukeren": {}, "brukernavnet": {}, // Norwegian definite forms
 }
 

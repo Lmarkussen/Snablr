@@ -270,6 +270,31 @@ func TestCredsOutSuppressesPlaceholdersAndKeepsRealSecrets(t *testing.T) {
 	}
 }
 
+func TestCredsOutIncludesNetNTLMMaterial(t *testing.T) {
+	var buf bytes.Buffer
+	writer := NewCredsWriter(&buf, nopCloser{})
+	candidate := credentialanalysis.Candidate{
+		Verification:    credentialanalysis.Confirmed,
+		CredentialType:  "netntlmv2",
+		Identity:        "synthetic-user",
+		Domain:          "SYNTHETIC",
+		Value:           "synthetic-user::SYNTHETIC:a1b2c3d4e5f60718:00112233445566778899aabbccddeeff:01010000000000000102030405060708090a0b0c0d0e0f10",
+		Path:            "captures/netntlm.txt",
+		ValidationBasis: "structured_netntlmv2_record",
+	}
+	if err := writer.RecordCredentialCandidate(candidate); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Type: netntlmv2", "Identity: synthetic-user", candidate.Value} {
+		if !strings.Contains(buf.String(), want) {
+			t.Fatalf("NetNTLM material missing from creds-out (%q):\n%s", want, buf.String())
+		}
+	}
+}
+
 // TestCredentialReviewSectionIsBounded proves a large review set cannot flood
 // the top of the report with thousands of rows while the underlying data stays
 // available to the non-HTML exports.

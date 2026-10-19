@@ -175,6 +175,12 @@ func (c *CredsWriter) Close() error {
 		if candidate.Material == credentialanalysis.MaterialCorrelation {
 			continue
 		}
+		// Challenge-response captures have no legacy curated section. Keep them
+		// in the generic confirmed-material export even when a finding from the
+		// same path has a curated credential entry.
+		if credentialanalysis.IsHashCredentialType(candidate.CredentialType) && !strings.EqualFold(candidate.CredentialType, "nt_hash") {
+			continue
+		}
 		for _, entry := range entries {
 			if entry.Group == "SSH Private Keys" && strings.EqualFold(candidate.CredentialType, "private_key") {
 				if !hasRawPrivateCandidateAtPath(analysis.Candidates, entry.Paths) && candidatePathMatches(candidate, entry.Paths) {

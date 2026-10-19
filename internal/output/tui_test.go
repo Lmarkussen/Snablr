@@ -820,7 +820,7 @@ func TestTUICompletionShowsFindingsCommandForDefaultDatabase(t *testing.T) {
 	model = updated.(tuiModel)
 
 	header := model.renderHeader()
-	if !strings.Contains(header, "Scan saved · Explore findings: snablr find") {
+	if !strings.Contains(header, "To view findings run: snablr find") {
 		t.Fatalf("default findings command missing: %q", header)
 	}
 	if !strings.Contains(model.renderFooter(), "Alt-K skip folder") || !strings.Contains(model.renderFooter(), "Alt-S skip share") {

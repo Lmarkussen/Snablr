@@ -195,6 +195,7 @@ type tuiStyles struct {
 	header           lipgloss.Style
 	headerStatusDone lipgloss.Style
 	headerMuted      lipgloss.Style
+	headerHint       lipgloss.Style
 	pane             lipgloss.Style
 	paneBorder       lipgloss.Style
 	paneTitle        lipgloss.Style
@@ -1537,7 +1538,7 @@ func (m tuiModel) renderHeader() string {
 			m.final.Performance.FilesPerSecond,
 		)))
 		if hint := m.findingsDatabaseHint(); hint != "" && lipgloss.Width(hint) <= m.width && m.height >= len(lines)+lipgloss.Height(m.renderFooter())+3 {
-			lines = append(lines, m.styles.headerMuted.Render(hint))
+			lines = append(lines, m.styles.headerHint.Render(hint))
 		}
 	} else {
 		lines = append(lines, m.styles.headerMuted.Render("Use up/down or j/k to select findings. Evidence is shown only in the right pane."))
@@ -1585,7 +1586,7 @@ func (m tuiModel) findingsDatabaseHint() string {
 		}
 		command += " --db " + shellQuote(resolved)
 	}
-	return "Scan saved · Explore findings: " + command
+	return "To view findings run: " + command
 }
 
 func shellQuote(value string) string {
@@ -1860,6 +1861,7 @@ func defaultTUIStyles() tuiStyles {
 		header:           lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#D9ECFF")),
 		headerStatusDone: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#5BE49B")),
 		headerMuted:      lipgloss.NewStyle().Foreground(lipgloss.Color("#88AECB")),
+		headerHint:       lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FB923C")),
 		pane:             lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#3B82F6")).Padding(0, 1),
 		paneBorder:       lipgloss.NewStyle().Foreground(lipgloss.Color("#3B82F6")),
 		paneTitle:        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7CC4FF")),

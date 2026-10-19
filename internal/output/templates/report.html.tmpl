@@ -1,11 +1,60 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Snablr Scan Report</title>
   <style>
     :root {
+      color-scheme: dark;
+      --bg: #0f1418;
+      --panel: #171e24;
+      --panel-alt: #1d272f;
+      --text: #e7f0f2;
+      --muted: #9bb0b5;
+      --line: #34454b;
+      --shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+      --low: #67b7ff;
+      --medium: #f2bd66;
+      --high: #ff7f7f;
+      --critical: #ff91b4;
+      --low-bg: #17324a;
+      --medium-bg: #493616;
+      --high-bg: #4a2025;
+      --critical-bg: #4a1d31;
+      --ok-bg: #153b2b;
+      --ok: #72d6a0;
+      --ad-bg: #123d31;
+      --ad: #75d6b4;
+      --dfs-bg: #27244d;
+      --dfs: #b7adff;
+      --ldap-bg: #172f4d;
+      --ldap: #8fc9ff;
+      --cli-bg: #153b2b;
+      --cli: #72d6a0;
+      --file-bg: #492b1c;
+      --file: #ffb07c;
+      --generic-bg: #29343b;
+      --generic: #b4c5ca;
+      --prio-low-bg: #29343b;
+      --prio-low: #b4c5ca;
+      --prio-medium-bg: #493616;
+      --prio-medium: #f2bd66;
+      --prio-high-bg: #4a2025;
+      --prio-high: #ff9a9a;
+      --prio-critical-bg: #4a1d31;
+      --prio-critical: #ffabc5;
+      --diff-new-bg: #153b2b;
+      --diff-new: #72d6a0;
+      --diff-changed-bg: #493616;
+      --diff-changed: #f2bd66;
+      --diff-removed-bg: #4a2025;
+      --diff-removed: #ff9a9a;
+      --diff-unchanged-bg: #29343b;
+      --diff-unchanged: #b4c5ca;
+    }
+    :root[data-theme="flashbank"] {
+      color-scheme: light;
       --bg: #edf3f7;
       --panel: #ffffff;
       --panel-alt: #f7fafc;
@@ -62,6 +111,83 @@
         linear-gradient(180deg, #f4f8fb 0%, var(--bg) 24%, #f7fafc 100%);
       font: 15px/1.5 "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     }
+    [data-theme="dark"] body {
+      background:
+        radial-gradient(circle at top left, rgba(47, 143, 107, 0.16), transparent 28%),
+        linear-gradient(180deg, #11191e 0%, var(--bg) 30%, #0d1215 100%);
+    }
+    [data-theme="dark"] .hero,
+    [data-theme="dark"] .card,
+    [data-theme="dark"] .table-card,
+    [data-theme="dark"] .finding-card,
+    [data-theme="dark"] .supporting-card,
+    [data-theme="dark"] .detail-panel,
+    [data-theme="dark"] .finding-panel,
+    [data-theme="dark"] .evidence-section,
+    [data-theme="dark"] .evidence-toggle,
+    [data-theme="dark"] .finding-technical,
+    [data-theme="dark"] .duplicate-locations {
+      background: var(--panel);
+      color: var(--text);
+    }
+    [data-theme="dark"] .hero { background: rgba(23, 30, 36, 0.94); }
+    [data-theme="dark"] .meta-pill,
+    [data-theme="dark"] .hero-actions a,
+    [data-theme="dark"] .filter-reset,
+    [data-theme="dark"] .download-link,
+    [data-theme="dark"] .filter-select,
+    [data-theme="dark"] .filter-text,
+    [data-theme="dark"] .filter-input,
+    [data-theme="dark"] .evidence-block {
+      background: var(--panel-alt);
+      color: var(--text);
+      border-color: var(--line);
+    }
+    [data-theme="dark"] .download-link,
+    [data-theme="dark"] .hero-actions a,
+    [data-theme="dark"] .evidence-toggle summary,
+    [data-theme="dark"] .finding-technical summary { color: var(--text); }
+    [data-theme="dark"] table { background: var(--panel); }
+    [data-theme="dark"] thead th { background: #243139; color: var(--text); }
+    [data-theme="dark"] tr:nth-child(even) td { background: rgba(255,255,255,0.025); }
+    [data-theme="dark"] .finding-note { background: #1d302b; color: #c5ead7; border-color: #356652; }
+    [data-theme="dark"] .finding-note.heuristic { background: #3d2b1c; color: #ffd09f; border-color: #76522e; }
+    [data-theme="dark"] .print-note,
+    [data-theme="dark"] .muted { color: var(--muted); }
+    [data-theme="dark"] .theme-switch { background: var(--panel-alt); }
+    [data-theme="dark"] .theme-switch button { color: var(--muted); }
+    [data-theme="dark"] .theme-switch button[aria-pressed="true"] { background: #1e8b62; color: #fff; }
+    .theme-switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #f7fafc;
+      white-space: nowrap;
+    }
+    .theme-switch-label {
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      padding: 0 6px;
+      text-transform: uppercase;
+    }
+    .theme-switch button {
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.82rem;
+      font-weight: 700;
+      padding: 7px 11px;
+    }
+    .theme-switch button:focus-visible { outline: 2px solid #29b77f; outline-offset: 2px; }
+    .theme-switch button[aria-pressed="true"] { background: #d9f5e8; color: #11643f; }
     main {
       max-width: 1500px;
       margin: 0 auto;
@@ -944,6 +1070,11 @@
           </div>
         </div>
         <div class="hero-actions">
+          <div class="theme-switch" role="group" aria-label="Report theme">
+            <span class="theme-switch-label">Theme</span>
+            <button type="button" data-theme-choice="dark" aria-pressed="true">Dark</button>
+            <button type="button" data-theme-choice="flashbank" aria-pressed="false">Flashbank</button>
+          </div>
           {{- if .Suppression }}<a href="#suppression-summary">Suppressed Findings</a>{{- end }}
           <a href="#severity-summary">Severity Summary</a>
           <a href="#category-summary">Category Summary</a>
@@ -2126,6 +2257,33 @@
   </main>
 
   <script>
+    (function () {
+      var root = document.documentElement;
+      var buttons = document.querySelectorAll("[data-theme-choice]");
+      var storageKey = "snablr-report-theme:" + window.location.pathname;
+
+      function applyTheme(theme, persist) {
+        var selected = theme === "flashbank" ? "flashbank" : "dark";
+        root.setAttribute("data-theme", selected);
+        buttons.forEach(function (button) {
+          button.setAttribute("aria-pressed", button.getAttribute("data-theme-choice") === selected ? "true" : "false");
+        });
+        if (persist) {
+          try { window.sessionStorage.setItem(storageKey, selected); } catch (error) {}
+        }
+      }
+
+      buttons.forEach(function (button) {
+        button.addEventListener("click", function () {
+          applyTheme(button.getAttribute("data-theme-choice"), true);
+        });
+      });
+      try {
+        var savedTheme = window.sessionStorage.getItem(storageKey);
+        if (savedTheme === "flashbank") applyTheme(savedTheme, false);
+      } catch (error) {}
+    }());
+
     (function () {
       var input = document.getElementById("quickFilter");
       if (!input) return;

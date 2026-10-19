@@ -16,12 +16,14 @@ recovery without actual plaintext extraction.
 ## Development Sequence
 
 1. Intelligent SQLite Resume/Rescan — implemented and live-validated.
-2. Persistent Skip Folder / Skip Share — current implementation priority.
-3. Expanded Recursive SMB Lab Seeding.
-4. Kali Deployment and Manual Operator Acceptance.
-5. CLI Command Audit, Help Redesign, and Developer Mode.
-6. NTLM/SCCM Hash Detection and Rule Expansion.
-7. Larger future Snablr development work.
+2. Persistent Skip Folder / Skip Share — implemented and live-validated.
+3. Expanded Recursive SMB Lab Seeding — completed.
+4. Kali Deployment and Manual Operator Acceptance — completed.
+5. CLI Command Audit, Help Redesign, and Developer Mode — implemented.
+6. NTLM/SCCM Hash Detection and Rule Expansion — implemented through SCCM plaintext coverage.
+7. P7 HTML Report Themes — current implementation milestone.
+8. P8 Offline SQLite Findings Engine — planned after operator approval of P7.
+9. Larger future Snablr development work.
 
 ## Intelligent Resume/Rescan (implemented and validated)
 
@@ -202,3 +204,61 @@ reserved for the explicit highly-sensitive `--creds-out` export, and Snablr
 never tests recovered credentials against live systems. Password history,
 supplementalCredentials/Kerberos keys, and legacy pre-Vista SECURITY remain
 deferred.
+
+## P7 HTML Report Themes (current milestone)
+
+Add a standalone, self-contained report theme switch with `Dark` as the fresh
+report default and `Flashbank` preserving the existing report appearance. The
+switch must change only presentation: findings, credentials, hashes,
+correlations, evidence, counts, filters, search state, provenance, and export
+content must remain unchanged. Recovered credential and hash material remains
+visible in its intended operator-facing report surfaces; no masking or
+redaction is introduced. The report must work offline without external CSS,
+JavaScript, frameworks, servers, or CDN resources, and must keep long paths,
+multiline evidence, UTF-8, and escaped content readable.
+
+P7 validation includes regression coverage for dark-default rendering,
+Flashbank compatibility, theme switching without reload, preserved filtering
+and search state, evidence escaping, long strings, UTF-8, stable counts, and
+standalone assets. A realistic independently synthetic report must be produced
+through the real HTML reporting pipeline and made available for operator
+browser review on Kali. P7 stops after deployment and mock-report generation;
+operator approval is required before P8 begins.
+
+## P8 Offline SQLite Findings Engine (planned; do not implement during P7)
+
+After P7 operator approval, audit and then add an offline investigation mode
+tentatively invoked as `snablr find --db snablr.db`. The exact spelling remains
+subject to a compatibility audit. This mode reads the existing authoritative
+SQLite database and must never initiate SMB scans, require target connectivity,
+or create a second persistence model.
+
+### P8 architecture and initial TUI
+
+Audit the current SQLite schema, findings, credential/hash records,
+correlations, evidence/provenance, search, and TUI rehydration paths. Reuse a
+small read-only data provider. The first implementation should support a DB
+path, scan selection, metadata/statistics, a basic findings list, an evidence
+details pane, navigation, exit handling, and clear errors without adding a new
+category-analysis engine or scanner.
+
+### P8 presentation and evidence
+
+After the skeleton is accepted, introduce a bounded category model for
+credentials, hashes, configuration secrets, SSH/VPN/AWS artifacts, Windows
+credential stores, backups/databases, SCCM/MECM evidence, correlations, and
+supporting evidence only where the existing model justifies it. Avoid duplicate
+counting when evidence belongs to multiple categories. Present actual
+identities, recovered values, complete hash material, source paths, rule IDs,
+confidence, severity, original evidence, context, archive provenance,
+correlated sources, and limitations without newly introduced masking or
+redaction. Do not promote weak signals merely to populate categories.
+
+The TUI should adapt Snablr's existing architecture with a green-accented,
+PwnFlow-inspired two-pane investigation experience: focus-aware navigation,
+width-aware wrapping, stable scrolling, clear selection, and no overflowing
+borders. P8 must prove offline operation, correct scan selection, complete
+evidence visibility, stable replay, accurate categories, provenance, and no
+impact on live scanning, resume, skip/defer behavior, or SQLite authority.
+Hash cracking, credential decryption, exploitation, daemon/attach, and any
+scanner redesign remain permanently out of scope.

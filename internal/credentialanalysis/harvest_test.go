@@ -151,6 +151,19 @@ func TestHarvestStructuredConfigurationPreservesUnicodeAndRejectsPlaceholders(t 
 	}
 }
 
+func TestHarvestXMLAttributeCredentialScope(t *testing.T) {
+	content := `<configuration><account username="xml-user" password="Xml-Pass!"/><account username="other-user" password="Other-Pass!"/></configuration>`
+	got := Harvest(HarvestInput{Content: []byte(content), Path: "accounts.xml"})
+	if !hasIdentityValue(got, Confirmed, "xml-user", "Xml-Pass!") || !hasIdentityValue(got, Confirmed, "other-user", "Other-Pass!") {
+		t.Fatalf("XML attribute pairs were not preserved: %#v", got)
+	}
+	for _, candidate := range got {
+		if candidate.Verification == Confirmed && ((candidate.Identity == "xml-user" && candidate.Value == "Other-Pass!") || (candidate.Identity == "other-user" && candidate.Value == "Xml-Pass!")) {
+			t.Fatalf("cross-node XML pair created: %#v", candidate)
+		}
+	}
+}
+
 func TestHarvestPreservesAPIFieldTypesAndEncryptedKeys(t *testing.T) {
 	got := Harvest(HarvestInput{Content: []byte(`{"api_key":"key-value","client_secret":"client-value","bearer_token":"bearer-value","access_key":"access-value","secret_key":"secret-value","token":"generic-value"}`), Path: "api.json"})
 	want := map[string]string{

@@ -598,6 +598,11 @@ func harvestGenericXMLNode(node *xmlHarvestNode, add func(Candidate)) {
 		return
 	}
 	fields := make(map[string]string)
+	for key, value := range node.attrs {
+		if ClassifyFieldName(key) == FieldRoleIdentity || isPasswordKey(key) || key == "domain" {
+			fields[key] = value
+		}
+	}
 	if key := firstNonEmpty(node.attrs["key"], node.attrs["name"]); key != "" {
 		if value := firstNonEmpty(node.attrs["value"], node.attrs["text"]); value != "" {
 			fields[normalizeKey(key)] = value

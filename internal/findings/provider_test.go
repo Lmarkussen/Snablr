@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/scanner"
 	"snablr/internal/store"
 )
@@ -21,6 +22,9 @@ func makeFixtureDB(t *testing.T, scanIDs ...string) string {
 		}
 		finding := scanner.Finding{RuleID: "synthetic.rule", RuleName: "Synthetic evidence", Severity: "high", Confidence: "high", Actionable: true, Host: "HOST", Share: "Share", FilePath: "evidence.txt", MatchedText: "synthetic-value"}
 		if err := state.RecordFinding(finding); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.RecordCredential(credentialanalysis.Candidate{CredentialType: "password", Identity: "synthetic-user", Value: "SyntheticPassword!", Verification: credentialanalysis.Confirmed, Host: "HOST", Share: "Share", Path: "evidence.txt"}); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.SetScanStatus(store.StatusCompleted, time.Date(2026, 1, i+1, 12, 0, 0, 0, time.UTC)); err != nil {
@@ -70,6 +74,13 @@ func TestProviderListsScansAndFindingsReadOnly(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].Finding.MatchedText != "synthetic-value" {
 		t.Fatalf("unexpected findings: %#v", items)
+	}
+	credentials, err := provider.Credentials(context.Background(), scans[0].ID, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(credentials) != 1 || credentials[0].Candidate.Value != "SyntheticPassword!" {
+		t.Fatalf("unexpected credential projection: %#v", credentials)
 	}
 	after, err := os.Stat(path)
 	if err != nil {

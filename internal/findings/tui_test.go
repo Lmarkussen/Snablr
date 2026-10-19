@@ -6,53 +6,54 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/scanner"
 )
 
-func TestFindingsModelNavigationAndLayout(t *testing.T) {
-	m := &model{
-		ctx:   context.Background(),
-		scans: []Scan{{ID: "scan-synthetic", Status: "completed", FindingCount: 2}},
-		items: []Finding{
-			{Finding: scanner.Finding{RuleID: "one", RuleName: "First", Severity: "high", Host: "HOST", Share: "Share", FilePath: strings.Repeat("nested/", 8) + "evidence.txt", MatchedText: "synthetic evidence"}},
-			{Finding: scanner.Finding{RuleID: "two", RuleName: "Second", Severity: "medium", MatchedText: "more evidence"}},
-		},
-		left: viewportForTest(), right: viewportForTest(),
-	}
+func TestCategoryFirstNavigationAndEvidence(t *testing.T) {
+	categories := buildCategories([]Credential{{Candidate: credentialanalysis.Candidate{
+		CredentialType: "password", Identity: "svc-build", Domain: "SYNTH", Value: "SyntheticPassword!", Verification: credentialanalysis.Confirmed, Path: "configs/app.ini", Host: "HOST", Share: "Share",
+	}}}, nil, nil)
+	m := &model{ctx: context.Background(), scans: []Scan{{ID: "scan", Status: "completed"}}, categories: categories, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
 	m.resizeTo(100, 24)
-	if got := m.View(); got == "" || !strings.Contains(got, "First") {
-		t.Fatalf("unexpected initial view: %q", got)
+	if !strings.Contains(m.View(), "Credentials") || !strings.Contains(m.View(), "svc-build") {
+		t.Fatalf("category overview did not show meaningful discovery preview: %q", m.View())
 	}
-	if width := maxLineWidth(m.View()); width > 100 {
-		t.Fatalf("view exceeds terminal width: %d", width)
+	m.open()
+	if m.screen != screenSubcategories || len(m.subs) == 0 {
+		t.Fatal("category did not open subcategories")
 	}
-	m.move(1)
-	if m.selectedItem != 1 || !strings.Contains(m.left.View(), "Second") {
-		t.Fatal("finding selection did not update list")
+	m.open()
+	if m.screen != screenDiscoveries || len(m.discoveries) != 1 {
+		t.Fatal("subcategory did not open actual discoveries")
 	}
-	m.focus = 1
-	m.page(1)
-	if !strings.Contains(m.right.View(), "more evidence") {
-		t.Fatal("detail pane did not remain usable after focus change")
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if m.screen != screenEvidence || !strings.Contains(m.preview.View(), "SyntheticPassword!") {
+		t.Fatalf("E did not open full persisted evidence: screen=%d content=%q", m.screen, m.preview.View())
 	}
-}
-
-func TestFindingsModelScanSelector(t *testing.T) {
-	m := &model{selectingScan: true, selectedScan: 0, scans: []Scan{{ID: "newest"}, {ID: "older"}}, left: viewportForTest(), right: viewportForTest()}
-	m.resizeTo(80, 20)
-	m.move(1)
-	if m.selectedScan != 1 || !strings.Contains(m.left.View(), "older") {
-		t.Fatal("scan selector did not move selection")
+	m.back()
+	if m.screen != screenDiscoveries || m.selectedDisc != 0 {
+		t.Fatal("back navigation did not preserve discovery selection")
 	}
 }
 
-func (m *model) resizeTo(width, height int) {
-	m.width, m.height = width, height
-	m.resize()
+func TestCategoryCountsDoNotPromoteSupportingFindings(t *testing.T) {
+	items := buildCategories(nil, []Finding{{Finding: scanner.Finding{RuleID: "extension", Category: "configuration", TriageClass: "supporting", Actionable: false}}}, nil)
+	if len(items) != 1 || items[0].Name != "Other / Supporting" {
+		t.Fatal("supporting-only finding should remain accessible only in the supporting category")
+	}
 }
 
-func viewportForTest() viewport.Model { return viewport.New(1, 1) }
+func TestModelWidthAndResize(t *testing.T) {
+	m := &model{scans: []Scan{{ID: "scan"}}, categories: []category{{Name: "Credentials", Discoveries: []discovery{{Title: "identity", Subcategory: "Username + Password"}}}}, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(72, 18)
+	if maxLineWidth(m.View()) > 72 {
+		t.Fatalf("category-first view exceeds terminal width")
+	}
+}
 
+func (m *model) resizeTo(width, height int) { m.width, m.height = width, height; m.resize() }
 func maxLineWidth(value string) int {
 	maxWidth := 0
 	for _, line := range strings.Split(value, "\n") {

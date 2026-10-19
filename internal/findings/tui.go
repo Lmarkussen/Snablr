@@ -4,35 +4,67 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"snablr/internal/credentialanalysis"
+	"snablr/internal/scanner"
 )
+
+type screen int
+
+const (
+	screenCategories screen = iota
+	screenSubcategories
+	screenDiscoveries
+	screenEvidence
+)
+
+type discovery struct {
+	Title, Subcategory, MaterialType, Identity, Domain string
+	Value, Host, Share, Path, Confidence, Verification string
+	Reason                                             string
+	Sources                                            []string
+	Finding                                            *scanner.Finding
+}
+
+type category struct {
+	Name, Description, Severity string
+	Discoveries                 []discovery
+}
 
 type model struct {
 	provider      *Provider
 	ctx           context.Context
+	output        io.Writer
 	scans         []Scan
 	selectedScan  int
-	items         []Finding
-	selectedItem  int
-	focus         int
 	selectingScan bool
+	screen        screen
+	focus         int
+	selected      int
+	selectedSub   int
+	selectedDisc  int
+	categories    []category
+	subs          []string
+	discoveries   []discovery
+	findings      []Finding
 	width, height int
-	left, right   viewport.Model
+	list, preview viewport.Model
 	status        string
-	loaded        bool
 }
 
+// Run starts the offline viewer. It only queries the supplied read-only provider.
 func Run(ctx context.Context, provider *Provider, scans []Scan, output io.Writer) error {
 	if len(scans) == 0 {
 		return fmt.Errorf("findings database contains no scan records")
 	}
-	m := &model{provider: provider, ctx: ctx, scans: scans, selectingScan: len(scans) > 1, left: viewport.New(1, 1), right: viewport.New(1, 1)}
+	m := &model{provider: provider, ctx: ctx, output: output, scans: scans, selectingScan: len(scans) > 1, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
 	if len(scans) == 1 {
-		if err := m.loadFindings(); err != nil {
+		if err := m.loadScan(); err != nil {
 			return err
 		}
 	}
@@ -41,20 +73,263 @@ func Run(ctx context.Context, provider *Provider, scans []Scan, output io.Writer
 	return err
 }
 
-func (m *model) loadFindings() error {
-	items, err := m.provider.Findings(m.ctx, m.scans[m.selectedScan].ID, 0, PageSize)
+func (m *model) loadScan() error {
+	findings, err := m.provider.Findings(m.ctx, m.scans[m.selectedScan].ID, 0, PageSize)
 	if err != nil {
 		return err
 	}
-	m.items = items
-	m.selectedItem = 0
-	m.loaded = true
-	if len(items) == PageSize && m.scans[m.selectedScan].FindingCount > PageSize {
-		m.status = fmt.Sprintf("Showing first %d of %d findings", PageSize, m.scans[m.selectedScan].FindingCount)
-	} else {
-		m.status = fmt.Sprintf("Loaded %d findings", len(items))
+	credentials, err := m.provider.Credentials(m.ctx, m.scans[m.selectedScan].ID, 0, PageSize)
+	if err != nil {
+		return err
 	}
+	correlations, err := m.provider.Correlations(m.ctx, m.scans[m.selectedScan].ID, 0, PageSize)
+	if err != nil {
+		return err
+	}
+	m.findings = findings
+	m.categories = buildCategories(credentials, findings, correlations)
+	m.selected, m.selectedSub, m.selectedDisc = 0, 0, 0
+	m.screen = screenCategories
+	m.status = fmt.Sprintf("%d categories · %d persisted findings · %d credential records", len(m.categories), m.scans[m.selectedScan].FindingCount, len(credentials))
+	m.refresh()
 	return nil
+}
+
+func buildCategories(credentials []Credential, findings []Finding, correlations []Correlation) []category {
+	ordered := []struct {
+		name, description string
+	}{
+		{"Credentials", "Confirmed and review-level plaintext credential material"},
+		{"Private Keys", "Recovered private-key material with preserved source paths"},
+		{"Hashes", "Validated NT hash and NetNTLM capture material"},
+		{"Cloud & Application Secrets", "Tokens, API keys, and application authentication material"},
+		{"SCCM / MECM", "Configuration Manager credential-bearing evidence"},
+		{"Windows Artifacts", "Windows credential-store and sensitive artifact evidence"},
+		{"Correlations", "Persisted cross-file relationships and supporting observations"},
+		{"Uncertain / Review", "Candidates requiring operator review or stronger context"},
+		{"Other / Supporting", "Original actionable and supporting scan observations"},
+	}
+	groups := make(map[string]*category, len(ordered))
+	for _, item := range ordered {
+		groups[item.name] = &category{Name: item.name, Description: item.description, Severity: "INFO"}
+	}
+	type discoveryRef struct {
+		category string
+		index    int
+	}
+	seen := make(map[string]discoveryRef)
+	for _, item := range credentials {
+		candidate := item.Candidate
+		name, sub := classifyCandidate(candidate)
+		key := strings.Join([]string{candidate.CredentialType, candidate.Identity, candidate.Domain, candidate.Value}, "\x00")
+		if key == "\x00\x00\x00" {
+			key = item.CredentialKey
+		}
+		if ref, ok := seen[key]; ok && ref.category == name {
+			group := groups[name]
+			group.Discoveries[ref.index].Sources = appendUnique(group.Discoveries[ref.index].Sources, sourceLabel(candidate))
+			continue
+		}
+		d := discovery{
+			Title:        discoveryTitle(candidate),
+			Subcategory:  sub,
+			MaterialType: candidate.CredentialType,
+			Identity:     candidate.Identity,
+			Domain:       candidate.Domain,
+			Value:        candidate.Value,
+			Host:         candidate.Host,
+			Share:        candidate.Share,
+			Path:         candidate.Path,
+			Confidence:   string(candidate.Verification),
+			Verification: string(candidate.Verification),
+			Reason:       strings.Join(candidate.ReviewReasons, "; "),
+			Sources:      []string{sourceLabel(candidate)},
+		}
+		group := groups[name]
+		seen[key] = discoveryRef{category: name, index: len(group.Discoveries)}
+		group.Discoveries = append(group.Discoveries, d)
+	}
+	for _, item := range findings {
+		f := item.Finding
+		if !f.Actionable && !strings.EqualFold(f.TriageClass, "review") {
+			if len(groups["Other / Supporting"].Discoveries) < 50 {
+				groups["Other / Supporting"].Discoveries = append(groups["Other / Supporting"].Discoveries, discovery{
+					Title: firstNonEmpty(f.RuleName, f.RuleID), Subcategory: "Supporting Findings", MaterialType: "supporting finding",
+					Host: f.Host, Share: f.Share, Path: f.FilePath, Confidence: firstNonEmpty(f.Confidence, "unknown"), Verification: "supporting",
+					Sources: []string{sourceLabelFinding(f)}, Finding: &f,
+				})
+			}
+			continue
+		}
+		name := findingCategory(f)
+		group := groups[name]
+		group.Discoveries = append(group.Discoveries, discovery{
+			Title:        firstNonEmpty(f.RuleName, f.RuleID),
+			Subcategory:  "Original Findings",
+			MaterialType: "scanner finding",
+			Identity:     f.PotentialAccount,
+			Host:         f.Host,
+			Share:        f.Share,
+			Path:         f.FilePath,
+			Confidence:   firstNonEmpty(f.Confidence, "unknown"),
+			Verification: firstNonEmpty(f.TriageClass, "actionable"),
+			Reason:       f.MatchReason,
+			Sources:      []string{sourceLabelFinding(f)},
+			Finding:      &f,
+		})
+	}
+	for _, item := range correlations {
+		groups["Correlations"].Discoveries = append(groups["Correlations"].Discoveries, discovery{
+			Title: item.Key, Subcategory: "Cross-file Relationships", MaterialType: "correlation", Value: item.Payload,
+			Verification: "persisted", Confidence: "contextual",
+		})
+	}
+	for i := range ordered {
+		group := groups[ordered[i].name]
+		if len(group.Discoveries) == 0 {
+			continue
+		}
+		group.Severity = categorySeverity(group.Discoveries)
+		ordered[i].name = group.Name
+	}
+	result := make([]category, 0, len(ordered))
+	for _, item := range ordered {
+		if group := groups[item.name]; len(group.Discoveries) > 0 {
+			result = append(result, *group)
+		}
+	}
+	return result
+}
+
+func classifyCandidate(candidate credentialanalysis.Candidate) (string, string) {
+	typ := strings.ToLower(candidate.CredentialType)
+	context := strings.ToLower(candidate.Path + " " + candidate.Source + " " + candidate.Container)
+	if candidate.Verification == credentialanalysis.Review || candidate.Encrypted || candidate.Value == "" {
+		return "Uncertain / Review", "Potential Credentials"
+	}
+	if strings.Contains(typ, "hash") || strings.Contains(typ, "netntlm") {
+		if strings.Contains(typ, "netntlmv1") {
+			return "Hashes", "NetNTLMv1"
+		}
+		if strings.Contains(typ, "netntlmv2") {
+			return "Hashes", "NetNTLMv2"
+		}
+		return "Hashes", "NT Hashes"
+	}
+	if strings.Contains(typ, "key") || strings.Contains(context, "private") || strings.Contains(context, "id_ed25519") || strings.Contains(context, "id_rsa") {
+		return "Private Keys", privateKeySubcategory(candidate)
+	}
+	if strings.Contains(context, "sccm") || strings.Contains(context, "mecm") || strings.Contains(context, "tasksequence") || strings.Contains(context, "osd") {
+		return "SCCM / MECM", "Task Sequence Credentials"
+	}
+	if strings.Contains(typ, "token") || strings.Contains(typ, "api") || strings.Contains(typ, "aws") {
+		return "Cloud & Application Secrets", "Tokens / API Secrets"
+	}
+	if strings.Contains(typ, "connection") || strings.Contains(context, "connection") {
+		return "Credentials", "Connection Strings"
+	}
+	if strings.Contains(context, "wincred") || strings.Contains(context, "credential") || strings.Contains(context, "sam") || strings.Contains(context, "ntds") {
+		return "Windows Artifacts", "Credential Store Material"
+	}
+	if candidate.Identity != "" {
+		return "Credentials", "Username + Password"
+	}
+	return "Credentials", "Other Credential Material"
+}
+
+func privateKeySubcategory(candidate credentialanalysis.Candidate) string {
+	value := strings.ToLower(candidate.Value + " " + candidate.Path)
+	if strings.Contains(value, "openssh") || strings.Contains(value, "ed25519") {
+		return "OpenSSH Keys"
+	}
+	if strings.Contains(value, "rsa") || strings.Contains(value, "begin rsa") {
+		return "RSA Keys"
+	}
+	return "Other Private Keys"
+}
+
+func findingCategory(f scanner.Finding) string {
+	value := strings.ToLower(f.Category + " " + f.RuleID + " " + f.FilePath)
+	if strings.Contains(value, "sccm") || strings.Contains(value, "mecm") || strings.Contains(value, "tasksequence") {
+		return "SCCM / MECM"
+	}
+	if strings.Contains(value, "hash") || strings.Contains(value, "ntlm") {
+		return "Hashes"
+	}
+	if strings.Contains(value, "key") || strings.Contains(value, "ssh") {
+		return "Private Keys"
+	}
+	if strings.Contains(value, "token") || strings.Contains(value, "aws") || strings.Contains(value, "api") {
+		return "Cloud & Application Secrets"
+	}
+	return "Other / Supporting"
+}
+
+func discoveryTitle(candidate credentialanalysis.Candidate) string {
+	if candidate.Identity != "" {
+		if candidate.Domain != "" {
+			return candidate.Domain + `\` + candidate.Identity
+		}
+		return candidate.Identity
+	}
+	if candidate.Path != "" {
+		return "Material from " + candidate.Path
+	}
+	return firstNonEmpty(candidate.CredentialType, "Unidentified material")
+}
+
+func sourceLabel(candidate credentialanalysis.Candidate) string {
+	if candidate.Host != "" || candidate.Share != "" {
+		return fmt.Sprintf("\\\\%s\\%s\\%s", candidate.Host, candidate.Share, strings.TrimPrefix(candidate.Path, `/`))
+	}
+	return candidate.Path
+}
+
+func sourceLabelFinding(f scanner.Finding) string {
+	return fmt.Sprintf("\\\\%s\\%s\\%s", f.Host, f.Share, strings.TrimPrefix(f.FilePath, `/`))
+}
+
+func appendUnique(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func categorySeverity(items []discovery) string {
+	best := "INFO"
+	for _, item := range items {
+		severity := "INFO"
+		if item.Finding != nil {
+			severity = strings.ToUpper(item.Finding.Severity)
+		} else if item.Verification == string(credentialanalysis.Confirmed) {
+			severity = "HIGH"
+		} else if item.Verification == string(credentialanalysis.Review) {
+			severity = "REVIEW"
+		}
+		if severityRank(severity) > severityRank(best) {
+			best = severity
+		}
+	}
+	return best
+}
+
+func severityRank(value string) int {
+	switch strings.ToUpper(value) {
+	case "CRITICAL":
+		return 5
+	case "HIGH":
+		return 4
+	case "MEDIUM":
+		return 3
+	case "LOW":
+		return 2
+	case "REVIEW":
+		return 1
+	}
+	return 0
 }
 
 func (m *model) Init() tea.Cmd { return nil }
@@ -70,10 +345,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "tab":
 			m.focus = 1 - m.focus
-		case "esc":
-			if m.selectingScan {
-				return m, tea.Quit
-			}
 		case "up", "k":
 			m.move(-1)
 		case "down", "j":
@@ -82,15 +353,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.page(-1)
 		case "pgdown", "space":
 			m.page(1)
-		case "enter":
-			if m.selectingScan {
-				if err := m.loadFindings(); err != nil {
-					m.status = err.Error()
-				} else {
-					m.selectingScan = false
-					m.updateList()
-					m.updateDetails()
-				}
+		case "enter", "right":
+			m.open()
+		case "left", "esc":
+			m.back()
+		case "e", "E":
+			if m.screen == screenDiscoveries {
+				m.screen = screenEvidence
+				m.refresh()
 			}
 		}
 	}
@@ -100,112 +370,188 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *model) move(delta int) {
 	if m.selectingScan {
 		m.selectedScan = clamp(m.selectedScan+delta, 0, len(m.scans)-1)
-		m.updateList()
+		m.refresh()
 		return
 	}
-	if m.focus == 0 && len(m.items) > 0 {
-		m.selectedItem = clamp(m.selectedItem+delta, 0, len(m.items)-1)
-		m.updateList()
-		m.updateDetails()
-	} else if m.focus == 1 {
-		m.right.LineDown(delta)
+	if m.focus == 1 && m.screen != screenCategories {
+		m.preview.LineDown(delta)
+		return
 	}
+	switch m.screen {
+	case screenCategories:
+		m.selected = clamp(m.selected+delta, 0, len(m.categories)-1)
+	case screenSubcategories:
+		m.selectedSub = clamp(m.selectedSub+delta, 0, len(m.subs)-1)
+	case screenDiscoveries:
+		m.selectedDisc = clamp(m.selectedDisc+delta, 0, len(m.discoveries)-1)
+	case screenEvidence:
+		m.preview.LineDown(delta)
+	}
+	m.refresh()
 }
 
 func (m *model) page(direction int) {
-	if m.selectingScan || m.focus == 0 {
-		m.move(direction * 8)
+	if m.focus == 1 || m.screen == screenEvidence {
+		if direction < 0 {
+			m.preview.PageUp()
+		} else {
+			m.preview.PageDown()
+		}
 		return
 	}
-	if direction < 0 {
-		m.right.PageUp()
-	} else {
-		m.right.PageDown()
+	m.move(direction * 8)
+}
+
+func (m *model) open() {
+	if m.selectingScan {
+		if err := m.loadScan(); err != nil {
+			m.status = err.Error()
+		} else {
+			m.selectingScan = false
+		}
+		m.refresh()
+		return
 	}
+	switch m.screen {
+	case screenCategories:
+		m.subs = categorySubcategories(m.categories[m.selected])
+		m.selectedSub = 0
+		m.screen = screenSubcategories
+	case screenSubcategories:
+		m.discoveries = subcategoryDiscoveries(m.categories[m.selected], m.subs[m.selectedSub])
+		m.selectedDisc = 0
+		m.screen = screenDiscoveries
+	case screenDiscoveries:
+		m.screen = screenEvidence
+	}
+	m.focus = 0
+	m.refresh()
+}
+
+func (m *model) back() {
+	switch m.screen {
+	case screenEvidence:
+		m.screen = screenDiscoveries
+	case screenDiscoveries:
+		m.screen = screenSubcategories
+	case screenSubcategories:
+		m.screen = screenCategories
+	default:
+		return
+	}
+	m.focus = 0
+	m.refresh()
+}
+
+func categorySubcategories(item category) []string {
+	seen := map[string]bool{}
+	var result []string
+	for _, d := range item.Discoveries {
+		if !seen[d.Subcategory] {
+			seen[d.Subcategory] = true
+			result = append(result, d.Subcategory)
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
+func subcategoryDiscoveries(item category, sub string) []discovery {
+	result := make([]discovery, 0)
+	for _, d := range item.Discoveries {
+		if d.Subcategory == sub {
+			result = append(result, d)
+		}
+	}
+	return result
+}
+
+func (m *model) refresh() {
+	if m.selectingScan {
+		m.list.SetContent(scanList(m.scans, m.selectedScan))
+		m.preview.SetContent("Select a scan and press Enter.")
+		return
+	}
+	if m.screen == screenEvidence {
+		m.preview.SetContent(m.evidenceText())
+		return
+	}
+	switch m.screen {
+	case screenCategories:
+		m.list.SetContent(categoryList(m.categories, m.selected))
+		m.preview.SetContent(categoryPreview(m.categories, m.selected))
+	case screenSubcategories:
+		m.list.SetContent(subcategoryList(m.subs, m.selectedSub))
+		m.preview.SetContent(subcategoryPreview(m.categories[m.selected], m.subs, m.selectedSub))
+	case screenDiscoveries:
+		m.list.SetContent(discoveryList(m.discoveries, m.selectedDisc))
+		m.preview.SetContent(discoveryPreview(m.discoveries, m.selectedDisc))
+	}
+}
+
+func (m *model) evidenceText() string {
+	if len(m.discoveries) == 0 {
+		return "No discovery selected."
+	}
+	d := m.discoveries[m.selectedDisc]
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n\nIdentity: %s\nMaterial type: %s\nVerification: %s\nConfidence: %s\n", d.Title, firstNonEmpty(d.Identity, "not persisted"), firstNonEmpty(d.MaterialType, "unknown"), firstNonEmpty(d.Verification, "unknown"), firstNonEmpty(d.Confidence, "unknown"))
+	fmt.Fprintf(&b, "Host: %s\nShare: %s\nSource: %s\n", firstNonEmpty(d.Host, "not persisted"), firstNonEmpty(d.Share, "not persisted"), firstNonEmpty(d.Path, "not persisted"))
+	if d.Value != "" {
+		fmt.Fprintf(&b, "Recovered material: %s\n", d.Value)
+	}
+	if len(d.Sources) > 0 {
+		b.WriteString("\nSource observations\n-------------------\n")
+		b.WriteString(strings.Join(d.Sources, "\n"))
+		b.WriteByte('\n')
+	}
+	if d.Reason != "" {
+		b.WriteString("\nClassification notes\n--------------------\n")
+		b.WriteString(d.Reason)
+		b.WriteByte('\n')
+	}
+	if d.Finding != nil {
+		f := d.Finding
+		fmt.Fprintf(&b, "\nOriginal finding\n----------------\nRule: %s\nSeverity: %s\nCategory: %s\n", firstNonEmpty(f.RuleName, f.RuleID), f.Severity, f.Category)
+		if f.MatchedRuleIDs != nil {
+			fmt.Fprintf(&b, "Rule IDs: %s\n", strings.Join(f.MatchedRuleIDs, ", "))
+		}
+		if f.MatchedText != "" {
+			b.WriteString("\nEvidence\n--------\n")
+			b.WriteString(f.MatchedText)
+			b.WriteByte('\n')
+		}
+		if f.Context != "" {
+			b.WriteString("\nContext\n-------\n")
+			b.WriteString(f.Context)
+			b.WriteByte('\n')
+		}
+		if f.Snippet != "" {
+			b.WriteString("\nSnippet\n-------\n")
+			b.WriteString(f.Snippet)
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
 }
 
 func (m *model) resize() {
 	if m.width < 1 || m.height < 1 {
 		return
 	}
-	headerHeight := 3
-	footerHeight := 2
-	bodyHeight := max(4, m.height-headerHeight-footerHeight)
-	leftWidth := max(32, m.width*38/100)
-	rightWidth := max(32, m.width-leftWidth-4)
-	m.left.Width, m.left.Height = leftWidth-2, bodyHeight-2
-	m.right.Width, m.right.Height = rightWidth-2, bodyHeight-2
-	m.updateList()
-	m.updateDetails()
-}
-
-func (m *model) updateList() {
-	var lines []string
-	if m.selectingScan {
-		for i, scan := range m.scans {
-			marker := "  "
-			if i == m.selectedScan {
-				marker = "▸ "
-			}
-			line := fmt.Sprintf("%s%s  %s  %s  %d findings", marker, scan.ID, scan.Status, scan.Started.Format("2006-01-02 15:04"), scan.FindingCount)
-			if scan.Targets != "" {
-				line += "  [" + scan.Targets + "]"
-			}
-			if i == m.selectedScan {
-				line = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render(line)
-			}
-			lines = append(lines, line)
-		}
-		m.left.SetContent(strings.Join(lines, "\n"))
-		return
+	listRows := 4
+	switch m.screen {
+	case screenCategories:
+		listRows = len(m.categories) + 2
+	case screenSubcategories:
+		listRows = len(m.subs) + 2
+	case screenDiscoveries:
+		listRows = min(len(m.discoveries)+2, max(4, m.height/2))
 	}
-	for i, item := range m.items {
-		marker, style := "  ", lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
-		if i == m.selectedItem {
-			marker, style = "▸ ", lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-		}
-		severity := strings.ToUpper(item.Finding.Severity)
-		lines = append(lines, style.Render(marker+severity+"  "+firstNonEmpty(item.Finding.RuleName, item.Finding.RuleID)))
-	}
-	m.left.SetContent(strings.Join(lines, "\n"))
-}
-
-func (m *model) updateDetails() {
-	if m.selectingScan || len(m.items) == 0 {
-		m.right.SetContent("Select a scan and press Enter to browse its findings.")
-		return
-	}
-	f := m.items[m.selectedItem].Finding
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\n", firstNonEmpty(f.RuleName, f.RuleID))
-	fmt.Fprintf(&b, "Severity: %s    Confidence: %s\n", f.Severity, firstNonEmpty(f.Confidence, "unknown"))
-	fmt.Fprintf(&b, "Classification: %s\n", firstNonEmpty(f.TriageClass, "unspecified"))
-	fmt.Fprintf(&b, "Actionable: %t\n", f.Actionable)
-	fmt.Fprintf(&b, "Host: %s\nShare: %s\nPath: %s\n", f.Host, f.Share, f.FilePath)
-	if f.ArchivePath != "" || f.ArchiveMemberPath != "" {
-		fmt.Fprintf(&b, "Archive: %s!%s\n", f.ArchivePath, f.ArchiveMemberPath)
-	}
-	if len(f.MatchedRuleIDs) > 0 {
-		fmt.Fprintf(&b, "Rule IDs: %s\n", strings.Join(f.MatchedRuleIDs, ", "))
-	}
-	if f.LineNumber > 0 {
-		fmt.Fprintf(&b, "Line: %d\n", f.LineNumber)
-	}
-	b.WriteString("\nEvidence\n--------\n")
-	b.WriteString(firstNonEmpty(f.MatchedText, f.Match, "No matched text persisted."))
-	if f.Context != "" {
-		b.WriteString("\n\nContext\n-------\n")
-		b.WriteString(f.Context)
-	}
-	if f.Snippet != "" {
-		b.WriteString("\n\nSnippet\n-------\n")
-		b.WriteString(f.Snippet)
-	}
-	if f.MatchReason != "" {
-		b.WriteString("\n\nWhy it matched\n---------------\n")
-		b.WriteString(f.MatchReason)
-	}
-	m.right.SetContent(b.String())
+	listRows = min(listRows, max(4, m.height/2))
+	m.list.Width, m.list.Height = max(20, m.width-6), listRows
+	m.preview.Width, m.preview.Height = max(20, m.width-6), max(4, m.height-listRows-9)
+	m.refresh()
 }
 
 func (m *model) View() string {
@@ -213,23 +559,126 @@ func (m *model) View() string {
 		return "Loading Findings Engine..."
 	}
 	scan := m.scans[m.selectedScan]
-	header := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render("SNABLR FINDINGS ENGINE") + "  " + scan.ID + "  " + scan.Status
+	header := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render("SNABLR // FINDINGS") + "  " + scan.ID + "  " + scan.Status
 	if scan.Targets != "" {
 		header += "  " + scan.Targets
 	}
-	leftTitle, rightTitle := "Findings", "Evidence / Details"
-	if m.focus == 0 {
-		leftTitle += "  [FOCUS]"
-	} else {
-		rightTitle += "  [FOCUS]"
+	crumb := breadcrumb(m.screen, m.categories, m.selected, m.subs, m.selectedSub, m.discoveries, m.selectedDisc)
+	if m.selectingScan {
+		return m.frame(header, "Choose a scan", m.list.View(), "", m.preview.View())
 	}
-	left := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1).Width(m.left.Width + 2).Height(m.left.Height + 2).Render(leftTitle + "\n" + m.left.View())
-	right := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1).Width(m.right.Width + 2).Height(m.right.Height + 2).Render(rightTitle + "\n" + m.right.View())
-	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
-	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Tab focus  ↑/↓ or j/k navigate  PgUp/PgDn scroll  Enter select scan  q quit  " + m.status)
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	if m.screen == screenEvidence {
+		return m.frame(header, crumb, "", "Evidence  [FOCUS]", m.preview.View())
+	}
+	if m.screen == screenCategories {
+		return m.frame(header, crumb, categoryList(m.categories, m.selected), "Preview", m.preview.View())
+	}
+	return m.frame(header, crumb, m.list.View(), "Preview", m.preview.View())
 }
 
+func (m *model) frame(header, crumb, leftTitle, rightTitle, content string) string {
+	style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1)
+	left := style.Render(leftTitle + "\n" + content)
+	previewTitle := rightTitle
+	if previewTitle == "" {
+		previewTitle = "Evidence"
+	}
+	preview := style.Render(previewTitle + "\n" + m.preview.View())
+	footer := "↑/↓ j/k move  Enter/→ open  ←/Esc back  E evidence  PgUp/PgDn scroll  Q quit"
+	if m.screen == screenCategories || m.selectingScan {
+		footer = "↑/↓ j/k move  Enter/→ select  Q quit"
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, header, crumb, left, preview, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(footer+"  "+m.status))
+}
+
+func scanList(scans []Scan, selected int) string {
+	var lines []string
+	for i, scan := range scans {
+		marker := "  "
+		if i == selected {
+			marker = "▸ "
+		}
+		lines = append(lines, marker+scan.ID+"  "+scan.Status+"  "+scan.Targets+fmt.Sprintf("  %d findings", scan.FindingCount))
+	}
+	return strings.Join(lines, "\n")
+}
+func categoryList(items []category, selected int) string {
+	var lines []string
+	for i, item := range items {
+		marker := "  "
+		if i == selected {
+			marker = "▸ "
+		}
+		lines = append(lines, marker+fmt.Sprintf("%-32s %5d  %s", item.Name, len(item.Discoveries), item.Severity))
+	}
+	return strings.Join(lines, "\n")
+}
+func subcategoryList(items []string, selected int) string {
+	var lines []string
+	for i, item := range items {
+		marker := "  "
+		if i == selected {
+			marker = "▸ "
+		}
+		lines = append(lines, marker+item)
+	}
+	return strings.Join(lines, "\n")
+}
+func discoveryList(items []discovery, selected int) string {
+	var lines []string
+	for i, item := range items {
+		marker := "  "
+		if i == selected {
+			marker = "▸ "
+		}
+		lines = append(lines, marker+item.Title+"  "+firstNonEmpty(item.Confidence, "unknown"))
+	}
+	return strings.Join(lines, "\n")
+}
+func categoryPreview(items []category, selected int) string {
+	if len(items) == 0 {
+		return "No meaningful categories were persisted for this scan."
+	}
+	item := items[selected]
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n\n%s\n\nSeverity: %s\nLogical discoveries: %d\n\n", item.Name, item.Description, item.Severity, len(item.Discoveries))
+	for i, d := range item.Discoveries {
+		if i == 8 {
+			break
+		}
+		fmt.Fprintf(&b, "%s\n  %s\n  %s\n\n", d.Title, firstNonEmpty(d.MaterialType, "finding"), firstNonEmpty(d.Path, "source not persisted"))
+	}
+	return b.String()
+}
+func subcategoryPreview(item category, subs []string, selected int) string {
+	if len(subs) == 0 {
+		return "No subcategories are available."
+	}
+	return fmt.Sprintf("%s\n\n%d logical discoveries\n\nSelect a subcategory and press Enter to inspect actual material.", subs[selected], len(subcategoryDiscoveries(item, subs[selected])))
+}
+func discoveryPreview(items []discovery, selected int) string {
+	if len(items) == 0 {
+		return "No discoveries are available in this subcategory."
+	}
+	d := items[selected]
+	return fmt.Sprintf("%s\n\nIdentity: %s\nType: %s\nVerification: %s\nConfidence: %s\nSource: %s\n\nPress E for full evidence.", d.Title, firstNonEmpty(d.Identity, "not persisted"), firstNonEmpty(d.MaterialType, "unknown"), firstNonEmpty(d.Verification, "unknown"), firstNonEmpty(d.Confidence, "unknown"), firstNonEmpty(d.Path, "not persisted"))
+}
+func breadcrumb(level screen, cats []category, cat int, subs []string, sub int, discs []discovery, disc int) string {
+	if len(cats) == 0 {
+		return ""
+	}
+	result := cats[cat].Name
+	if level >= screenSubcategories && len(subs) > 0 {
+		result += " > " + subs[sub]
+	}
+	if level >= screenDiscoveries && len(discs) > 0 {
+		result += " > " + discs[disc].Title
+	}
+	if level == screenEvidence {
+		result += " > EVIDENCE"
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render(result)
+}
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -249,6 +698,13 @@ func clamp(value, low, high int) int {
 }
 func max(a, b int) int {
 	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b

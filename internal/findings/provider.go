@@ -12,6 +12,7 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/scanner"
 )
 
@@ -36,6 +37,17 @@ type Finding struct {
 	ID          int64
 	Fingerprint string
 	Finding     scanner.Finding
+}
+
+type Credential struct {
+	ID            int64
+	CredentialKey string
+	Candidate     credentialanalysis.Candidate
+}
+
+type Correlation struct {
+	Key     string
+	Payload string
 }
 
 func Open(path string) (*Provider, error) {
@@ -147,6 +159,62 @@ func (p *Provider) Findings(ctx context.Context, scanID string, offset, limit in
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate persisted findings: %w", err)
+	}
+	return result, nil
+}
+
+func (p *Provider) Credentials(ctx context.Context, scanID string, offset, limit int) ([]Credential, error) {
+	if offset < 0 || limit <= 0 || limit > PageSize {
+		return nil, fmt.Errorf("invalid credentials page bounds")
+	}
+	rows, err := p.db.QueryContext(ctx, `SELECT id,credential_key,payload FROM credentials WHERE scan_id=? ORDER BY id LIMIT ? OFFSET ?`, scanID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("read persisted credentials: %w", err)
+	}
+	defer rows.Close()
+	result := make([]Credential, 0, limit)
+	for rows.Next() {
+		var item Credential
+		var payload string
+		if err := rows.Scan(&item.ID, &item.CredentialKey, &payload); err != nil {
+			return nil, fmt.Errorf("read persisted credential row: %w", err)
+		}
+		if err := json.Unmarshal([]byte(payload), &item.Candidate); err != nil {
+			return nil, fmt.Errorf("decode persisted credential %d: %w", item.ID, err)
+		}
+		var raw struct {
+			Value string `json:"value"`
+		}
+		if err := json.Unmarshal([]byte(payload), &raw); err == nil {
+			item.Candidate.Value = raw.Value
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate persisted credentials: %w", err)
+	}
+	return result, nil
+}
+
+func (p *Provider) Correlations(ctx context.Context, scanID string, offset, limit int) ([]Correlation, error) {
+	if offset < 0 || limit <= 0 || limit > PageSize {
+		return nil, fmt.Errorf("invalid correlations page bounds")
+	}
+	rows, err := p.db.QueryContext(ctx, `SELECT correlation_key,payload FROM correlations WHERE scan_id=? ORDER BY correlation_key LIMIT ? OFFSET ?`, scanID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("read persisted correlations: %w", err)
+	}
+	defer rows.Close()
+	result := make([]Correlation, 0, limit)
+	for rows.Next() {
+		var item Correlation
+		if err := rows.Scan(&item.Key, &item.Payload); err != nil {
+			return nil, fmt.Errorf("read persisted correlation row: %w", err)
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate persisted correlations: %w", err)
 	}
 	return result, nil
 }

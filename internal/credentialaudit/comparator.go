@@ -186,6 +186,9 @@ func parseURI(value string) (Pair, bool) {
 	parsed, err := url.Parse(trimmed)
 	if err != nil || parsed.User == nil {
 		if err != nil {
+			if pair, ok := parseRawDatabaseURI(trimmed); ok {
+				return pair, true
+			}
 			return Pair{}, false
 		}
 		query := parsed.Query()
@@ -199,6 +202,38 @@ func parseURI(value string) (Pair, bool) {
 	password, hasPassword := parsed.User.Password()
 	username := parsed.User.Username()
 	if username == "" || !hasPassword || password == "" || looksUnsafe(password) {
+		return Pair{}, false
+	}
+	return Pair{Username: username, Password: password}, true
+}
+
+func parseRawDatabaseURI(value string) (Pair, bool) {
+	schemeEnd := strings.Index(value, "://")
+	if schemeEnd <= 0 {
+		return Pair{}, false
+	}
+	scheme := strings.ToLower(value[:schemeEnd])
+	switch scheme {
+	case "postgres", "postgresql", "mysql", "mariadb", "sqlserver":
+	default:
+		return Pair{}, false
+	}
+	rest := value[schemeEnd+3:]
+	at := strings.LastIndexByte(rest, '@')
+	if at <= 0 {
+		return Pair{}, false
+	}
+	userinfo := rest[:at]
+	colon := strings.IndexByte(userinfo, ':')
+	if colon <= 0 || colon == len(userinfo)-1 {
+		return Pair{}, false
+	}
+	username, err := url.PathUnescape(userinfo[:colon])
+	if err != nil {
+		return Pair{}, false
+	}
+	password, err := url.PathUnescape(userinfo[colon+1:])
+	if err != nil || username == "" || password == "" || looksUnsafe(password) {
 		return Pair{}, false
 	}
 	return Pair{Username: username, Password: password}, true

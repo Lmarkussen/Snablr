@@ -77,3 +77,15 @@ func TestExtractPairsCreditsOnlyConfirmedExplicitSecret(t *testing.T) {
 		t.Fatalf("review secret was incorrectly credited: %#v", got)
 	}
 }
+
+func TestExtractPairsRawUnicodeAndDomainURI(t *testing.T) {
+	for _, test := range []struct{ value, user, pass string }{
+		{"postgresql://déploiement-256:Harbor-496-Cobalt!@db/app", "déploiement-256", "Harbor-496-Cobalt!"},
+		{"postgresql://SYNTHETIC\\Komtek468:Copper-327-Cobalt!@db/app", `SYNTHETIC\Komtek468`, "Copper-327-Cobalt!"},
+	} {
+		got := ExtractPairs(ObservedMaterial{MaterialType: "connection_string", Value: test.value})
+		if len(got) != 1 || got[0].Username != test.user || got[0].Password != test.pass {
+			t.Fatalf("URI %q -> %#v", test.value, got)
+		}
+	}
+}

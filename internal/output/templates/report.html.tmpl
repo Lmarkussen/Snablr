@@ -2050,6 +2050,39 @@
     </section>
     {{- end }}
 
+    {{- if .CredentialAnalysis.Correlations }}
+    <section id="credential-source-correlations">
+      <div class="section-head">
+        <h2>Cross-File Credential Relationships</h2>
+        <span class="section-note">Bounded relationships based on the same explicit identity and credential type across distinct source files. Values are intentionally not duplicated into this supporting view.</span>
+      </div>
+      <details class="table-card group" open>
+        <summary class="group-summary">
+          <div class="group-top">
+            <div class="group-title"><h3>Related Credential Observations</h3></div>
+            <div class="group-stats"><span>{{ len .CredentialAnalysis.Correlations }} relationships</span></div>
+          </div>
+        </summary>
+        <table>
+          <thead><tr><th>Identity</th><th>Type</th><th>Confidence</th><th>Rationale</th><th>Sources</th></tr></thead>
+          <tbody>
+          {{- range .CredentialAnalysis.Correlations }}
+          {{- if eq .Type "same_identity_type" }}
+            <tr class="correlation-row supporting-correlation-row">
+              <td>{{ .Identity }}{{ if .Domain }} ({{ .Domain }}){{ end }}</td>
+              <td>{{ .CredentialType }}</td>
+              <td>{{ .Confidence }}</td>
+              <td>{{ .ConfidenceRationale }}</td>
+              <td>{{ .ObservationCount }} distinct observations<ul class="duplicate-location-list">{{ range .Sources }}<li>{{ .Host }} / {{ .Share }} / {{ .Path }}{{ if .Container }}!{{ .Container }}{{ end }}</li>{{ end }}</ul></td>
+            </tr>
+          {{- end }}
+          {{- end }}
+          </tbody>
+        </table>
+      </details>
+    </section>
+    {{- end }}
+
     {{- if .CredentialView.Review }}
     <section id="credential-review-material">
       <div class="section-head">

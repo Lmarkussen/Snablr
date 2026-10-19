@@ -69,6 +69,10 @@ func (s *SQLiteStore) Search(ctx context.Context, query string, options SearchOp
      AND share NOT LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\'
      AND path NOT LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\'
   UNION ALL
+	  SELECT 'EVIDENCE' AS result_type, correlation_key AS result_id, 'credential correlation' AS title, substr(payload, 1, 160) AS context, payload AS detail, '' AS source, '' AS bookmark_key, '' AS credential_payload, '' AS credential_type, '' AS credential_identity, '' AS credential_value
+    FROM correlations
+   WHERE scan_id=? AND payload LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\'
+  UNION ALL
 	  SELECT 'CREDENTIAL' AS result_type, CAST(id AS TEXT) AS result_id, COALESCE(identity, credential_type, 'credential') AS title, credential_type AS context, COALESCE(identity, credential_type, 'credential') || ' | ' || COALESCE(value, '') AS detail, credential_key AS source, COALESCE((SELECT file_key FROM files f WHERE f.scan_id=credentials.scan_id AND instr(credentials.credential_key, '|' || f.path || '|') > 0 LIMIT 1), '') AS bookmark_key, payload AS credential_payload, credential_type, identity, value
     FROM credentials
    WHERE scan_id=? AND (identity LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR value LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR credential_type LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR payload LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\')
@@ -80,6 +84,7 @@ LIMIT ? OFFSET ?`
 		s.scanID, query, query, query,
 		s.scanID, query, query, query, query, query,
 		s.scanID, query, query, query, query, query, query,
+		s.scanID, query,
 		s.scanID, query, query, query, query,
 	}
 	results := make([]SearchResult, 0, options.Limit)

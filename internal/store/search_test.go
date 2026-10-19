@@ -157,3 +157,37 @@ func TestSearchPaginationCountsOnlyVisibleCredentials(t *testing.T) {
 		t.Fatalf("visible credential pagination failed: %#v", results)
 	}
 }
+
+func TestSearchReturnsPersistedCredentialCorrelationEvidence(t *testing.T) {
+	t.Parallel()
+	state, err := Open(t.TempDir()+"/search-correlation.db", Options{ScanID: "search-correlation", BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	for _, candidate := range []credentialanalysis.Candidate{
+		{CredentialType: "password", Identity: "correlated-user", Value: "synthetic-secret", Path: "one.ini"},
+		{CredentialType: "password", Identity: "correlated-user", Value: "synthetic-secret", Path: "two.ini"},
+	} {
+		if err := state.RecordCredential(candidate); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	results, err := state.Search(context.Background(), "correlated-user", SearchOptions{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, result := range results {
+		if result.Type == SearchResultEvidence && result.Title == "credential correlation" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("persisted correlation evidence missing from search: %#v", results)
+	}
+}

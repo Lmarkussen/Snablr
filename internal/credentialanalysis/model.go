@@ -186,6 +186,7 @@ type Report struct {
 	Review                 []SafeCandidate `json:"review,omitempty"`
 	DuplicatesMerged       int             `json:"duplicates_merged"`
 	Candidates             []Candidate     `json:"-"`
+	Correlations           []Correlation   `json:"correlations,omitempty"`
 }
 
 type analyzedCandidate struct {
@@ -196,6 +197,7 @@ type analyzedCandidate struct {
 func Analyze(candidates []Candidate) Report {
 	report := Report{}
 	merged := make(map[string]analyzedCandidate)
+	accepted := make([]Candidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		if strings.TrimSpace(candidate.CredentialType) == "" {
 			continue
@@ -217,6 +219,7 @@ func Analyze(candidates []Candidate) Report {
 			continue
 		}
 		candidate = normalize(candidate)
+		accepted = append(accepted, candidate)
 		// Verification is deliberately not part of identity: independent evidence
 		// may promote an initially reviewed candidate to confirmed. A weaker
 		// Review record for the same logical credential is folded into the
@@ -259,6 +262,7 @@ func Analyze(candidates []Candidate) Report {
 			report.Review = append(report.Review, safe)
 		}
 	}
+	report.Correlations = Correlate(accepted)
 	return report
 }
 

@@ -431,9 +431,49 @@ func (s *SQLiteStore) RecordCredential(c credentialanalysis.Candidate) error {
 	payload, _ := credentialPayload(c)
 	key := fmt.Sprintf("%s|%s|%s|%s", c.CredentialType, c.Identity, c.Path, c.Value)
 	return s.enqueue(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`INSERT INTO credentials(scan_id,credential_key,credential_type,identity,value,payload) VALUES(?,?,?,?,?,?) ON CONFLICT(scan_id,credential_key) DO UPDATE SET payload=excluded.payload,value=excluded.value`, s.scanID, key, c.CredentialType, c.Identity, c.Value, payload)
-		return err
+		if _, err := tx.Exec(`INSERT INTO credentials(scan_id,credential_key,credential_type,identity,value,payload) VALUES(?,?,?,?,?,?) ON CONFLICT(scan_id,credential_key) DO UPDATE SET payload=excluded.payload,value=excluded.value`, s.scanID, key, c.CredentialType, c.Identity, c.Value, payload); err != nil {
+			return err
+		}
+		return s.recordCredentialCorrelations(tx, c)
 	})
+}
+
+func (s *SQLiteStore) recordCredentialCorrelations(tx *sql.Tx, candidate credentialanalysis.Candidate) error {
+	if _, suppressed := credentialanalysis.SuppressionReason(candidate); suppressed || strings.TrimSpace(candidate.Identity) == "" || strings.TrimSpace(candidate.Path) == "" {
+		return nil
+	}
+	rows, err := tx.Query(`SELECT payload,value FROM credentials WHERE scan_id=? AND credential_type=? AND lower(identity)=lower(?)`, s.scanID, candidate.CredentialType, candidate.Identity)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	candidates := []credentialanalysis.Candidate{candidate}
+	for rows.Next() {
+		var payload []byte
+		var value string
+		var stored credentialanalysis.Candidate
+		if err := rows.Scan(&payload, &value); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(payload, &stored); err != nil {
+			continue
+		}
+		stored.Value = value
+		candidates = append(candidates, stored)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, correlation := range credentialanalysis.Correlate(candidates) {
+		payload, err := json.Marshal(correlation)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO correlations(scan_id,correlation_key,payload) VALUES(?,?,?) ON CONFLICT(scan_id,correlation_key) DO UPDATE SET payload=excluded.payload`, s.scanID, correlation.Key, payload); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func credentialPayload(c credentialanalysis.Candidate) ([]byte, error) {

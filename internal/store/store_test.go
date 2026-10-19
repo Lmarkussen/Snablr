@@ -386,3 +386,28 @@ func TestSQLiteStoreFreshScanScopeDoesNotInheritExclusions(t *testing.T) {
 		t.Fatalf("fresh scan inherited exclusion: excluded=%v err=%v", excluded, err)
 	}
 }
+
+func TestRecordCredentialPersistsBoundedCrossFileCorrelation(t *testing.T) {
+	t.Parallel()
+	state, _ := openTestStore(t)
+	defer state.Close()
+	for _, candidate := range []credentialanalysis.Candidate{
+		{CredentialType: "password", Identity: "synthetic\\svc", Value: "first-value", Host: "host", Share: "share", Path: "one.ini", Verification: credentialanalysis.Confirmed},
+		{CredentialType: "password", Identity: "synthetic\\svc", Value: "second-value", Host: "host", Share: "share", Path: "two.ini", Verification: credentialanalysis.Confirmed},
+		{CredentialType: "password", Identity: "other-user", Value: "second-value", Host: "host", Share: "share", Path: "other.ini", Verification: credentialanalysis.Confirmed},
+	} {
+		if err := state.RecordCredential(candidate); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := state.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.CorrelationKeys) != 1 {
+		t.Fatalf("got %d correlation rows, want one: %#v", len(snapshot.CorrelationKeys), snapshot.CorrelationKeys)
+	}
+}

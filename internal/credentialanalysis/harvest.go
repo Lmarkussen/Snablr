@@ -707,7 +707,7 @@ func isSecretElement(name string) bool {
 	return isSecretKey(name)
 }
 
-var assignmentPattern = regexp.MustCompile(`(?im)^\s*([A-Za-z][A-Za-z0-9_. -]{0,63})\s*(?:[:=])\s*(?:["']([^"']*)["']|([^#;\r\n]*))\s*$`)
+var assignmentPattern = regexp.MustCompile(`(?im)^\s*([\p{L}][\p{L}\p{N}_. -]{0,63})\s*(?:[:=])\s*(?:["']([^"']*)["']|([^#;\r\n]*))\s*$`)
 var inlinePairPattern = regexp.MustCompile(`(?is)["']?(username|user|userid|login|account|brukernavn|bruker|kontonavn|konto)["']?\s*[:=]\s*["']([^"']+)["']\s*[,}]\s*["']?(password|passwd|pwd|passord)["']?\s*[:=]\s*["']([^"']+)["']`)
 
 func harvestInlinePairs(text string, add func(Candidate)) {

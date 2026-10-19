@@ -196,6 +196,15 @@ func TestFinderPairingPolicyRejectsOpaqueAndDerivesExplicitReviewPairs(t *testin
 	if category, _ := classifyCandidate(opaque); category != "Review" {
 		t.Fatalf("opaque material classified as %q", category)
 	}
+	opaqueCategories := buildCategories([]Credential{{Candidate: opaque}}, nil, nil)
+	opaqueModel := &model{scans: []Scan{{ID: "scan"}}, categories: opaqueCategories, screen: screenDiscoveries, discoveries: opaqueCategories[0].Discoveries, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	opaqueModel.resizeTo(120, 40)
+	opaqueText := opaqueModel.evidenceText()
+	for _, want := range []string{"ENCRYPTED / OPAQUE MATERIAL — REVIEW", "Not confirmed plaintext; no decryption was attempted.", "BASE64-CIPHERTEXT-NOT-PLAINTEXT"} {
+		if !strings.Contains(opaqueText, want) {
+			t.Fatalf("opaque evidence missing %q: %q", want, opaqueText)
+		}
+	}
 
 	for _, identity := range []string{"cfg-user", "json-b", "deploy-user"} {
 		candidate := credentialanalysis.Candidate{
@@ -230,6 +239,15 @@ func TestFinderPairingPolicyKeepsPasswordOnlyMaterialInReview(t *testing.T) {
 	}
 	if category, _ := classifyCandidate(candidate); category != "Review" {
 		t.Fatalf("password-only material classified as %q", category)
+	}
+	categories := buildCategories([]Credential{{Candidate: candidate}}, nil, nil)
+	m := &model{scans: []Scan{{ID: "scan"}}, categories: categories, screen: screenDiscoveries, discoveries: categories[0].Discoveries, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(120, 40)
+	text := m.evidenceText()
+	for _, want := range []string{"PASSWORD ONLY — IDENTITY NOT ESTABLISHED", "Pairing: not confirmed", "Username: not safely established", "Password: PasswordOnly!"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("password-only evidence missing %q: %q", want, text)
+		}
 	}
 }
 

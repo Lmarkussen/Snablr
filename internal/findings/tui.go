@@ -721,14 +721,15 @@ func (m *model) evidenceText() string {
 		fmt.Fprintf(&b, "\n%s\n", evidenceSection("USERNAME + PASSWORD COMBINATION"))
 		fmt.Fprintf(&b, "%s %s\n%s %s\n", evidenceLabel("Username:"), evidenceValue(qualifiedIdentity(d)), evidencePasswordLabel("Password:"), evidenceValue(d.RecoveredPassword))
 		fmt.Fprintf(&b, "Credential kind: database credential\nOrigin type: %s\n", firstNonEmpty(d.OriginType, "Database Credential"))
+	} else if d.Value != "" && isUsernamePasswordType(d.MaterialType) && strings.Contains(strings.ToLower(d.PairingStatus), "password only") {
+		fmt.Fprintf(&b, "\n%s\n", evidenceSection("PASSWORD ONLY — IDENTITY NOT ESTABLISHED"))
+		b.WriteString("Pairing: not confirmed\n")
+		b.WriteString("Username: not safely established\n")
+		fmt.Fprintf(&b, "%s %s\n", evidencePasswordLabel("Password:"), evidenceValue(d.Value))
 	} else if strings.EqualFold(d.MaterialFamily, "Credentials") && d.Value != "" {
 		if d.Identity != "" {
 			fmt.Fprintf(&b, "\n%s\n", evidenceSection("USERNAME + PASSWORD COMBINATION"))
 			fmt.Fprintf(&b, "%s %s\n%s %s\n", evidenceLabel("Username:"), evidenceValue(qualifiedIdentity(d)), evidencePasswordLabel("Password:"), evidenceValue(d.Value))
-		} else {
-			fmt.Fprintf(&b, "\n%s\n", evidenceSection("PASSWORD MATERIAL"))
-			b.WriteString("Username: not safely established\n")
-			fmt.Fprintf(&b, "%s %s\n", evidencePasswordLabel("Password:"), evidenceValue(d.Value))
 		}
 		fmt.Fprintf(&b, "Credential kind: %s\nOrigin type: %s\n", firstNonEmpty(credentialKind(d.MaterialType), "credential material"), firstNonEmpty(d.OriginType, "Unknown Origin Credential"))
 	} else if strings.EqualFold(d.MaterialFamily, "Keys & Certificates") {
@@ -743,7 +744,12 @@ func (m *model) evidenceText() string {
 			b.WriteByte('\n')
 		}
 	} else if d.Value != "" {
-		fmt.Fprintf(&b, "\n%s\n", evidenceSection("RECOVERED MATERIAL"))
+		if strings.Contains(strings.ToLower(d.PairingStatus), "encrypted") || strings.Contains(strings.ToLower(d.PairingStatus), "opaque") {
+			fmt.Fprintf(&b, "\n%s\n", evidenceSection("ENCRYPTED / OPAQUE MATERIAL — REVIEW"))
+			b.WriteString("Not confirmed plaintext; no decryption was attempted.\n")
+		} else {
+			fmt.Fprintf(&b, "\n%s\n", evidenceSection("RECOVERED MATERIAL"))
+		}
 		b.WriteString(evidenceValue(d.Value))
 		b.WriteByte('\n')
 	}
@@ -758,6 +764,9 @@ func (m *model) evidenceText() string {
 		for _, detail := range d.ConnectionDetails {
 			fmt.Fprintf(&b, "%s: %s\n", detail.Label, detail.Value)
 		}
+	}
+	if d.Identity != "" && d.Value == "" {
+		fmt.Fprintf(&b, "\n%s\n", evidenceSection("IDENTITY / ACCOUNT REFERENCE — NO PASSWORD MATERIAL"))
 	}
 	fmt.Fprintf(&b, "\n%s\n%s\n", evidenceSection("IDENTITY"), firstNonEmpty(qualifiedIdentity(d), "not persisted"))
 	if d.SourceContext != "" {

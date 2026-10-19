@@ -670,6 +670,9 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		})
 	}
 	plannedShares := planner.PlanShares(shareInputs, planFilters)
+	if len(plannedShares) == 0 && len(cfg.Scan.Share) > 0 {
+		return fmt.Errorf("%s: none of the explicitly requested shares are accessible", host)
+	}
 	shareScheduler := newShareScheduler(plannedShares)
 	output.SetShareScheduler(sink, shareScheduler.hooks())
 	if recorder != nil {

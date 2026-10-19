@@ -57,8 +57,45 @@ var secretCredentialTypes = map[string]struct{}{
 	"dsn":               {},
 	"private_key":       {},
 	"nt_hash":           {},
+	"netntlmv1":         {},
+	"netntlmv2":         {},
 	"hash":              {},
 	"certificate":       {},
+}
+
+// IsHashCredentialType reports whether a credential carries hash or
+// challenge-response material. This is a presentation classification; the
+// underlying credential type remains stable for persistence and exports.
+func IsHashCredentialType(credentialType string) bool {
+	switch strings.ToLower(strings.TrimSpace(credentialType)) {
+	case "nt_hash", "netntlmv1", "netntlmv2":
+		return true
+	default:
+		return false
+	}
+}
+
+// CredentialPresentationLabel returns the operator-facing broad material
+// class without changing the stored credential type.
+func CredentialPresentationLabel(credentialType string) string {
+	if IsHashCredentialType(credentialType) {
+		return "HASH"
+	}
+	return "CREDENTIAL"
+}
+
+// CredentialTypeDisplayName returns a concise human-readable material type.
+func CredentialTypeDisplayName(credentialType string) string {
+	switch strings.ToLower(strings.TrimSpace(credentialType)) {
+	case "nt_hash":
+		return "NT hash"
+	case "netntlmv1":
+		return "NetNTLMv1"
+	case "netntlmv2":
+		return "NetNTLMv2"
+	default:
+		return credentialType
+	}
 }
 
 // IsSecretMaterialType reports whether a credential type denotes a concrete
@@ -249,7 +286,7 @@ func reviewCandidateLacksEvidence(candidate Candidate) (string, bool) {
 	}
 	credentialType := strings.ToLower(strings.TrimSpace(candidate.CredentialType))
 	switch credentialType {
-	case "private_key", "nt_hash", "certificate", "connection_string":
+	case "private_key", "nt_hash", "netntlmv1", "netntlmv2", "certificate", "connection_string":
 		// Recovered or composite material carries its own evidence.
 		return "", false
 	case "password":

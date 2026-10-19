@@ -737,6 +737,9 @@ func harvestLines(text string, add func(Candidate)) {
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") || strings.HasPrefix(line, ";") {
 			continue
 		}
+		if harvestNetNTLMRecord(line, index+1, add) {
+			continue
+		}
 		if harvestCanonicalNTHashRecord(line, index+1, add) {
 			continue
 		}

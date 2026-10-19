@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	charmansi "github.com/charmbracelet/x/ansi"
 
+	"snablr/internal/credentialanalysis"
 	"snablr/internal/diff"
 	"snablr/internal/metrics"
 	"snablr/internal/scanner"
@@ -1282,8 +1283,14 @@ func (m tuiModel) bookmarkDetailContent() string {
 
 func (m tuiModel) searchDetailContent() string {
 	result := m.searchDetail
+	typeLabel := string(result.Type)
+	classLabel := ""
+	if result.Type == store.SearchResultCredential {
+		typeLabel = credentialanalysis.CredentialTypeDisplayName(result.Context)
+		classLabel = "\nClass: " + credentialanalysis.CredentialPresentationLabel(result.Context)
+	}
 	return strings.Join([]string{
-		"Type: " + string(result.Type),
+		"Type: " + typeLabel + classLabel,
 		"Title: " + valueOrDash(result.Title),
 		"Context: " + valueOrDash(result.Context),
 		"Source: " + valueOrDash(result.Source),
@@ -1300,7 +1307,7 @@ func formatSearchResult(result store.SearchResult) string {
 	case store.SearchResultFinding:
 		return fmt.Sprintf("[FINDING] %s | %s | %s", valueOrDash(result.Title), valueOrDash(result.Source), valueOrDash(result.Context))
 	case store.SearchResultCredential:
-		return fmt.Sprintf("[CREDENTIAL] %s | %s | %s | %s", valueOrDash(result.Title), valueOrDash(result.Context), valueOrDash(result.Detail), compactCredentialSource(result.Source))
+		return fmt.Sprintf("[%s] %s — %s | %s | %s", credentialanalysis.CredentialPresentationLabel(result.Context), valueOrDash(result.Title), credentialanalysis.CredentialTypeDisplayName(result.Context), valueOrDash(result.Detail), compactCredentialSource(result.Source))
 	case store.SearchResultEvidence:
 		return fmt.Sprintf("[EVIDENCE] %s | %s | %s", valueOrDash(result.Title), valueOrDash(result.Source), valueOrDash(result.Detail))
 	default:

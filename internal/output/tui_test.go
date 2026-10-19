@@ -416,6 +416,12 @@ func TestTUISearchCredentialResultIsInformative(t *testing.T) {
 			t.Fatalf("credential result missing %q: %s", expected, row)
 		}
 	}
+	hashRow := formatSearchResult(store.SearchResult{Type: store.SearchResultCredential, Title: "synthetic-user", Context: "nt_hash", Detail: "synthetic-user | 00112233445566778899aabbccddeeff", Source: "nt_hash|synthetic-user|hashes.txt|value"})
+	for _, expected := range []string{"[HASH]", "NT hash", "synthetic-user", "hashes.txt"} {
+		if !strings.Contains(hashRow, expected) {
+			t.Fatalf("hash result missing %q: %s", expected, hashRow)
+		}
+	}
 }
 
 func TestTUISearchViewportFollowsSelection(t *testing.T) {

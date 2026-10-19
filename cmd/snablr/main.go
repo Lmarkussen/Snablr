@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"snablr/internal/app"
+	"snablr/internal/findings"
 	"snablr/internal/ui"
 	"snablr/internal/version"
 )
@@ -33,6 +34,8 @@ func main() {
 		err = runDiscover(os.Args[2:])
 	case "diff":
 		err = runDiff(os.Args[2:])
+	case "find":
+		err = runFind(os.Args[2:])
 	case "benchmark":
 		err = runBenchmark(os.Args[2:])
 	case "eval":
@@ -117,6 +120,37 @@ func runDev(args []string) error {
 	default:
 		return fmt.Errorf("unknown dev command %q", args[0])
 	}
+}
+
+func runFind(args []string) error {
+	fs := flag.NewFlagSet("find", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	fs.Usage = func() { printFindUsage() }
+	dbPath := fs.String("db", "", "Path to an existing Snablr SQLite database")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	path := strings.TrimSpace(*dbPath)
+	if path == "" {
+		path = app.DefaultSQLiteStatePath()
+	}
+	provider, err := findings.Open(path)
+	if err != nil {
+		return err
+	}
+	defer provider.Close()
+	scans, err := provider.ListScans(context.Background())
+	if err != nil {
+		return err
+	}
+	if len(scans) == 0 {
+		fmt.Fprintf(os.Stdout, "No usable scan records found in %s.\n", provider.Path())
+		return nil
+	}
+	return findings.Run(context.Background(), provider, scans, os.Stdout)
 }
 
 func runScan(args []string) error {
@@ -607,6 +641,8 @@ func printHelp(args []string) {
 		printVersionUsage()
 	case "dev":
 		printDeveloperUsage()
+	case "find":
+		printFindUsage()
 	default:
 		printUsage()
 	}
@@ -622,6 +658,7 @@ func printUsage() {
 	commandLine("scan", "Scan SMB shares for evidence and credentials")
 	commandLine("discover", "Discover targets, shares, and reachability")
 	commandLine("diff", "Compare two JSON scan results")
+	commandLine("find", "Browse persisted findings offline from SQLite")
 	commandLine("version", "Show version, commit, and build metadata")
 	commandLine("help", "Show command-specific help")
 	fmt.Println()
@@ -643,6 +680,14 @@ func printUsage() {
 	fmt.Println("Run `snablr dev --help` for developer tools.")
 	fmt.Println()
 	fmt.Println("Authorized use only. Assess systems and data only with explicit permission.")
+}
+
+func printFindUsage() {
+	section("Usage", "snablr find [options]")
+	printHelpParagraph("Browse persisted Snablr findings and evidence without contacting SMB targets.")
+	printHelpLine("--db PATH", "Open an existing SQLite database instead of the default snablr.db", 30)
+	fmt.Println()
+	printHelpParagraph("If --db is omitted, Snablr checks the same default database path used by scan.")
 }
 
 func printScanUsage(fs *flag.FlagSet) {

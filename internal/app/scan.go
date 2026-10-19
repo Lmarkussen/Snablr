@@ -1126,6 +1126,12 @@ func sqliteStatePath(cfg config.Config) string {
 	return "snablr.db"
 }
 
+// DefaultSQLiteStatePath returns the scan database path used when no output
+// or SQLite override is configured. Findings viewers use this same resolver.
+func DefaultSQLiteStatePath() string {
+	return sqliteStatePath(config.Config{})
+}
+
 func resolveSMBSPN(target, hostname, override string) (string, error) {
 	if value := strings.TrimSpace(override); value != "" {
 		return value, nil

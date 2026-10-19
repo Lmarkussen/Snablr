@@ -216,6 +216,7 @@ func (s *shareScheduler) snapshot() output.ShareQueueSnapshot {
 	if current := s.entries[s.current]; current != nil {
 		snapshot.CurrentHost = current.plan.Host
 		snapshot.CurrentShare = current.plan.Share
+		snapshot.CurrentDirectory = s.currentDir
 	}
 	for _, key := range s.order {
 		entry := s.entries[key]

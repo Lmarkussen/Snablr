@@ -1151,9 +1151,10 @@ func TestTUIMainHeaderAndFooterKeepOnlyUsefulLiveControls(t *testing.T) {
 	model.live.Summary.MatchesFound = 7
 	model.live.Summary.SkippedFiles = 11
 	model.live.ShareQueue = ShareQueueSnapshot{
-		CurrentHost:   "synthetic-host",
-		CurrentShare:  "SyntheticShare",
-		DeferredCount: 1,
+		CurrentHost:      "synthetic-host",
+		CurrentShare:     "SyntheticShare",
+		CurrentDirectory: "SkipFolder-Test/1/2/3",
+		DeferredCount:    1,
 	}
 
 	header := model.renderHeader()
@@ -1163,11 +1164,14 @@ func TestTUIMainHeaderAndFooterKeepOnlyUsefulLiveControls(t *testing.T) {
 	if !strings.Contains(header, "Current share:") || !strings.Contains(header, "Deferred: 1") {
 		t.Fatalf("current share/deferred status missing: %q", header)
 	}
+	if !strings.Contains(header, `Current folder: \\synthetic-host\SyntheticShare\SkipFolder-Test/1/2/3`) {
+		t.Fatalf("current folder missing: %q", header)
+	}
 	footer := model.renderFooter()
 	if strings.Contains(footer, "↑/↓ or j/k select") {
 		t.Fatalf("duplicate navigation help still rendered: %q", footer)
 	}
-	for _, shortcut := range []string{"Ctrl-F search", "Ctrl-D bookmark", "Alt-D bookmarks", "Alt-L defer", "Alt-Q queue", "Ctrl-C stop"} {
+	for _, shortcut := range []string{"Ctrl-F search", "Ctrl-D bookmark", "Alt-D bookmarks", "Alt-K skip folder", "Alt-S skip share", "Alt-L defer", "Alt-Q queue", "Ctrl-C stop"} {
 		if !strings.Contains(footer, shortcut) {
 			t.Fatalf("footer missing %q: %q", shortcut, footer)
 		}

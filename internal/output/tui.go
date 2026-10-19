@@ -117,10 +117,11 @@ type ShareQueueItem struct {
 }
 
 type ShareQueueSnapshot struct {
-	CurrentHost   string
-	CurrentShare  string
-	DeferredCount int
-	Items         []ShareQueueItem
+	CurrentHost      string
+	CurrentShare     string
+	CurrentDirectory string
+	DeferredCount    int
+	Items            []ShareQueueItem
 }
 
 type ShareSchedulerHooks struct {
@@ -1506,6 +1507,9 @@ func (m tuiModel) renderHeader() string {
 	if current := strings.TrimSpace(m.live.ShareQueue.CurrentShare); current != "" {
 		lines = append(lines, m.styles.headerMuted.Render(fmt.Sprintf("Current share: \\\\%s\\%s  Deferred: %d", m.live.ShareQueue.CurrentHost, current, m.live.ShareQueue.DeferredCount)))
 	}
+	if directory := strings.TrimSpace(m.live.ShareQueue.CurrentDirectory); directory != "" {
+		lines = append(lines, m.styles.headerMuted.Render(fmt.Sprintf("Current folder: \\\\%s\\%s\\%s", m.live.ShareQueue.CurrentHost, m.live.ShareQueue.CurrentShare, directory)))
+	}
 	if m.completed && m.final != nil {
 		lines = append(lines, m.styles.headerMuted.Render(fmt.Sprintf("Completed. Access paths: %d  Performance: %.2f files/s",
 			len(m.final.AccessPaths),
@@ -1518,7 +1522,7 @@ func (m tuiModel) renderHeader() string {
 }
 
 func (m tuiModel) renderFooter() string {
-	message := "Tab switch pane • Ctrl-F search • Ctrl-D bookmark • Alt-D bookmarks • Alt-L defer • Alt-Q queue • Ctrl-C stop"
+	message := "Tab switch pane • Ctrl-F search • Ctrl-D bookmark • Alt-D bookmarks • Ctrl-C stop\nAlt-K skip folder • Alt-S skip share • Alt-L defer • Alt-Q queue"
 	if m.queueOpen {
 		message = "↑/↓ or j/k move • PgUp/PgDn page • g/G top/bottom • Esc back"
 	}

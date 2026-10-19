@@ -111,7 +111,7 @@ func (m *model) loadScan() error {
 	m.filter = ""
 	m.filterMode = false
 	m.screen = screenCategories
-	m.status = fmt.Sprintf("%d categories · %d findings · %d logical credentials · %d correlations", len(m.categories), len(findings), len(credentials), len(correlations))
+	m.status = fmt.Sprintf("%d categories · %d findings · %d logical credentials · %d correlations", len(m.categories), len(findings), audit.LogicalDiscoveryCount, len(correlations))
 	m.refresh()
 	return nil
 }

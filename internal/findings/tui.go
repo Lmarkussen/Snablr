@@ -27,6 +27,7 @@ type discovery struct {
 	MaterialFamily, SourceContext                      string
 	OriginType                                         string
 	Value, Host, Share, Path, Confidence, Verification string
+	RecoveredPassword                                  string
 	Reason                                             string
 	PairingStatus, PairingBasis, OriginalVerification  string
 	ConnectionDetails                                  []connectionDetail
@@ -187,6 +188,11 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 	seen := make(map[string]discoveryRef)
 	for _, item := range credentials {
 		candidate := item.Candidate
+		displayCandidate := candidate
+		connectionPair, hasConnectionPair := deriveConnectionPair(candidate)
+		if hasConnectionPair {
+			displayCandidate.Identity = connectionPair.Username
+		}
 		pairing := interpretCredential(candidate)
 		name, sub := classifyCandidate(candidate)
 		key := strings.Join([]string{candidate.CredentialType, candidate.Identity, candidate.Domain, candidate.Value}, "\x00")
@@ -203,12 +209,13 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 			continue
 		}
 		d := discovery{
-			Title:                discoveryTitle(candidate),
+			Title:                discoveryTitle(displayCandidate),
 			Subcategory:          sub,
 			MaterialType:         candidate.CredentialType,
-			Identity:             candidate.Identity,
+			Identity:             displayCandidate.Identity,
 			Domain:               candidate.Domain,
 			Value:                candidate.Value,
+			RecoveredPassword:    connectionPair.Password,
 			Host:                 candidate.Host,
 			Share:                candidate.Share,
 			Path:                 candidate.Path,
@@ -329,10 +336,7 @@ func originType(candidate credentialanalysis.Candidate) string {
 		return "SCCM / MECM Credential"
 	}
 	if typ == "connection_string" || typ == "dsn" {
-		if connectionLooksLikeMSSQL(candidate.Value) {
-			return "MSSQL / Database Credential"
-		}
-		return "Connection String Credential"
+		return connectionPairOrigin(candidate)
 	}
 	if candidate.Domain != "" {
 		return "AD / Domain Credential"
@@ -359,23 +363,26 @@ func mergeOrigin(existing, next string) string {
 	return "Unknown Origin Credential"
 }
 
-func connectionLooksLikeMSSQL(value string) bool {
-	value = strings.ToLower(value)
-	return strings.Contains(value, "sql server") || strings.Contains(value, "mssql") || strings.Contains(value, "sqloledb") || strings.Contains(value, "sqlncli")
-}
-
 func connectionDetails(candidate credentialanalysis.Candidate) []connectionDetail {
-	if typ := strings.ToLower(strings.TrimSpace(candidate.CredentialType)); typ != "connection_string" && typ != "dsn" {
+	typ := strings.ToLower(strings.TrimSpace(candidate.CredentialType))
+	if typ != "connection_string" && typ != "dsn" {
 		return nil
 	}
-	var details []connectionDetail
-	for _, part := range strings.Split(candidate.Value, ";") {
-		key, value, ok := strings.Cut(part, "=")
-		if !ok || strings.TrimSpace(value) == "" {
-			continue
+	if pair, ok := parseDatabaseURI(strings.TrimSpace(candidate.Value)); ok {
+		details := []connectionDetail{{Label: "Provider / Driver", Value: pair.Provider}, {Label: "Server / Host", Value: pair.Server}}
+		if pair.Port != "" {
+			details = append(details, connectionDetail{Label: "Port", Value: pair.Port})
 		}
-		label := connectionFieldLabel(key)
-		if label == "" {
+		if pair.Database != "" {
+			details = append(details, connectionDetail{Label: "Database / Catalog", Value: pair.Database})
+		}
+		details = append(details, connectionDetail{Label: "Username", Value: pair.Username}, connectionDetail{Label: "Password", Value: pair.Password})
+		return details
+	}
+	var details []connectionDetail
+	for _, field := range splitConnectionFields(candidate.Value) {
+		label := connectionFieldLabel(field.Key)
+		if label == "" || strings.TrimSpace(field.Value) == "" {
 			continue
 		}
 		duplicate := false
@@ -386,7 +393,7 @@ func connectionDetails(candidate credentialanalysis.Candidate) []connectionDetai
 			}
 		}
 		if !duplicate {
-			details = append(details, connectionDetail{Label: label, Value: strings.TrimSpace(value)})
+			details = append(details, connectionDetail{Label: label, Value: field.Value})
 		}
 	}
 	return details
@@ -406,6 +413,8 @@ func connectionFieldLabel(key string) string {
 		return "Provider / Driver"
 	case "dsn":
 		return "DSN"
+	case "port":
+		return "Port"
 	default:
 		return ""
 	}
@@ -708,7 +717,11 @@ func (m *model) evidenceText() string {
 	d := m.discoveries[m.selectedDisc]
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n%s\n\nMaterial family: %s\nMaterial type: %s\nVerification: %s\nConfidence: %s\nPersisted rows: %d\nSource observations: %d\n", evidenceSection("DISCOVERY"), d.Title, firstNonEmpty(d.MaterialFamily, "unknown"), firstNonEmpty(d.MaterialType, "unknown"), firstNonEmpty(d.Verification, "unknown"), firstNonEmpty(d.Confidence, "unknown"), len(d.PersistedRefs), len(d.Sources))
-	if strings.EqualFold(d.MaterialFamily, "Credentials") && d.Value != "" {
+	if d.RecoveredPassword != "" && d.Identity != "" {
+		fmt.Fprintf(&b, "\n%s\n", evidenceSection("USERNAME + PASSWORD COMBINATION"))
+		fmt.Fprintf(&b, "%s %s\n%s %s\n", evidenceLabel("Username:"), evidenceValue(qualifiedIdentity(d)), evidencePasswordLabel("Password:"), evidenceValue(d.RecoveredPassword))
+		fmt.Fprintf(&b, "Credential kind: database credential\nOrigin type: %s\n", firstNonEmpty(d.OriginType, "Database Credential"))
+	} else if strings.EqualFold(d.MaterialFamily, "Credentials") && d.Value != "" {
 		if d.Identity != "" {
 			fmt.Fprintf(&b, "\n%s\n", evidenceSection("USERNAME + PASSWORD COMBINATION"))
 			fmt.Fprintf(&b, "%s %s\n%s %s\n", evidenceLabel("Username:"), evidenceValue(qualifiedIdentity(d)), evidencePasswordLabel("Password:"), evidenceValue(d.Value))
@@ -734,8 +747,11 @@ func (m *model) evidenceText() string {
 		b.WriteString(evidenceValue(d.Value))
 		b.WriteByte('\n')
 	}
-	if d.OriginType != "" && !strings.EqualFold(d.MaterialFamily, "Credentials") {
+	if d.OriginType != "" && !strings.EqualFold(d.MaterialFamily, "Credentials") && d.MaterialType != "connection_string" && d.MaterialType != "dsn" {
 		fmt.Fprintf(&b, "\nOrigin type: %s\n", d.OriginType)
+	}
+	if d.MaterialType == "connection_string" || d.MaterialType == "dsn" {
+		fmt.Fprintf(&b, "\n%s\n%s\n", evidenceSection("ORIGINAL CONNECTION STRING"), evidenceValue(d.Value))
 	}
 	if len(d.ConnectionDetails) > 0 {
 		fmt.Fprintf(&b, "\n%s\n", evidenceSection("CONNECTION STRING FIELDS"))

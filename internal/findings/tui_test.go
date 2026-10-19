@@ -367,7 +367,7 @@ func TestConnectionStringDetailsAreStructuredWithoutChangingValue(t *testing.T) 
 	m := &model{scans: []Scan{{ID: "scan"}}, categories: categories, screen: screenDiscoveries, discoveries: categories[0].Discoveries, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
 	m.resizeTo(120, 40)
 	for _, want := range []string{"CONNECTION STRING FIELDS", "Server / Host: db01", "Database / Catalog: Snablr", "Username: app-user", "Password: Odd", "Provider / Driver: SQLOLEDB", "Server=db01;Initial Catalog=Snablr"} {
-		if !strings.Contains(m.preview.View(), want) {
+		if !strings.Contains(m.evidenceText(), want) {
 			t.Fatalf("connection details missing %q: %q", want, m.preview.View())
 		}
 	}

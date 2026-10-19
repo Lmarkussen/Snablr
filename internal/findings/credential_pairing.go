@@ -27,6 +27,12 @@ func interpretCredential(candidate credentialanalysis.Candidate) pairingDecision
 		decision.Basis = "no persisted material value"
 		return decision
 	}
+	if _, ok := deriveConnectionPair(candidate); ok {
+		decision.Status = "Confirmed pair (Finder-derived)"
+		decision.Basis = "explicit username and password fields in the same persisted connection string"
+		decision.Confirmed = true
+		return decision
+	}
 	if strings.TrimSpace(candidate.Identity) == "" {
 		decision.Status = "Password only / identity not established"
 		decision.Basis = "no persisted identity is associated with this observation"

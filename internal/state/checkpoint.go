@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,6 +19,7 @@ type Manager struct {
 	store        *Store
 	mu           sync.Mutex
 	pending      map[string]*shareProgress
+	shareStatus  map[string]string
 	stateStore   SQLiteStateStore
 	scanID       string
 	resumeReader SQLiteResumeReader
@@ -48,7 +50,7 @@ func NewManagerFromSQLiteReader(reader SQLiteResumeReader, interval time.Duratio
 	if interval <= 0 {
 		interval = defaultSaveInterval
 	}
-	return &Manager{store: newStore(), resumeReader: reader, pending: make(map[string]*shareProgress)}
+	return &Manager{store: newStore(), resumeReader: reader, pending: make(map[string]*shareProgress), shareStatus: make(map[string]string)}
 }
 
 func (m *Manager) Enabled() bool {
@@ -90,6 +92,11 @@ func (m *Manager) ShouldSkipShare(host, share string) bool {
 	if skip && m.stateStore != nil {
 		_ = m.stateStore.RecordShare(host, share, "completed", time.Now().UTC())
 	}
+	if skip {
+		m.mu.Lock()
+		m.shareStatus[ShareKey(host, share)] = "completed"
+		m.mu.Unlock()
+	}
 	return skip
 }
 
@@ -117,6 +124,9 @@ func (m *Manager) BeginShare(host, share string, fileCount int) {
 
 	if fileCount <= 0 {
 		m.store.MarkShareComplete(host, share)
+		m.mu.Lock()
+		m.shareStatus[ShareKey(host, share)] = "completed"
+		m.mu.Unlock()
 		return
 	}
 
@@ -144,6 +154,7 @@ func (m *Manager) StartShare(host, share string) {
 		return
 	}
 	m.pending[key] = &shareProgress{}
+	m.shareStatus[key] = "partial"
 	if m.stateStore != nil {
 		_ = m.stateStore.RecordShare(host, share, "partial", time.Now().UTC())
 	}
@@ -180,6 +191,7 @@ func (m *Manager) FinishShareEnumeration(host, share string) {
 	progress, ok := m.pending[key]
 	if !ok {
 		m.store.MarkShareComplete(host, share)
+		m.shareStatus[key] = "completed"
 		return
 	}
 	progress.finished = true
@@ -188,9 +200,12 @@ func (m *Manager) FinishShareEnumeration(host, share string) {
 	}
 	if !progress.failed {
 		m.store.MarkShareComplete(host, share)
+		m.shareStatus[key] = "completed"
 		if m.stateStore != nil {
 			_ = m.stateStore.RecordShare(host, share, "completed", time.Now().UTC())
 		}
+	} else {
+		m.shareStatus[key] = "failed"
 	}
 	delete(m.pending, key)
 }
@@ -209,6 +224,7 @@ func (m *Manager) AbortShare(host, share string) {
 		progress.failed = true
 		delete(m.pending, key)
 	}
+	m.shareStatus[key] = "failed"
 	if m.stateStore != nil {
 		_ = m.stateStore.RecordShare(host, share, "failed", time.Now().UTC())
 	}
@@ -252,8 +268,34 @@ func (m *Manager) RecordFileResult(host, share, path string, size int64, modifie
 
 	if !progress.failed {
 		m.store.MarkShareComplete(host, share)
+		m.shareStatus[key] = "completed"
+	} else {
+		m.shareStatus[key] = "failed"
 	}
 	delete(m.pending, key)
+}
+
+// HostComplete reports whether every share in the current filtered plan
+// completed successfully. Reused completed shares are recorded by
+// ShouldSkipShare so they count toward the current plan.
+func (m *Manager) HostComplete(host string, expectedShares int) bool {
+	if !m.Enabled() {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := HostKey(host) + "::"
+	seen, completed := 0, 0
+	for key, status := range m.shareStatus {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		seen++
+		if status == "completed" {
+			completed++
+		}
+	}
+	return seen >= expectedShares && completed >= expectedShares
 }
 
 func (m *Manager) MarkHostComplete(host string) {

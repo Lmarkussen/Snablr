@@ -918,6 +918,9 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 	if len(walkErrs) > 0 {
 		return errors.Join(walkErrs...)
 	}
+	if stateManager != nil && !stateManager.HostComplete(host, len(plannedShares)) {
+		return fmt.Errorf("%s: scan coverage incomplete; one or more shares did not complete", host)
+	}
 	return nil
 }
 

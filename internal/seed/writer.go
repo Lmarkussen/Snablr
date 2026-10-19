@@ -148,6 +148,9 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 	}
 
 	manifest := NewManifest(opts.SeedPrefix)
+	if opts.Expanded {
+		manifest.FixtureVersion = "expanded-smb-fixtures-v1"
+	}
 	stats := newSeedRunStats(len(files))
 	pool := newSeedClientPool(opts)
 	defer func() {

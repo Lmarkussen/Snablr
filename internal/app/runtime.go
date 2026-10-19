@@ -295,6 +295,9 @@ func applyDiscoverOverrides(cfg *config.Config, opts DiscoverOptions) {
 }
 
 func validateScanConfig(cfg config.Config) error {
+	if cfg.Scan.Resume && cfg.Scan.ForceRescan {
+		return fmt.Errorf("--resume and --force-rescan cannot be used together; choose resume or a fresh force-rescan")
+	}
 	authMode := normalizeLDAPAuthMode(cfg.Scan.AuthMode)
 	if authMode != discovery.AuthModePassword && authMode != discovery.AuthModeKerberos {
 		return fmt.Errorf("unsupported auth mode %q: use password or kerberos", cfg.Scan.AuthMode)

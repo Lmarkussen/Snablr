@@ -125,6 +125,22 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 				return fmt.Errorf("open authoritative SQLite resume state: %w", resumeErr)
 			}
 			sqliteResume = &resumeState
+		} else if !cfg.Scan.ForceRescan {
+			var reused bool
+			shadow, resumeState, reused, resumeErr = store.OpenLatestForReuse(sqlitePath, store.ResumeOptions{ExpectedSemantics: semantics, MaterializeFiles: false})
+			if resumeErr != nil {
+				return fmt.Errorf("open compatible SQLite reuse state: %w", resumeErr)
+			}
+			if reused {
+				sqliteResume = &resumeState
+				logger.Infof("reusing compatible SQLite scan state %s", resumeState.ScanID)
+			}
+			if !reused {
+				shadow, err = store.Open(sqlitePath, store.Options{Semantics: semantics, SnablrVersion: version.String()})
+				if err != nil {
+					return fmt.Errorf("open authoritative SQLite state: %w", err)
+				}
+			}
 		} else {
 			shadow, err = store.Open(sqlitePath, store.Options{Semantics: semantics, SnablrVersion: version.String()})
 			if err != nil {
@@ -446,7 +462,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			}
 			return err
 		}
-		if (sqliteAuthority || !incrementalEnabled) && stateManager != nil && stateManager.ShouldSkipHost(target.Host) {
+		if !cfg.Scan.ForceRescan && (sqliteAuthority || !incrementalEnabled) && stateManager != nil && stateManager.ShouldSkipHost(target.Host) {
 			logger.Infof("resume: skipping completed host %s", target.Host)
 			output.MarkTargetProcessed(sink)
 			if progress != nil {
@@ -683,7 +699,7 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		if !ok {
 			break
 		}
-		if stateManager != nil && stateManager.ShouldSkipShare(host, sharePlan.Share) {
+		if !forceRescan && stateManager != nil && stateManager.ShouldSkipShare(host, sharePlan.Share) {
 			logger.Infof("resume: skipping completed share %s/%s", host, sharePlan.Share)
 			shareScheduler.complete()
 			continue
@@ -967,6 +983,19 @@ type scanSemantics struct {
 	SchemaVersion    int
 	ScannerVersion   string
 	Profile          string
+	AuthMode         string
+	SMBAuth          string
+	Username         string
+	Domain           string
+	SMBHostname      string
+	SMBSPN           string
+	Share            []string
+	ExcludeShare     []string
+	Path             []string
+	ExcludePath      []string
+	MaxDepth         int
+	OnlyADShares     bool
+	DiscoverDFS      bool
 	MaxFileSize      int64
 	MaxReadBytes     int64
 	Archives         config.ArchiveConfig
@@ -1014,6 +1043,19 @@ func scanSemanticsFingerprintWithVersion(cfg config.Config, manager *rules.Manag
 		SchemaVersion:    1,
 		ScannerVersion:   version,
 		Profile:          strings.TrimSpace(cfg.Scan.Profile),
+		AuthMode:         strings.ToLower(strings.TrimSpace(cfg.Scan.AuthMode)),
+		SMBAuth:          strings.ToLower(strings.TrimSpace(cfg.Scan.SMBAuth)),
+		Username:         strings.ToLower(strings.TrimSpace(cfg.Scan.Username)),
+		Domain:           strings.ToLower(strings.TrimSpace(cfg.Scan.Domain)),
+		SMBHostname:      strings.ToLower(strings.TrimSpace(cfg.Scan.SMBHostname)),
+		SMBSPN:           strings.ToLower(strings.TrimSpace(cfg.Scan.SMBSPN)),
+		Share:            sortedScanScope(cfg.Scan.Share),
+		ExcludeShare:     sortedScanScope(cfg.Scan.ExcludeShare),
+		Path:             sortedScanScope(cfg.Scan.Path),
+		ExcludePath:      sortedScanScope(cfg.Scan.ExcludePath),
+		MaxDepth:         cfg.Scan.MaxDepth,
+		OnlyADShares:     cfg.Scan.OnlyADShares,
+		DiscoverDFS:      cfg.Scan.DiscoverDFS,
 		MaxFileSize:      cfg.Scan.MaxFileSize,
 		MaxReadBytes:     scanReadLimit(cfg),
 		Archives:         cfg.Archives,
@@ -1021,6 +1063,18 @@ func scanSemanticsFingerprintWithVersion(cfg config.Config, manager *rules.Manag
 		SQLite:           cfg.SQLite,
 		RulesFingerprint: ruleFingerprint,
 	})
+}
+
+func sortedScanScope(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(strings.ReplaceAll(value, `\`, "/")))
+		if value != "" {
+			result = append(result, value)
+		}
+	}
+	sort.Strings(result)
+	return result
 }
 
 func sqliteStatePath(cfg config.Config) string {

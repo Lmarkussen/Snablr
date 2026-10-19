@@ -77,6 +77,47 @@ func TestOpenForResumeRehydratesLogicalState(t *testing.T) {
 	}
 }
 
+func TestOpenLatestForReuseReopensCompatibleScan(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reuse.sqlite")
+	shadow, err := Open(path, Options{ScanID: "completed-scan", Semantics: "semantics-a", FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC()
+	if err := shadow.RecordTarget("synthetic-host", "completed", at); err != nil {
+		t.Fatal(err)
+	}
+	if err := shadow.SetScanStatus(StatusCompleted, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := shadow.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reused, state, ok, err := OpenLatestForReuse(path, ResumeOptions{ExpectedSemantics: "semantics-a", MaterializeFiles: false, FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || state.ScanID != "completed-scan" || state.Status != string(StatusCompleted) {
+		t.Fatalf("unexpected reuse result: ok=%t state=%+v", ok, state)
+	}
+	complete, err := reused.ResumeTargetComplete("synthetic-host")
+	if err != nil || !complete {
+		t.Fatalf("reused target state = %t, err=%v", complete, err)
+	}
+	if err := reused.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, ok, err = OpenLatestForReuse(path, ResumeOptions{ExpectedSemantics: "semantics-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("incompatible scan was reused")
+	}
+}
+
 func TestOpenForResumeRejectsChangedSemanticsAndUnsupportedSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "scan.sqlite")
 	shadow, err := Open(path, Options{ScanID: "synthetic-scan", Semantics: "semantics-a", FlushEvery: time.Hour})

@@ -55,6 +55,23 @@ func TestIncrementalSemanticsFingerprintChangesForInspectionSettings(t *testing.
 	}
 }
 
+func TestIncrementalSemanticsFingerprintIncludesScopeAndAuth(t *testing.T) {
+	t.Parallel()
+	base := config.Default()
+	first := scanSemanticsFingerprint(base, nil)
+
+	base.Scan.Share = []string{"SyntheticShare"}
+	if first == scanSemanticsFingerprint(base, nil) {
+		t.Fatal("share scope change did not invalidate incremental semantics")
+	}
+
+	base = config.Default()
+	base.Scan.Username = "synthetic-user"
+	if first == scanSemanticsFingerprint(base, nil) {
+		t.Fatal("credential identity change did not invalidate incremental semantics")
+	}
+}
+
 func TestCredentialContextIDsExcludeSecretsAndSeparateAuthModes(t *testing.T) {
 	t.Parallel()
 	password := state.CredentialContextID("password", "user", "domain")

@@ -216,6 +216,16 @@ func TestValidateScanConfigRejectsAmbiguousNTHashConfiguration(t *testing.T) {
 	}
 }
 
+func TestValidateScanConfigRejectsResumeAndForceRescanTogether(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Scan.Resume = true
+	cfg.Scan.ForceRescan = true
+	if err := validateScanConfig(cfg); err == nil || !strings.Contains(err.Error(), "cannot be used together") {
+		t.Fatalf("expected resume/force-rescan conflict, got %v", err)
+	}
+}
+
 func TestValidateScanConfigRejectsNTHashInPasswordMode(t *testing.T) {
 	t.Parallel()
 	cfg := config.Default()

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -20,6 +21,54 @@ type ResumeOptions struct {
 	QueueSize         int
 	BatchSize         int
 	FlushEvery        time.Duration
+}
+
+// OpenLatestForReuse reopens the newest scan only when its semantics match
+// the requested scan. It is the default incremental path; an empty database
+// or incompatible scan leaves the caller free to start a new scan.
+func OpenLatestForReuse(path string, options ResumeOptions) (*SQLiteStore, ResumeState, bool, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, ResumeState{}, false, fmt.Errorf("sqlite reuse state path cannot be empty")
+	}
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ResumeState{}, false, nil
+		}
+		return nil, ResumeState{}, false, err
+	}
+
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		return nil, ResumeState{}, false, fmt.Errorf("open sqlite reuse state: %w", err)
+	}
+	err = validateExistingSchema(db)
+	if err != nil {
+		_ = db.Close()
+		return nil, ResumeState{}, false, err
+	}
+
+	var scanID, semantics string
+	err = db.QueryRow(`SELECT scan_id,semantics FROM scans ORDER BY started_at DESC LIMIT 1`).Scan(&scanID, &semantics)
+	if errors.Is(err, sql.ErrNoRows) {
+		_ = db.Close()
+		return nil, ResumeState{}, false, nil
+	}
+	if err != nil {
+		_ = db.Close()
+		return nil, ResumeState{}, false, fmt.Errorf("find latest reusable SQLite scan: %w", err)
+	}
+	_ = db.Close()
+	if expected := strings.TrimSpace(options.ExpectedSemantics); expected != "" && semantics != expected {
+		return nil, ResumeState{}, false, nil
+	}
+
+	options.ScanID = scanID
+	stateStore, state, err := OpenForResume(path, options)
+	if err != nil {
+		return nil, ResumeState{}, false, err
+	}
+	return stateStore, state, true, nil
 }
 
 type TargetState struct {

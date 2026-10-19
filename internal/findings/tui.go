@@ -20,7 +20,6 @@ const (
 	screenCategories screen = iota
 	screenSubcategories
 	screenDiscoveries
-	screenEvidence
 )
 
 type discovery struct {
@@ -419,11 +418,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.open()
 		case "left", "esc":
 			m.back()
-		case "e", "E":
-			if m.screen == screenDiscoveries {
-				m.screen = screenEvidence
-				m.refresh()
-			}
 		}
 	}
 	return m, nil
@@ -446,14 +440,12 @@ func (m *model) move(delta int) {
 		m.selectedSub = clamp(m.selectedSub+delta, 0, len(m.subs)-1)
 	case screenDiscoveries:
 		m.selectedDisc = clamp(m.selectedDisc+delta, 0, len(m.discoveries)-1)
-	case screenEvidence:
-		m.preview.LineDown(delta)
 	}
 	m.refresh()
 }
 
 func (m *model) page(direction int) {
-	if m.focus == 1 || m.screen == screenEvidence {
+	if m.focus == 1 {
 		if direction < 0 {
 			m.preview.PageUp()
 		} else {
@@ -483,8 +475,6 @@ func (m *model) open() {
 		m.discoveries = subcategoryDiscoveries(m.categories[m.selected], m.subs[m.selectedSub])
 		m.selectedDisc = 0
 		m.screen = screenDiscoveries
-	case screenDiscoveries:
-		m.screen = screenEvidence
 	}
 	m.focus = 0
 	m.refresh()
@@ -492,8 +482,6 @@ func (m *model) open() {
 
 func (m *model) back() {
 	switch m.screen {
-	case screenEvidence:
-		m.screen = screenDiscoveries
 	case screenDiscoveries:
 		m.screen = screenSubcategories
 	case screenSubcategories:
@@ -534,10 +522,6 @@ func (m *model) refresh() {
 		m.preview.SetContent("Select a scan and press Enter.")
 		return
 	}
-	if m.screen == screenEvidence {
-		m.preview.SetContent(m.evidenceText())
-		return
-	}
 	switch m.screen {
 	case screenCategories:
 		m.list.SetContent(categoryList(m.categories, m.selected))
@@ -547,7 +531,8 @@ func (m *model) refresh() {
 		m.preview.SetContent(subcategoryPreview(m.categories[m.selected], m.subs, m.selectedSub))
 	case screenDiscoveries:
 		m.list.SetContent(discoveryList(m.discoveries, m.selectedDisc))
-		m.preview.SetContent(discoveryPreview(m.discoveries, m.selectedDisc))
+		m.preview.GotoTop()
+		m.preview.SetContent(m.evidenceText())
 	}
 }
 
@@ -625,9 +610,6 @@ func (m *model) resize() {
 	// rows. Only the remaining rows belong to the preview viewport.
 	panelRows := listRows + 3
 	remaining := m.height - 3 - panelRows - 3
-	if m.screen == screenEvidence {
-		remaining = m.height - 3 - 3
-	}
 	// Keep the overview compact on tall terminals; unused space below the
 	// footer is preferable to stretching a small preview into a blank panel.
 	m.previewHeight = min(max(0, remaining), 18)
@@ -647,9 +629,6 @@ func (m *model) View() string {
 	crumb := breadcrumb(m.screen, m.categories, m.selected, m.subs, m.selectedSub, m.discoveries, m.selectedDisc)
 	if m.selectingScan {
 		return m.frame(header, "Choose a scan", "Scans", m.list.View(), "", m.preview.View())
-	}
-	if m.screen == screenEvidence {
-		return m.frame(header, crumb, "", "", "Evidence  [FOCUS]", m.preview.View())
 	}
 	if m.screen == screenCategories {
 		return m.frame(header, crumb, "Categories", m.list.View(), "Preview", m.preview.View())
@@ -674,7 +653,7 @@ func (m *model) frame(header, crumb, leftTitle, leftContent, rightTitle, rightCo
 		rightHeading = section.Render(rightTitle)
 	}
 	preview := style.Render(rightHeading + "\n" + rightContent)
-	footer := "↑/↓ j/k move  Enter/→ open  ←/Esc back  E evidence  PgUp/PgDn scroll  Q quit"
+	footer := "↑/↓ j/k move  Enter/→ open  ←/Esc back  PgUp/PgDn scroll  Q quit"
 	if m.screen == screenCategories || m.selectingScan {
 		footer = "↑/↓ j/k move  Enter/→ select  Q quit"
 	}
@@ -765,14 +744,6 @@ func subcategoryPreview(item category, subs []string, selected int) string {
 	}
 	return fmt.Sprintf("%s\n\n%d logical discoveries\n\nSelect a subcategory and press Enter to inspect actual material.", subs[selected], len(subcategoryDiscoveries(item, subs[selected])))
 }
-func discoveryPreview(items []discovery, selected int) string {
-	if len(items) == 0 {
-		return "No discoveries are available in this subcategory."
-	}
-	d := items[selected]
-	return fmt.Sprintf("%s\n\nMaterial: %s\nIdentity: %s\nVerification: %s\nConfidence: %s\nSource observations: %d\nSource context: %s\nSource: %s\n\nPress E for full evidence.", d.Title, firstNonEmpty(d.MaterialType, "unknown"), firstNonEmpty(d.Identity, "not persisted"), statusStyle(d.Verification).Render(firstNonEmpty(d.Verification, "unknown")), firstNonEmpty(d.Confidence, "unknown"), len(d.Sources), firstNonEmpty(d.SourceContext, "not classified"), firstNonEmpty(d.Path, "not persisted"))
-}
-
 func statusStyle(value string) lipgloss.Style {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "confirmed", "actionable":
@@ -793,9 +764,6 @@ func breadcrumb(level screen, cats []category, cat int, subs []string, sub int, 
 	}
 	if level >= screenDiscoveries && len(discs) > 0 {
 		result += " > " + discs[disc].Title
-	}
-	if level == screenEvidence {
-		result += " > EVIDENCE"
 	}
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render(result)
 }

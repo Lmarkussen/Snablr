@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
 	"snablr/internal/credentialanalysis"
 	"snablr/internal/scanner"
 )
@@ -28,13 +27,28 @@ func TestCategoryFirstNavigationAndEvidence(t *testing.T) {
 	if m.screen != screenDiscoveries || len(m.discoveries) != 1 {
 		t.Fatal("subcategory did not open actual discoveries")
 	}
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
-	if m.screen != screenEvidence || !strings.Contains(m.preview.View(), "SyntheticPassword!") {
-		t.Fatalf("E did not open full persisted evidence: screen=%d content=%q", m.screen, m.preview.View())
+	if m.screen != screenDiscoveries || !strings.Contains(m.preview.View(), "SyntheticPassword!") {
+		t.Fatalf("discovery did not show full persisted evidence: screen=%d content=%q", m.screen, m.preview.View())
 	}
 	m.back()
-	if m.screen != screenDiscoveries || m.selectedDisc != 0 {
-		t.Fatal("back navigation did not preserve discovery selection")
+	if m.screen != screenSubcategories || m.selectedSub != 0 {
+		t.Fatal("back navigation did not preserve subcategory selection")
+	}
+}
+
+func TestDiscoverySelectionUpdatesFullDetailsWithoutEvidenceScreen(t *testing.T) {
+	item := category{Name: "Credentials", Discoveries: []discovery{
+		{Title: "first", Subcategory: "Passwords", MaterialType: "password", Value: "first-secret", Verification: "confirmed"},
+		{Title: "second", Subcategory: "Passwords", MaterialType: "password", Value: "second-secret", Verification: "confirmed"},
+	}}
+	m := &model{scans: []Scan{{ID: "scan"}}, categories: []category{item}, screen: screenDiscoveries, discoveries: item.Discoveries, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(100, 24)
+	if !strings.Contains(m.preview.View(), "first-secret") || strings.Contains(m.View(), "E evidence") {
+		t.Fatalf("initial discovery details or footer incorrect: %q", m.View())
+	}
+	m.move(1)
+	if !strings.Contains(m.preview.View(), "second-secret") || strings.Contains(m.preview.View(), "first-secret") {
+		t.Fatalf("selection did not replace full details: %q", m.preview.View())
 	}
 }
 

@@ -68,7 +68,7 @@ var secretCredentialTypes = map[string]struct{}{
 // underlying credential type remains stable for persistence and exports.
 func IsHashCredentialType(credentialType string) bool {
 	switch strings.ToLower(strings.TrimSpace(credentialType)) {
-	case "nt_hash", "netntlmv1", "netntlmv2":
+	case "hash", "nt_hash", "netntlmv1", "netntlmv2":
 		return true
 	default:
 		return false
@@ -89,6 +89,8 @@ func CredentialTypeDisplayName(credentialType string) string {
 	switch strings.ToLower(strings.TrimSpace(credentialType)) {
 	case "nt_hash":
 		return "NT hash"
+	case "hash":
+		return "Hash"
 	case "netntlmv1":
 		return "NetNTLMv1"
 	case "netntlmv2":

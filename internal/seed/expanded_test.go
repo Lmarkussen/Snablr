@@ -31,6 +31,7 @@ func TestGenerateExpandedCorpusIsDeterministicAndBounded(t *testing.T) {
 		"Expanded/WideTree/Folder-0001",
 		"Expanded/Evidence-Fixtures/PowerShell",
 		"Expanded/Evidence-Fixtures/Hashes",
+		"Expanded/Evidence-Fixtures/SCCM",
 	}
 	for _, want := range wantPaths {
 		found := false

@@ -524,6 +524,7 @@ func walkXMLHarvest(node *xmlHarvestNode, add func(Candidate)) {
 	for _, child := range node.children {
 		walkXMLHarvest(child, add)
 	}
+	harvestSCCMXMLScope(node, add)
 	harvestGenericXMLNode(node, add)
 	if isSecretElement(node.name) {
 		harvestXMLSecretElement(node, add)
@@ -769,6 +770,7 @@ func harvestLines(text string, add func(Candidate)) {
 		if section == "" {
 			basis = "structured configuration record"
 			harvestNTHashFields(fields, add, basis)
+			harvestSCCMFields(fields, add, "structured SCCM configuration record")
 		}
 		if section != "" {
 			harvestFields(fields, add, basis)
@@ -779,6 +781,9 @@ func harvestLines(text string, add func(Candidate)) {
 	// distant password. Environment-style prefixes provide their own scope.
 	prefixes := map[string]map[string]string{}
 	for key, value := range sections[""] {
+		if _, sccmField := sccmPasswordAccounts[key]; sccmField {
+			continue
+		}
 		if isSecretKey(key) {
 			candidate := Candidate{Verification: Review, CredentialType: credentialType(key), Value: value, ReviewReasons: []string{"credential-like value requires semantic review"}}
 			if looksReferenceOrTemplate(value) {
@@ -833,6 +838,7 @@ func harvestFieldsMode(fields map[string]string, add func(Candidate), basis stri
 	if len(fields) == 0 {
 		return
 	}
+	harvestSCCMFields(fields, add, basis)
 	identity := fieldIdentity(fields)
 	domain := fieldDomain(fields)
 	harvestNTHashFields(fields, add, basis)
@@ -849,6 +855,9 @@ func harvestFieldsMode(fields map[string]string, add func(Candidate), basis stri
 	strongAPI := (fields["access_key_id"] != "" || fields["access_key"] != "") && (fields["secret_access_key"] != "" || fields["secret_key"] != "")
 	strongClient := fields["client_id"] != "" && fields["client_secret"] != ""
 	for key, value := range fields {
+		if _, sccmField := sccmPasswordAccounts[key]; sccmField {
+			continue
+		}
 		if !isSecretKey(key) || value == "" {
 			continue
 		}

@@ -43,6 +43,27 @@ func generateExpanded(opts GenerateOptions) ([]SeedFile, error) {
 			return files, nil
 		}
 	}
+	for _, fixture := range expandedContainerFixtures("Evidence-Fixtures") {
+		if len(files) >= opts.MaxFiles {
+			return files, nil
+		}
+		relative := joinSeedPath(prefix, fixture.directory)
+		full := joinSeedPath(relative, fixture.filename)
+		if _, exists := seen[full]; exists {
+			continue
+		}
+		seen[full] = struct{}{}
+		expectedPath := full
+		if fixture.expectedMember != "" {
+			expectedPath += "!" + fixture.expectedMember
+		}
+		files = append(files, SeedFile{
+			Category: fixture.category, Format: fixture.format, RelativePath: relative,
+			Filename: fixture.filename, Content: fixture.binary, IntendedAs: fixture.category,
+			ExpectedPath:     expectedPath,
+			ExpectedSeverity: expandedSeverity(fixture.category),
+		})
+	}
 	for _, fixture := range expandedSkipFixtures(prefix) {
 		if !add(fixture.category, fixture.directory, fixture.filename, fixture.format, fixture.content) {
 			return files, nil
@@ -95,7 +116,7 @@ type expandedFixture struct {
 
 func expandedEvidenceFixtures(_ string) []expandedFixture {
 	base := "Evidence-Fixtures"
-	return []expandedFixture{
+	fixtures := []expandedFixture{
 		{"evidence-powershell", joinSeedPath(base, "PowerShell"), "credential-assignment.ps1", "ps1", "$username = 'synthetic-user'\n$password = 'Synthetic-Expanded-Password-001!'\n"},
 		{"evidence-shell", joinSeedPath(base, "Shell"), "environment-export.sh", "sh", "export APP_USER=synthetic-user\nexport APP_PASSWORD='Synthetic-Expanded-Password-002!'\n"},
 		{"evidence-customsettings", joinSeedPath(base, "Windows"), "CustomSettings.ini", "ini", "[UserData]\nAdminPassword=Synthetic-Expanded-Password-003!\n"},
@@ -127,6 +148,39 @@ func expandedEvidenceFixtures(_ string) []expandedFixture {
 		{"negative-sccm", joinSeedPath(base, "SCCM"), "negative-task-sequence.ini", "ini", "OSDJoinAccount=SYNTHETIC\\reference-only\nOSDJoinPassword=<PASSWORD>\nOSDLocalAdminPassword=********\nEncryptedNetworkAccessAccount=BASE64-ENCODED-SYNTHETIC-BLOB\n; OSDJoinPassword=Synthetic-Comment-482!\n"},
 		{"negative-hash", joinSeedPath(base, "Negative"), "hash-lookalikes.txt", "txt", "checksum_md5=00112233445566778899aabbccddeeff\nsha256=00112233445566778899aabbccddeeff\nguid=00112233445566778899aabbccddeeff\nrandom=00112233445566778899aabbccddeeff\n"},
 		{category: "evidence-manifest", directory: base, filename: "fixture-version.txt", format: "txt", content: "expanded-smb-fixtures-v1\n"},
+	}
+	return fixtures
+}
+
+type expandedContainerFixture struct {
+	category, directory, filename, format, expectedMember string
+	binary                                                []byte
+}
+
+func expandedContainerFixtures(base string) []expandedContainerFixture {
+	ctx := renderContext{Token: "P6E_EXPANDED", Label: "expanded"}
+	return []expandedContainerFixture{
+		{
+			category: "evidence-archive", directory: joinSeedPath(base, "Archives"), filename: "valid-credentials.zip", format: "zip",
+			binary:         buildArchiveBytes(ctx, []archiveMemberTemplate{{Path: "configs/credentials.ini", Content: []byte("[synthetic]\nusername=archive-user\npassword=Synthetic-Archive-482!\n")}, {Path: "docs/readme.txt", Content: []byte("Benign synthetic archive member.\n")}}),
+			expectedMember: "configs/credentials.ini",
+		},
+		{
+			category: "evidence-archive", directory: joinSeedPath(base, "Archives"), filename: "valid-benign.zip", format: "zip",
+			binary:         buildArchiveBytes(ctx, []archiveMemberTemplate{{Path: "docs/readme.txt", Content: []byte("Benign synthetic archive with no credential material.\n")}}),
+			expectedMember: "docs/readme.txt",
+		},
+		{
+			category: "evidence-office", directory: joinSeedPath(base, "Office"), filename: "valid-credentials.docx", format: "docx",
+			binary:         buildArchiveBytes(ctx, append(officeBaseMembers(".docx"), archiveMemberTemplate{Path: "word/document.xml", Content: officeDocumentXML("Synthetic credential document", "username=office-user", "password=Synthetic-Office-482!")})),
+			expectedMember: "word/document.xml",
+		},
+		{
+			category: "evidence-office", directory: joinSeedPath(base, "Office"), filename: "valid-credentials.xlsx", format: "xlsx",
+			binary:         buildArchiveBytes(ctx, append(officeBaseMembers(".xlsx"), archiveMemberTemplate{Path: "xl/sharedStrings.xml", Content: officeSharedStringsXML("username=spreadsheet-user", "password=Synthetic-Spreadsheet-482!")})),
+			expectedMember: "xl/sharedStrings.xml",
+		},
+		{category: "negative-archive", directory: joinSeedPath(base, "Negative"), filename: "malformed.zip", format: "zip", binary: []byte("not a valid zip container\n")},
 	}
 }
 

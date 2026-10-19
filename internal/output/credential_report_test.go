@@ -156,7 +156,7 @@ func TestCredentialReportRendersProvenanceAndSuppressesPlaceholders(t *testing.T
 	}
 
 	// Duplicate locations aggregate into one row with every location retained.
-	if got := strings.Count(html, "svc_duplicate"); got != 1 {
+	if got := strings.Count(sectionByID(html, "credential-analysis"), "svc_duplicate"); got != 1 {
 		t.Fatalf("duplicate credential rendered %d rows, want 1:\n%s", got, html)
 	}
 	for _, location := range []string{

@@ -2054,7 +2054,7 @@
     <section id="credential-source-correlations">
       <div class="section-head">
         <h2>Cross-File Credential Relationships</h2>
-        <span class="section-note">Bounded relationships based on the same explicit identity and credential type across distinct source files. Values are intentionally not duplicated into this supporting view.</span>
+        <span class="section-note">Bounded relationships based on the same explicit identity and credential type across distinct source files. These relationships explain source overlap; they do not prove that a credential is valid.</span>
       </div>
       <details class="table-card group" open>
         <summary class="group-summary">
@@ -2067,15 +2067,13 @@
           <thead><tr><th>Identity</th><th>Type</th><th>Confidence</th><th>Rationale</th><th>Sources</th></tr></thead>
           <tbody>
           {{- range .CredentialAnalysis.Correlations }}
-          {{- if eq .Type "same_identity_type" }}
-            <tr class="correlation-row supporting-correlation-row">
+            <tr class="correlation-row cross-file-correlation-row">
               <td>{{ .Identity }}{{ if .Domain }} ({{ .Domain }}){{ end }}</td>
-              <td>{{ .CredentialType }}</td>
+              <td>{{ .CredentialType }}<br><span class="muted">{{ if eq .Type "same_identity_value" }}same material{{ else }}different material{{ end }}</span></td>
               <td>{{ .Confidence }}</td>
               <td>{{ .ConfidenceRationale }}</td>
               <td>{{ .ObservationCount }} distinct observations<ul class="duplicate-location-list">{{ range .Sources }}<li>{{ .Host }} / {{ .Share }} / {{ .Path }}{{ if .Container }}!{{ .Container }}{{ end }}</li>{{ end }}</ul></td>
             </tr>
-          {{- end }}
           {{- end }}
           </tbody>
         </table>

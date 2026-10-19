@@ -1177,7 +1177,7 @@ func TestTUIMainHeaderAndFooterKeepOnlyUsefulLiveControls(t *testing.T) {
 	if strings.Contains(footer, "↑/↓ or j/k select") {
 		t.Fatalf("duplicate navigation help still rendered: %q", footer)
 	}
-	for _, shortcut := range []string{"Ctrl-F search", "Ctrl-D bookmark", "Alt-D bookmarks", "Alt-K skip folder", "Alt-S skip share", "Alt-L defer", "Alt-Q queue", "Ctrl-C stop"} {
+	for _, shortcut := range []string{"Ctrl-F search + creds/hashes", "Ctrl-D bookmark", "Alt-D bookmarks", "Alt-K skip folder", "Alt-S skip share", "Alt-L defer", "Alt-Q queue", "Ctrl-C stop"} {
 		if !strings.Contains(footer, shortcut) {
 			t.Fatalf("footer missing %q: %q", shortcut, footer)
 		}

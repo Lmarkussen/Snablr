@@ -116,6 +116,10 @@ func expandedEvidenceFixtures(_ string) []expandedFixture {
 		{"negative-masked", joinSeedPath(base, "Negative"), "masked.txt", "txt", "password=********\nsecret=REDACTED\n"},
 		{"evidence-browser", joinSeedPath(base, "Browser"), "Login Data", "db", "Synthetic browser credential-store fixture; no real credentials.\n"},
 		{"evidence-windows", joinSeedPath(base, "Windows"), "SYSTEM", "hive", "Synthetic Windows artifact fixture; not copied from a host.\n"},
+		{"evidence-nt-hash", joinSeedPath(base, "Hashes"), "synthetic-pwdump.txt", "txt", "synthetic-user:1107:aad3b435b51404eeaad3b435b51404ee:00112233445566778899aabbccddeeff\nSYNTHETIC\\svc-backup:1108:aad3b435b51404eeaad3b435b51404ee:ffeeddccbbaa99887766554433221100\n"},
+		{"evidence-nt-hash", joinSeedPath(base, "Hashes"), "structured-nt-hashes.json", "json", "{\"username\":\"synthetic-json\",\"rid\":1201,\"nt_hash\":\"11223344556677889900aabbccddeeff\"}\n"},
+		{"evidence-nt-hash", joinSeedPath(base, "Hashes"), "structured-nt-hashes.yaml", "yaml", "username: synthetic-yaml\nntlm_hash: 223344556677889900aabbccddeeff11\n"},
+		{"negative-hash", joinSeedPath(base, "Negative"), "hash-lookalikes.txt", "txt", "checksum_md5=00112233445566778899aabbccddeeff\nsha256=00112233445566778899aabbccddeeff\nguid=00112233445566778899aabbccddeeff\nrandom=00112233445566778899aabbccddeeff\n"},
 		{category: "evidence-manifest", directory: base, filename: "fixture-version.txt", format: "txt", content: "expanded-smb-fixtures-v1\n"},
 	}
 }

@@ -30,6 +30,7 @@ func TestGenerateExpandedCorpusIsDeterministicAndBounded(t *testing.T) {
 		"Expanded/DeepTree/Branch-01/Level-01",
 		"Expanded/WideTree/Folder-0001",
 		"Expanded/Evidence-Fixtures/PowerShell",
+		"Expanded/Evidence-Fixtures/Hashes",
 	}
 	for _, want := range wantPaths {
 		found := false

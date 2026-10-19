@@ -101,7 +101,12 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 	base := func(candidate Candidate) Candidate {
 		candidate.Source, candidate.Host, candidate.Share = input.Source, input.Host, input.Share
 		candidate.Path, candidate.Container = input.Path, input.Container
-		candidate.Evidence = []Evidence{{Source: input.Source, Path: input.Path}}
+		if len(candidate.Evidence) == 1 && candidate.Evidence[0].Source == "" && candidate.Evidence[0].Path == "" {
+			candidate.Evidence[0].Source = input.Source
+			candidate.Evidence[0].Path = input.Path
+		} else {
+			candidate.Evidence = mergeEvidence(candidate.Evidence, []Evidence{{Source: input.Source, Path: input.Path}})
+		}
 		return candidate
 	}
 	var out []Candidate
@@ -727,9 +732,12 @@ func harvestLines(text string, add func(Candidate)) {
 	text = NormalizeCredentialExpressions(text)
 	sections := map[string]map[string]string{"": {}}
 	section := ""
-	for _, line := range strings.Split(text, "\n") {
+	for index, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if harvestCanonicalNTHashRecord(line, index+1, add) {
 			continue
 		}
 		line = normalizeAssignmentLine(line)
@@ -754,8 +762,13 @@ func harvestLines(text string, add func(Candidate)) {
 		}
 	}
 	for section, fields := range sections {
+		basis := "structured configuration section"
+		if section == "" {
+			basis = "structured configuration record"
+			harvestNTHashFields(fields, add, basis)
+		}
 		if section != "" {
-			harvestFields(fields, add, "structured configuration section")
+			harvestFields(fields, add, basis)
 		}
 	}
 	// Top-level assignments are deliberately independent. This prevents a
@@ -819,6 +832,7 @@ func harvestFieldsMode(fields map[string]string, add func(Candidate), basis stri
 	}
 	identity := fieldIdentity(fields)
 	domain := fieldDomain(fields)
+	harvestNTHashFields(fields, add, basis)
 	// A prose/label fragment or SQL expression cannot be an account identity
 	// either; drop it so a real password value is not confirmed against a bogus
 	// identity.
@@ -855,6 +869,108 @@ func harvestFieldsMode(fields map[string]string, add func(Candidate), basis stri
 		}
 		add(candidate)
 	}
+}
+
+var ntHashFieldNames = map[string]struct{}{
+	"nt_hash":   {},
+	"nthash":    {},
+	"ntlm_hash": {},
+}
+
+var lmDisabledSentinels = map[string]struct{}{
+	"aad3b435b51404eeaad3b435b51404ee": {},
+}
+
+func harvestCanonicalNTHashRecord(line string, lineNumber int, add func(Candidate)) bool {
+	fields := strings.Split(line, ":")
+	if len(fields) != 4 {
+		return false
+	}
+	rid, err := strconv.ParseUint(strings.TrimSpace(fields[1]), 10, 32)
+	if err != nil {
+		return true
+	}
+	identity := strings.TrimSpace(fields[0])
+	lmHash := strings.ToLower(strings.TrimSpace(fields[2]))
+	ntHash := strings.ToLower(strings.TrimSpace(fields[3]))
+	if !meaningfulHashIdentity(identity) || !validHexHash(lmHash) || !validHexHash(ntHash) {
+		return true
+	}
+	if _, ok := lmDisabledSentinels[lmHash]; !ok {
+		return true
+	}
+	account, domain := splitQualifiedIdentity(identity)
+	candidate := Candidate{
+		Verification:    Confirmed,
+		CredentialType:  "nt_hash",
+		Identity:        account,
+		Domain:          domain,
+		Value:           ntHash,
+		RID:             uint32(rid),
+		ValidationBasis: "structured_nt_hash_record",
+		Evidence:        []Evidence{{Location: "line " + strconv.Itoa(lineNumber)}},
+	}
+	add(candidate)
+	return true
+}
+
+func harvestNTHashFields(fields map[string]string, add func(Candidate), basis string) {
+	if len(fields) == 0 {
+		return
+	}
+	identity := fieldIdentity(fields)
+	if !meaningfulHashIdentity(identity) {
+		return
+	}
+	for key, value := range fields {
+		if _, ok := ntHashFieldNames[normalizeKey(key)]; !ok || !validHexHash(value) {
+			continue
+		}
+		account, domain := splitQualifiedIdentity(identity)
+		candidate := Candidate{
+			Verification:    Confirmed,
+			CredentialType:  "nt_hash",
+			Identity:        account,
+			Domain:          domain,
+			Value:           strings.ToLower(strings.TrimSpace(value)),
+			ValidationBasis: basis,
+		}
+		if ridText := strings.TrimSpace(fields["rid"]); ridText != "" {
+			if rid, err := strconv.ParseUint(ridText, 10, 32); err == nil {
+				candidate.RID = uint32(rid)
+			}
+		}
+		add(candidate)
+	}
+}
+
+func meaningfulHashIdentity(identity string) bool {
+	identity = strings.TrimSpace(identity)
+	return identity != "" && !IsPlaceholderIdentity(identity) && !strings.ContainsAny(identity, "\r\n\t")
+}
+
+func validHexHash(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != 32 {
+		return false
+	}
+	for _, r := range value {
+		if !isHexRune(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func splitQualifiedIdentity(identity string) (string, string) {
+	identity = strings.TrimSpace(identity)
+	if index := strings.LastIndex(identity, `\`); index > 0 && index < len(identity)-1 {
+		return identity[index+1:], identity[:index]
+	}
+	if index := strings.LastIndex(identity, "@"); index > 0 && index < len(identity)-1 {
+		return identity[:index], identity[index+1:]
+	}
+	return identity, ""
 }
 
 func addPrivateKeyCandidates(text string, add func(Candidate)) {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -127,13 +128,17 @@ func runFind(args []string) error {
 	fs.SetOutput(os.Stdout)
 	fs.Usage = func() { printFindUsage() }
 	dbPath := fs.String("db", "", "Path to an existing Snablr SQLite database")
+	dbName := fs.String("dbname", "", "Alias for --db")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
 		return err
 	}
-	path := strings.TrimSpace(*dbPath)
+	path, err := reconcileFinderDatabasePaths(*dbPath, *dbName)
+	if err != nil {
+		return err
+	}
 	if path == "" {
 		path = app.DefaultSQLiteStatePath()
 	}
@@ -151,6 +156,29 @@ func runFind(args []string) error {
 		return nil
 	}
 	return findings.Run(context.Background(), provider, scans, os.Stdout)
+}
+
+func reconcileFinderDatabasePaths(dbPath, dbName string) (string, error) {
+	dbPath = strings.TrimSpace(dbPath)
+	dbName = strings.TrimSpace(dbName)
+	if dbPath == "" {
+		return dbName, nil
+	}
+	if dbName == "" {
+		return dbPath, nil
+	}
+	left, err := filepath.Abs(dbPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve --db: %w", err)
+	}
+	right, err := filepath.Abs(dbName)
+	if err != nil {
+		return "", fmt.Errorf("resolve --dbname: %w", err)
+	}
+	if filepath.Clean(left) != filepath.Clean(right) {
+		return "", fmt.Errorf("--db and --dbname must name the same SQLite database")
+	}
+	return dbPath, nil
 }
 
 func runScan(args []string) error {
@@ -204,6 +232,8 @@ func runScan(args []string) error {
 	maxScanTime := fs.String("max-scan-time", "", "Maximum total scan time, for example 30m or 2h")
 	resume := fs.Bool("resume", false, "Resume from the authoritative Snablr scan database")
 	sqliteStateFile := fs.String("sqlite-state-file", "", "Optional SQLite state file override (default: snablr.db in the output workspace)")
+	dbName := fs.String("dbname", "", "SQLite database path for this scan; creates a missing database")
+	flushDB := fs.String("flushdb", "", "Reset an existing validated Snablr SQLite database before a fresh scan")
 	forceRescan := fs.Bool("force-rescan", false, "Ignore reusable completed objects in incremental state")
 	listShares := fs.Bool("list-shares", false, "List readable shares accessible to the authenticated user and exit")
 	skipReachability := fs.Bool("skip-reachability-check", false, "Skip TCP 445 reachability testing before scanning")
@@ -259,6 +289,19 @@ func runScan(args []string) error {
 		printScanAdvancedUsage(fs)
 		return nil
 	}
+	if fs.Lookup("dbname") != nil {
+		seenDBName, seenFlushDB := false, false
+		fs.Visit(func(flag *flag.Flag) {
+			seenDBName = seenDBName || flag.Name == "dbname"
+			seenFlushDB = seenFlushDB || flag.Name == "flushdb"
+		})
+		if seenDBName && strings.TrimSpace(*dbName) == "" {
+			return fmt.Errorf("--dbname requires a non-empty SQLite database path")
+		}
+		if seenFlushDB && strings.TrimSpace(*flushDB) == "" {
+			return fmt.Errorf("--flushdb requires an explicit SQLite database path")
+		}
+	}
 	htmlOutSet := false
 	fs.Visit(func(flag *flag.Flag) {
 		if flag.Name == "html-out" {
@@ -303,6 +346,8 @@ func runScan(args []string) error {
 		MaxScanTime:                *maxScanTime,
 		Resume:                     *resume,
 		SQLiteStateFile:            *sqliteStateFile,
+		DatabaseName:               *dbName,
+		FlushDatabase:              *flushDB,
 		ForceRescan:                *forceRescan,
 		ListShares:                 *listShares,
 		SkipReachabilityCheck:      *skipReachability,
@@ -686,8 +731,9 @@ func printFindUsage() {
 	section("Usage", "snablr find [options]")
 	printHelpParagraph("Browse persisted Snablr findings and evidence without contacting SMB targets.")
 	printHelpLine("--db PATH", "Open an existing SQLite database instead of the default snablr.db", 30)
+	printHelpLine("--dbname PATH", "Alias for --db; cannot conflict with --db", 30)
 	fmt.Println()
-	printHelpParagraph("If --db is omitted, Snablr checks the same default database path used by scan.")
+	printHelpParagraph("If both database flags are supplied they must name the same file. If omitted, Snablr checks the same default database path used by scan.")
 }
 
 func printScanUsage(fs *flag.FlagSet) {
@@ -716,7 +762,7 @@ func scanHelpGroups(advanced bool) []scanHelpGroup {
 	groups := []scanHelpGroup{
 		{Title: "Target and scope", Flags: []string{"targets", "targets-file", "share", "path", "exclude-share", "exclude-path"}},
 		{Title: "Authentication", Flags: []string{"username", "password", "user", "pass", "auth", "smb-auth", "domain", "dc", "no-ldap", "list-shares"}},
-		{Title: "Persistence and execution", Flags: []string{"resume", "force-rescan", "sqlite-state-file", "worker-count", "max-scan-time"}},
+		{Title: "Persistence and execution", Flags: []string{"resume", "force-rescan", "sqlite-state-file", "dbname", "flushdb", "worker-count", "max-scan-time"}},
 		{Title: "Output", Flags: []string{"output-format", "json-out", "html-out", "csv-out", "md-out", "creds-out", "scanned-targets-out", "no-tui", "no-color"}},
 	}
 	if !advanced {

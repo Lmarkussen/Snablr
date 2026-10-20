@@ -35,6 +35,8 @@ type ScanOptions struct {
 	MaxScanTime                string
 	Resume                     bool
 	SQLiteStateFile            string
+	DatabaseName               string
+	FlushDatabase              string
 	ForceRescan                bool
 	ListShares                 bool
 	SkipReachabilityCheck      bool

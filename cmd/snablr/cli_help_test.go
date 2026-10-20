@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -32,7 +33,7 @@ func captureCLIStdout(t *testing.T, fn func()) string {
 func TestScanHelpSeparatesCommonAndAdvancedFlags(t *testing.T) {
 	normal := captureCLIStdout(t, func() { _ = runScan([]string{"--help"}) })
 	advanced := captureCLIStdout(t, func() { _ = runScan([]string{"--help-advanced"}) })
-	for _, flag := range []string{"--targets", "--share", "--resume", "--force-rescan", "--list-shares", "--no-color"} {
+	for _, flag := range []string{"--targets", "--share", "--resume", "--force-rescan", "--dbname", "--flushdb", "--list-shares", "--no-color"} {
 		if !strings.Contains(normal, flag) {
 			t.Fatalf("normal scan help missing %s", flag)
 		}
@@ -56,6 +57,35 @@ func TestDeveloperHelpAndDispatch(t *testing.T) {
 	}
 	if err := runDev([]string{"unknown"}); err == nil {
 		t.Fatal("unknown developer command unexpectedly succeeded")
+	}
+}
+
+func TestFindHelpIncludesDatabaseAlias(t *testing.T) {
+	help := captureCLIStdout(t, func() { _ = runFind([]string{"--help"}) })
+	for _, flag := range []string{"--db", "--dbname"} {
+		if !strings.Contains(help, flag) {
+			t.Fatalf("find help missing %s", flag)
+		}
+	}
+}
+
+func TestFindDatabaseAliasRejectsConflictsWithoutOpeningEitherPath(t *testing.T) {
+	left := filepath.Join(t.TempDir(), "left.db")
+	right := filepath.Join(t.TempDir(), "right.db")
+	if err := runFind([]string{"--db", left, "--dbname", right}); err == nil {
+		t.Fatal("expected conflicting Finder database flags to be rejected")
+	}
+	if got, err := reconcileFinderDatabasePaths(left, left); err != nil || got != left {
+		t.Fatalf("same Finder database flags = %q, %v", got, err)
+	}
+	for _, flag := range []string{"--db", "--dbname"} {
+		path := filepath.Join(t.TempDir(), flag[2:]+".db")
+		if err := runFind([]string{flag, path}); err == nil {
+			t.Fatalf("expected missing explicit Finder database to fail for %s", flag)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("Finder %s created or modified missing database: %v", flag, err)
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ package findings
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -68,6 +69,9 @@ func TestProviderListsScansAndFindingsReadOnly(t *testing.T) {
 	if len(scans) != 2 || scans[0].FindingCount != 1 {
 		t.Fatalf("unexpected scans: %#v", scans)
 	}
+	if scans[0].DisplayID != "scan-local-002" || scans[0].ID != "scan-two" {
+		t.Fatalf("unexpected scan identifiers: %#v", scans[0])
+	}
 	items, err := provider.Findings(context.Background(), scans[0].ID, 0, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -88,6 +92,30 @@ func TestProviderListsScansAndFindingsReadOnly(t *testing.T) {
 	}
 	if before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
 		t.Fatal("read-only provider changed the database file")
+	}
+}
+
+func TestProviderFallsBackToLegacyScanIDWhenNoDisplayLabelExists(t *testing.T) {
+	path := makeFixtureDB(t, "legacy-scan")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM scan_labels WHERE scan_id=?`, "legacy-scan"); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	provider, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	scans, err := provider.ListScans(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scans) != 1 || scans[0].ID != "legacy-scan" || scans[0].DisplayID != "legacy-scan" {
+		t.Fatalf("unexpected legacy scan identifiers: %#v", scans)
 	}
 }
 

@@ -70,12 +70,26 @@ the scanner and the Findings Engine. Reopen it without contacting SMB:
 ```bash
 snablr find
 snablr find --db /path/to/scan.db
+snablr find --dbname /path/to/scan.db
 ```
 
 Without `--db`, Finder checks the same default `snablr.db` location used by the
 scan workspace. With `--db`, the supplied existing SQLite file is opened
 read-only. Finder validates that the file is a Snablr database and checks its
 integrity before presenting results.
+
+`--dbname` is an alias for `--db`. Supplying both is allowed only when they
+resolve to the same file; conflicting values are rejected. Omitting both keeps
+the existing default database resolution.
+
+To select the scan database during scanning, use `snablr scan --dbname PATH`.
+Missing targets are created, while existing targets must pass Snablr schema and
+integrity validation. To deliberately start over, use
+`snablr scan --flushdb PATH`; this requires an existing validated Snablr
+database and clears its scan history, findings, evidence, relationships,
+bookmarks, and exclusions transactionally. The schema and file remain in
+place, and a failed validation or reset aborts the scan. Flush numbering is
+database-local: the next scan starts at `scan-<domain>-001` after a flush.
 
 The UI keeps several levels of evidence distinct. Scanner findings are raw
 detection records; persisted rows are stored material; logical discoveries

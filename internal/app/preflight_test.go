@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -340,6 +341,7 @@ func TestRunScanPreflightFailureStopsBeforeWriterAndDiscovery(t *testing.T) {
 		Password:         "pass",
 		Domain:           "TEST.LOCAL",
 		DomainController: "DIRECTORY01.TEST.LOCAL",
+		SQLiteStateFile:  filepath.Join(t.TempDir(), "preflight-failure.db"),
 	})
 	if err == nil || !strings.Contains(err.Error(), "invalid credentials") {
 		t.Fatalf("expected preflight failure to be returned, got %v", err)
@@ -386,9 +388,10 @@ func TestRunScanResolvesTargetsBeforeCreatingWriter(t *testing.T) {
 	}
 
 	err := RunScan(context.Background(), ScanOptions{
-		Username: "user",
-		Password: "pass",
-		Targets:  []string{"FILE01.TEST.LOCAL"},
+		Username:        "user",
+		Password:        "pass",
+		Targets:         []string{"FILE01.TEST.LOCAL"},
+		SQLiteStateFile: filepath.Join(t.TempDir(), "discovery-stop.db"),
 	})
 	if err == nil || !strings.Contains(err.Error(), "stop after discovery") {
 		t.Fatalf("expected synthetic discovery stop, got %v", err)

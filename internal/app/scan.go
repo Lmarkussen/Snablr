@@ -71,6 +71,9 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	if err := validateScanConfig(cfg); err != nil {
 		return err
 	}
+	if err := prepareScanDatabase(cfg, opts); err != nil {
+		return err
+	}
 	if _, err := config.ParseOutputFormat(cfg.Output.Format); err != nil {
 		return err
 	}
@@ -136,13 +139,13 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 				logger.Infof("reusing compatible SQLite scan state %s", resumeState.ScanID)
 			}
 			if !reused {
-				shadow, err = store.Open(sqlitePath, store.Options{Semantics: semantics, SnablrVersion: version.String()})
+				shadow, err = store.Open(sqlitePath, store.Options{ScanDomain: cfg.Scan.Domain, Semantics: semantics, SnablrVersion: version.String()})
 				if err != nil {
 					return fmt.Errorf("open authoritative SQLite state: %w", err)
 				}
 			}
 		} else {
-			shadow, err = store.Open(sqlitePath, store.Options{Semantics: semantics, SnablrVersion: version.String()})
+			shadow, err = store.Open(sqlitePath, store.Options{ScanDomain: cfg.Scan.Domain, Semantics: semantics, SnablrVersion: version.String()})
 			if err != nil {
 				return fmt.Errorf("open authoritative SQLite state: %w", err)
 			}
@@ -529,6 +532,40 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	}
 	if failure := authorityFailure(); failure != nil {
 		return failure
+	}
+	return nil
+}
+
+func prepareScanDatabase(cfg config.Config, opts ScanOptions) error {
+	dbName := strings.TrimSpace(opts.DatabaseName)
+	flushDB := strings.TrimSpace(opts.FlushDatabase)
+	if dbName == "" && flushDB == "" {
+		return nil
+	}
+	if cfg.Scan.Resume && flushDB != "" {
+		return fmt.Errorf("--flushdb cannot be combined with --resume")
+	}
+	if dbName != "" && flushDB != "" {
+		selected, err := filepath.Abs(dbName)
+		if err != nil {
+			return fmt.Errorf("resolve --dbname: %w", err)
+		}
+		flushed, err := filepath.Abs(flushDB)
+		if err != nil {
+			return fmt.Errorf("resolve --flushdb: %w", err)
+		}
+		if filepath.Clean(selected) != filepath.Clean(flushed) {
+			return fmt.Errorf("--dbname and --flushdb must name the same SQLite database")
+		}
+	}
+	if flushDB != "" {
+		if err := store.ResetDatabase(flushDB); err != nil {
+			return fmt.Errorf("refuse scan because --flushdb could not safely reset the database: %w", err)
+		}
+		return nil
+	}
+	if _, err := store.ValidateDatabaseTarget(dbName, true); err != nil {
+		return fmt.Errorf("refuse scan because --dbname is unsafe or invalid: %w", err)
 	}
 	return nil
 }

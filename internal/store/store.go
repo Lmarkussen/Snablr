@@ -25,8 +25,11 @@ const (
 	ScopeExclusionFolder = "folder"
 )
 
+var storeOpenMu sync.Mutex
+
 type Options struct {
 	ScanID        string
+	ScanDomain    string
 	SnablrVersion string
 	Semantics     string
 	QueueSize     int
@@ -56,6 +59,7 @@ type SQLiteStore struct {
 	db               *sql.DB
 	path             string
 	scanID           string
+	scanDomain       string
 	queue            chan event
 	batch            int
 	interval         time.Duration
@@ -86,6 +90,8 @@ func Open(path string, options Options) (*SQLiteStore, error) {
 	if path == "" {
 		return nil, fmt.Errorf("sqlite state store path cannot be empty")
 	}
+	storeOpenMu.Lock()
+	defer storeOpenMu.Unlock()
 	if options.ScanID == "" {
 		options.ScanID = fmt.Sprintf("scan-%d", time.Now().UTC().UnixNano())
 	}
@@ -120,11 +126,16 @@ func Open(path string, options Options) (*SQLiteStore, error) {
 		return cleanup(err)
 	}
 	_ = os.Chmod(path, 0o600)
-	s := &SQLiteStore{db: db, path: path, scanID: options.ScanID, queue: make(chan event, options.QueueSize), batch: options.BatchSize, interval: options.FlushEvery, done: make(chan struct{}), healthy: true, failAfterBatches: options.FailAfterBatches}
-	if err := s.BeginScan(options.ScanID, options.SnablrVersion, options.Semantics, time.Now().UTC()); err != nil {
-		return cleanup(err)
-	}
+	s := &SQLiteStore{db: db, path: path, scanID: options.ScanID, scanDomain: options.ScanDomain, queue: make(chan event, options.QueueSize), batch: options.BatchSize, interval: options.FlushEvery, done: make(chan struct{}), healthy: true, failAfterBatches: options.FailAfterBatches}
 	go s.run()
+	if err := s.BeginScan(options.ScanID, options.SnablrVersion, options.Semantics, time.Now().UTC()); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	if err := s.Flush(); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -135,6 +146,7 @@ func initializeSchema(db *sql.DB) error {
 			if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS bookmarks (scan_id TEXT NOT NULL, file_key TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (scan_id, file_key), FOREIGN KEY (scan_id, file_key) REFERENCES files(scan_id, file_key));
 CREATE TABLE IF NOT EXISTS scope_exclusions (scan_id TEXT NOT NULL, kind TEXT NOT NULL, host TEXT NOT NULL, share TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (scan_id, kind, host, share, path), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
+CREATE TABLE IF NOT EXISTS scan_labels (scan_id TEXT PRIMARY KEY, display_id TEXT NOT NULL UNIQUE, FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE INDEX IF NOT EXISTS bookmarks_scan_created_idx ON bookmarks(scan_id, created_at, file_key);
 CREATE INDEX IF NOT EXISTS scope_exclusions_identity_idx ON scope_exclusions(scan_id, kind, host, share, path);
 UPDATE metadata SET value='2' WHERE key='schema_version';
@@ -152,6 +164,7 @@ UPDATE metadata SET value='2' WHERE key='schema_version';
 	_, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS scans (scan_id TEXT PRIMARY KEY, schema_version INTEGER NOT NULL, snablr_version TEXT, semantics TEXT, started_at TEXT NOT NULL, ended_at TEXT, status TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS scan_labels (scan_id TEXT PRIMARY KEY, display_id TEXT NOT NULL UNIQUE, FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS targets (scan_id TEXT NOT NULL, host TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (scan_id, host), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS shares (scan_id TEXT NOT NULL, host TEXT NOT NULL, share TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (scan_id, host, share), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS files (scan_id TEXT NOT NULL, file_key TEXT NOT NULL, host TEXT NOT NULL, share TEXT NOT NULL, path TEXT NOT NULL, size INTEGER NOT NULL, modified_at TEXT, first_seen TEXT, last_seen TEXT, updated_at TEXT NOT NULL, status TEXT NOT NULL, semantics TEXT NOT NULL, PRIMARY KEY (scan_id, file_key), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
@@ -377,9 +390,73 @@ func (s *SQLiteStore) restrictSidecars() error {
 func (s *SQLiteStore) BeginScan(id, version, semantics string, started time.Time) error {
 	s.scanID = id
 	return s.enqueue(func(tx *sql.Tx) error {
+		var existing int
+		existingErr := tx.QueryRow(`SELECT 1 FROM scans WHERE scan_id=?`, id).Scan(&existing)
+		if existingErr != nil && !errors.Is(existingErr, sql.ErrNoRows) {
+			return existingErr
+		}
 		_, err := tx.Exec(`INSERT INTO scans(scan_id,schema_version,snablr_version,semantics,started_at,status) VALUES(?,?,?,?,?,?) ON CONFLICT(scan_id) DO UPDATE SET snablr_version=excluded.snablr_version, semantics=excluded.semantics`, id, SchemaVersion, version, semantics, started.UTC().Format(time.RFC3339Nano), StatusRunning)
-		return err
+		if err != nil {
+			return err
+		}
+		if errors.Is(existingErr, sql.ErrNoRows) || existing == 0 {
+			displayID, err := nextDisplayID(tx, s.scanDomain)
+			if err != nil {
+				return err
+			}
+			_, err = tx.Exec(`INSERT INTO scan_labels(scan_id,display_id) VALUES(?,?)`, id, displayID)
+			return err
+		}
+		return nil
 	})
+}
+
+func nextDisplayID(tx *sql.Tx, domain string) (string, error) {
+	slug := sanitizeDomain(domain)
+	prefix := "scan-" + slug + "-"
+	rows, err := tx.Query(`SELECT display_id FROM scan_labels WHERE display_id LIKE ?`, prefix+"%")
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	max := 0
+	for rows.Next() {
+		var displayID string
+		if err := rows.Scan(&displayID); err != nil {
+			return "", err
+		}
+		var sequence int
+		if _, err := fmt.Sscanf(strings.TrimPrefix(displayID, prefix), "%d", &sequence); err == nil && sequence > max {
+			max = sequence
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s%03d", prefix, max+1), nil
+}
+
+func sanitizeDomain(domain string) string {
+	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+	var b strings.Builder
+	lastSeparator := false
+	for _, r := range domain {
+		valid := r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '-'
+		if valid {
+			b.WriteRune(r)
+			lastSeparator = r == '-' || r == '.'
+			continue
+		}
+		if !lastSeparator {
+			b.WriteByte('-')
+			lastSeparator = true
+		}
+	}
+	result := strings.Trim(b.String(), ".-")
+	if result == "" {
+		return "local"
+	}
+	return result
 }
 func (s *SQLiteStore) SetScanStatus(status Status, ended time.Time) error {
 	return s.enqueue(func(tx *sql.Tx) error {

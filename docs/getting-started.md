@@ -128,6 +128,7 @@ open its persisted findings without contacting SMB again:
 
 ```bash
 ./bin/snablr find --db /path/to/scan.db
+./bin/snablr find --dbname /path/to/scan.db
 ```
 
 When the scan used the default output workspace, `find` without `--db` checks
@@ -136,6 +137,10 @@ the same default `snablr.db` location:
 ```bash
 ./bin/snablr find
 ```
+
+`--dbname` is an alias for Finder's `--db`; if both are supplied, they must
+name the same file. With neither flag, Finder retains the scanner's existing
+default database resolution.
 
 Finder is read-only and uses category-first navigation:
 
@@ -155,6 +160,34 @@ correlations. Several observations can therefore appear under one logical
 discovery while remaining available as separate evidence. Confirmed and
 Review material keep their stored classification; Snablr does not authenticate
 recovered values.
+
+### Selecting and resetting scan databases
+
+Use `--dbname` to select a SQLite database for a scan. A missing target is
+created when the scan opens it; an existing target must be a valid Snablr
+database and is handled with the normal resume/reuse semantics. The path is
+never silently replaced with the default database:
+
+```bash
+snablr scan --targets HOST --dbname /path/to/customer.db
+```
+
+Use `--flushdb` only when an explicit, existing Snablr database should be
+reset before a fresh scan:
+
+```bash
+snablr scan --targets HOST --flushdb /path/to/customer.db
+```
+
+Flush validation rejects missing, non-Snablr, incompatible, corrupt, directory,
+symlink, and protected database targets. Reset clears scan history, findings,
+evidence, relationships, bookmarks, and scope exclusions in one SQLite
+transaction while retaining the validated schema and database file. A failed
+validation or reset aborts before the scan starts. `--flushdb` cannot be
+combined with `--resume`; `--dbname` and `--flushdb`, when both supplied, must
+name the same file. New scans are displayed in Finder as
+`scan-<sanitized-domain>-NNN`; numbering is persisted independently in each
+database and is not shared across databases or carried across a flush.
 
 ## Interactive TUI Controls
 

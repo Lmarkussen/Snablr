@@ -1034,7 +1034,11 @@ func (m *model) View() string {
 		return "Loading Findings Engine..."
 	}
 	scan := m.scans[m.selectedScan]
-	header := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render("SNABLR // FINDINGS") + "  " + scan.ID + "  " + scan.Status
+	displayID := scan.DisplayID
+	if displayID == "" {
+		displayID = scan.ID
+	}
+	header := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render("SNABLR // FINDINGS") + "  " + displayID + "  " + scan.Status
 	if scan.Targets != "" {
 		header += "  " + scan.Targets
 	}
@@ -1100,7 +1104,11 @@ func scanList(scans []Scan, selected int) string {
 		if i == selected {
 			marker = "▸ "
 		}
-		lines = append(lines, marker+scan.ID+"  "+scan.Status+"  "+scan.Targets+fmt.Sprintf("  %d findings", scan.FindingCount))
+		displayID := scan.DisplayID
+		if displayID == "" {
+			displayID = scan.ID
+		}
+		lines = append(lines, marker+displayID+"  "+scan.Status+"  "+scan.Targets+fmt.Sprintf("  %d findings", scan.FindingCount))
 	}
 	return strings.Join(lines, "\n")
 }

@@ -145,27 +145,6 @@ func OpenForResume(path string, options ResumeOptions) (*SQLiteStore, ResumeStat
 	return stateStore, state, nil
 }
 
-func validateExistingSchema(db *sql.DB) error {
-	var version string
-	if err := db.QueryRow(`SELECT value FROM metadata WHERE key='schema_version'`).Scan(&version); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("sqlite resume state is missing schema metadata")
-		}
-		return fmt.Errorf("read sqlite resume schema metadata: %w", err)
-	}
-	if version != fmt.Sprintf("%d", SchemaVersion) {
-		return fmt.Errorf("unsupported SQLite scan database schema version %s", version)
-	}
-	var integrity string
-	if err := db.QueryRow(`PRAGMA integrity_check`).Scan(&integrity); err != nil {
-		return fmt.Errorf("check sqlite resume state integrity: %w", err)
-	}
-	if integrity != "ok" {
-		return fmt.Errorf("sqlite resume state integrity check failed: %s", integrity)
-	}
-	return nil
-}
-
 func loadResumeState(db *sql.DB, requestedID string, materializeFiles bool, out *ResumeState) error {
 	out.FilesMaterialized = materializeFiles
 	query := `SELECT scan_id,schema_version,snablr_version,semantics,started_at,ended_at,status FROM scans WHERE scan_id=?`

@@ -160,6 +160,12 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if strings.TrimSpace(opts.SQLiteStateFile) != "" {
 		cfg.Scan.SQLiteStateFile = opts.SQLiteStateFile
 	}
+	if strings.TrimSpace(opts.DatabaseName) != "" {
+		cfg.Scan.SQLiteStateFile = opts.DatabaseName
+	}
+	if strings.TrimSpace(opts.FlushDatabase) != "" {
+		cfg.Scan.SQLiteStateFile = opts.FlushDatabase
+	}
 	if opts.ForceRescan {
 		cfg.Scan.ForceRescan = true
 	}

@@ -40,6 +40,42 @@ func TestCategoryFirstNavigationAndEvidence(t *testing.T) {
 	}
 }
 
+func TestDatabaseLocationFindingsUseDedicatedCategory(t *testing.T) {
+	categories := buildCategories(nil, []Finding{{Finding: scanner.Finding{
+		RuleID: "dbinspect.artifact.sqlite_structural", RuleName: "Structurally Validated SQLite Database Artifact",
+		Category: "database-artifacts", SignalType: "validated", Confidence: "high", FilePath: "exports/opaque-copy",
+	}}}, nil)
+	if len(categories) != 1 || categories[0].Name != "Database Locations & Connections" {
+		t.Fatalf("expected dedicated database category, got %#v", categories)
+	}
+	if len(categories[0].Discoveries) != 1 || categories[0].Discoveries[0].Subcategory != "Database Files & Backups" {
+		t.Fatalf("unexpected database location projection: %#v", categories[0])
+	}
+}
+
+func TestStructuredDatabaseEndpointUsesServerSubcategory(t *testing.T) {
+	categories := buildCategories(nil, []Finding{{Finding: scanner.Finding{
+		RuleID: "dbinspect.infrastructure.structured_config", RuleName: "Validated Database Configuration Endpoint",
+		Category: "database-infrastructure", SignalType: "validated", Confidence: "high", FilePath: "config/app.json",
+	}}}, nil)
+	if len(categories) != 1 || len(categories[0].Discoveries) != 1 {
+		t.Fatalf("expected one structured database discovery, got %#v", categories)
+	}
+	if categories[0].Discoveries[0].Subcategory != "Database Servers & Instances" {
+		t.Fatalf("unexpected structured endpoint subcategory: %#v", categories[0].Discoveries[0])
+	}
+}
+
+func TestDatabaseLocationCategoryPreservesDistinctConnections(t *testing.T) {
+	categories := buildCategories(nil, []Finding{
+		{Finding: scanner.Finding{RuleID: "dbinspect.infrastructure.structured_config", RuleName: "Validated Database Configuration Endpoint", Category: "database-infrastructure", SignalType: "validated", Confidence: "high", FilePath: "config/app.json", MatchedText: "production"}},
+		{Finding: scanner.Finding{RuleID: "dbinspect.infrastructure.structured_config", RuleName: "Validated Database Configuration Endpoint", Category: "database-infrastructure", SignalType: "validated", Confidence: "high", FilePath: "config/app.json", MatchedText: "reporting"}},
+	}, nil)
+	if len(categories) != 1 || len(categories[0].Discoveries) != 2 {
+		t.Fatalf("distinct configured endpoints were collapsed: %#v", categories)
+	}
+}
+
 func TestDiscoverySelectionUpdatesFullDetailsWithoutEvidenceScreen(t *testing.T) {
 	item := category{Name: "Credentials", Discoveries: []discovery{
 		{Title: "first", Subcategory: "Passwords", MaterialType: "password", Value: "first-secret", Verification: "confirmed"},

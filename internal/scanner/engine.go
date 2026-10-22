@@ -974,6 +974,10 @@ func buildArchiveExtensionHints(contentHints map[string]struct{}) map[string]str
 		".toml":       {},
 		".ovpn":       {},
 		".ppk":        {},
+		".sqlite":     {},
+		".sqlite3":    {},
+		".db":         {},
+		".db3":        {},
 	}
 	for ext := range contentHints {
 		hints[normalizeExtension(ext)] = struct{}{}

@@ -22,6 +22,7 @@ type Match struct {
 	Snippet             string
 	Context             string
 	ContextRedacted     string
+	ObservationID       string
 	LineNumber          int
 	Explanation         string
 	Remediation         string

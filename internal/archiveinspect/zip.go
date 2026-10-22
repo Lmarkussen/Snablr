@@ -135,6 +135,18 @@ func InspectZIP(content []byte, outerExtension string, opts Options, allowedExte
 			continue
 		}
 
+		if isSQLiteMemberExtension(memberExt) {
+			totalBytes += int64(len(data))
+			inspectedMembers++
+			result.Members = append(result.Members, Member{
+				Path:      cleanedPath,
+				Name:      memberName,
+				Extension: memberExt,
+				Size:      int64(len(data)),
+				Content:   data,
+			})
+			continue
+		}
 		if !looksTextLike(data) {
 			continue
 		}
@@ -154,6 +166,15 @@ func InspectZIP(content []byte, outerExtension string, opts Options, allowedExte
 	}
 
 	return result, nil
+}
+
+func isSQLiteMemberExtension(extension string) bool {
+	switch strings.ToLower(strings.TrimSpace(extension)) {
+	case ".sqlite", ".sqlite3", ".db", ".db3":
+		return true
+	default:
+		return false
+	}
 }
 
 func readZIPMember(file *zip.File, memberSize int64, opts Options) ([]byte, bool) {

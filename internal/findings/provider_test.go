@@ -95,6 +95,155 @@ func TestProviderListsScansAndFindingsReadOnly(t *testing.T) {
 	}
 }
 
+func TestProviderRehydratesDatabaseLocationFindingForFinder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "database-location.db")
+	state, err := store.Open(path, store.Options{ScanID: "p4-scan", SnablrVersion: "test", Semantics: "p4", QueueSize: 8, BatchSize: 1, FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := scanner.Finding{
+		RuleID:            "dbinspect.artifact.sqlite_structural",
+		RuleName:          "Structurally Validated SQLite Database Artifact",
+		Category:          "database-artifacts",
+		SignalType:        "validated",
+		Confidence:        "medium",
+		TriageClass:       "weak-review",
+		Host:              "fileserver",
+		Share:             "data",
+		FilePath:          "exports/opaque-copy",
+		MatchedText:       "SQLite format 3\x00",
+		Context:           "exports/opaque-copy",
+		ArchivePath:       "bundle.zip",
+		ArchiveMemberPath: "nested/opaque-copy",
+		Tags:              []string{"database", "db:type:sqlite", "db:status:confirmed"},
+	}
+	if err := state.RecordFinding(want); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetScanStatus(store.StatusCompleted, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	provider, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	items, err := provider.Findings(context.Background(), "p4-scan", 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Finding.MatchedText != want.MatchedText || items[0].Finding.ArchiveMemberPath != want.ArchiveMemberPath {
+		t.Fatalf("database finding did not rehydrate exactly: got %#v", items)
+	}
+	categories := buildCategories(nil, items, nil)
+	if len(categories) != 1 || categories[0].Name != "Database Locations & Connections" {
+		t.Fatalf("database finding did not survive Finder projection: %#v", categories)
+	}
+}
+
+func TestProviderRehydratesStructuredDatabaseConfigurationEvidence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "structured-database.db")
+	state, err := store.Open(path, store.Options{ScanID: "p4-config", SnablrVersion: "test", Semantics: "p4", QueueSize: 8, BatchSize: 1, FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := scanner.Finding{
+		RuleID: "dbinspect.infrastructure.structured_config", RuleName: "Validated Database Configuration Endpoint",
+		Category: "database-infrastructure", SignalType: "validated", Confidence: "high", TriageClass: "confirmed",
+		Host: "fileserver", Share: "configs", FilePath: "opaque-config", MatchedText: `{"database":{"host":"db.example.test","port":5432,"name":"payroll"}}`,
+		Snippet: `{"database":{"host":"db.example.test","port":5432,"name":"payroll"}}`, Context: `{"database":{"host":"db.example.test","port":5432,"name":"payroll"}}`,
+		Tags: []string{"database", "db:source:config", "db:type:configured-endpoint", "db:status:configured"},
+	}
+	if err := state.RecordFinding(want); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetScanStatus(store.StatusCompleted, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	provider, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := provider.Findings(context.Background(), "p4-config", 0, 10)
+	if err != nil {
+		_ = provider.Close()
+		t.Fatal(err)
+	}
+	if err := provider.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Finding.MatchedText != want.MatchedText || items[0].Finding.Snippet != want.Snippet || items[0].Finding.Context != want.Context {
+		t.Fatalf("structured configuration evidence did not rehydrate exactly: got %#v", items)
+	}
+	categories := buildCategories(nil, items, nil)
+	if len(categories) != 1 || len(categories[0].Discoveries) != 1 || categories[0].Discoveries[0].Subcategory != "Database Servers & Instances" {
+		t.Fatalf("structured configuration did not survive Finder projection: %#v", categories)
+	}
+}
+
+func TestProviderRehydratesDistinctDatabaseObservationsWithExactEvidence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "distinct-database-observations.db")
+	state, err := store.Open(path, store.Options{ScanID: "p4-distinct", SnablrVersion: "test", Semantics: "p4", QueueSize: 8, BatchSize: 1, FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wants := []scanner.Finding{
+		{RuleID: "dbinspect.infrastructure.structured_config", RuleName: "Configured endpoint", Category: "database-infrastructure", SignalType: "validated", Confidence: "high", TriageClass: "confirmed", Host: "fileserver", Share: "configs", FilePath: "app.json", MatchedText: "host=prod;database=app", Context: "production", ObservationID: "structured:0:prod"},
+		{RuleID: "dbinspect.infrastructure.structured_config", RuleName: "Configured endpoint", Category: "database-infrastructure", SignalType: "validated", Confidence: "high", TriageClass: "confirmed", Host: "fileserver", Share: "configs", FilePath: "app.json", MatchedText: "host=report;database=reporting", Context: "reporting", ObservationID: "structured:1:report"},
+	}
+	for _, want := range wants {
+		if err := state.RecordFinding(want); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	provider, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := provider.Findings(context.Background(), "p4-distinct", 0, 10)
+	if err != nil {
+		_ = provider.Close()
+		t.Fatal(err)
+	}
+	if err := provider.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != len(wants) {
+		t.Fatalf("distinct observations were not persisted: got %d items: %#v", len(items), items)
+	}
+	for index, want := range wants {
+		got := items[index].Finding
+		if got.ObservationID != want.ObservationID || got.MatchedText != want.MatchedText || got.Context != want.Context {
+			t.Fatalf("observation %d changed during persistence: got %#v want %#v", index, got, want)
+		}
+	}
+	categories := buildCategories(nil, items, nil)
+	if len(categories) != 1 || len(categories[0].Discoveries) != 2 {
+		t.Fatalf("Finder lost distinct database observations: %#v", categories)
+	}
+}
+
 func TestProviderFallsBackToLegacyScanIDWhenNoDisplayLabelExists(t *testing.T) {
 	path := makeFixtureDB(t, "legacy-scan")
 	db, err := sql.Open("sqlite3", path)

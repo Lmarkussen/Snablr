@@ -1,9 +1,304 @@
 package dbinspect
 
 import (
+	"bytes"
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 )
+
+const sqliteHeader = "SQLite format 3\x00"
+
+func inspectSQLiteArtifact(candidate Candidate, content []byte, seen map[string]struct{}) []Match {
+	if len(content) < 100 || !bytes.Equal(content[:len(sqliteHeader)], []byte(sqliteHeader)) {
+		return nil
+	}
+
+	pageSize := int(binary.BigEndian.Uint16(content[16:18]))
+	if pageSize == 1 {
+		pageSize = 65536
+	}
+	if pageSize < 512 || pageSize > 32768 && pageSize != 65536 || pageSize&(pageSize-1) != 0 {
+		return nil
+	}
+	if content[18] < 1 || content[18] > 2 || content[19] < 1 || content[19] > 2 {
+		return nil
+	}
+	if int(content[20]) >= int(pageSize) || content[21] != 64 || content[22] != 32 || content[23] != 32 {
+		return nil
+	}
+	if binary.BigEndian.Uint32(content[28:32]) == 0 || int64(len(content)) < int64(pageSize) {
+		return nil
+	}
+
+	const id = "dbinspect.artifact.sqlite_structural"
+	if _, exists := seen[id]; exists {
+		return nil
+	}
+	seen[id] = struct{}{}
+	return []Match{{
+		ID:                  id,
+		Name:                "Structurally Validated SQLite Database Artifact",
+		Description:         "The file contains a bounded, structurally valid SQLite database header.",
+		RuleType:            "content",
+		SignalType:          "validated",
+		Severity:            "high",
+		Confidence:          "high",
+		Category:            "database-artifacts",
+		Match:               sqliteHeader,
+		MatchedText:         sqliteHeader,
+		MatchedTextRedacted: sqliteHeader,
+		Snippet:             sqliteHeader,
+		Context:             candidate.FilePath,
+		ContextRedacted:     candidate.FilePath,
+		Explanation:         "SQLite header fields, page-size constraints, format versions, payload fractions, and minimum page length passed bounded structural validation without opening the source file.",
+		Remediation:         "Review the database artifact location and restrict access according to its contents and intended use.",
+		Tags:                []string{"database", "db:source:local-artifact", "db:type:sqlite", "db:status:confirmed"},
+	}}
+}
+
+func inspectStructuredDatabaseConfig(candidate Candidate, raw []byte, text string, seen map[string]struct{}) []Match {
+	if ext := normalizedExtension(candidate); ext == ".ini" || ext == ".dsn" || ext == ".udl" || ext == ".ora" {
+		return nil
+	}
+	for key := range seen {
+		if strings.HasPrefix(key, "dbinspect.infrastructure.dsn::") || strings.HasPrefix(key, "dbinspect.infrastructure.connection_string::") {
+			return nil
+		}
+	}
+	context := strings.ToLower(text)
+	if !hasDatabaseStructuredContext(context) {
+		return nil
+	}
+	var matches []Match
+	for index, fields := range structuredDatabaseGroups(text) {
+		endpoint := firstNonEmpty(fields["server"], fields["host"], fields["hostname"], fields["datasource"])
+		database := firstNonEmpty(fields["database"], fields["dbname"], fields["catalog"], fields["service"], fields["name"])
+		provider := firstNonEmpty(fields["provider"], fields["driver"], fields["engine"])
+		port := fields["port"]
+		instance := fields["instance"]
+		if endpoint == "" || database == "" {
+			continue
+		}
+
+		key := fmt.Sprintf("dbinspect.infrastructure.structured_config::%d::%s", index, strings.ToLower(strings.Join([]string{provider, endpoint, port, instance, database}, "|")))
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		matches = append(matches, Match{
+			ID:                  "dbinspect.infrastructure.structured_config",
+			Name:                "Validated Database Configuration Endpoint",
+			Description:         "A database endpoint and database name were parsed from structured configuration content.",
+			RuleType:            "content",
+			SignalType:          "validated",
+			Severity:            "medium",
+			Confidence:          "high",
+			Category:            "database-infrastructure",
+			Match:               summarizeStructuredFields(fields),
+			MatchedText:         string(raw),
+			MatchedTextRedacted: string(raw),
+			Snippet:             string(raw),
+			Context:             string(raw),
+			ContextRedacted:     string(raw),
+			ObservationID:       fmt.Sprintf("structured:%d:%s", index, strings.ToLower(summarizeStructuredFields(fields))),
+			Explanation:         "This finding is based on endpoint and database fields in structured configuration; it does not assert reachability or authentication success.",
+			Remediation:         "Review the configured database endpoint and protect any associated credentials or configuration file.",
+			Tags:                []string{"database", "db:source:config", "db:type:configured-endpoint", "db:status:configured"},
+		})
+	}
+	return matches
+}
+
+func structuredDatabaseGroups(text string) []map[string]string {
+	trimmed := strings.TrimSpace(text)
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		var document interface{}
+		if json.Unmarshal([]byte(text), &document) == nil {
+			groups := jsonDatabaseGroups(document)
+			if len(groups) > 0 {
+				return groups
+			}
+		}
+	}
+
+	if strings.Contains(trimmed, "<") && strings.Contains(trimmed, ">") {
+		groups := make([]map[string]string, 0)
+		for _, tag := range structuredDatabaseTagRegex.FindAllString(text, -1) {
+			fields := fieldsFromStructuredText(tag)
+			if len(fields) > 0 {
+				groups = append(groups, fields)
+			}
+		}
+		if len(groups) > 0 {
+			return groups
+		}
+	}
+
+	return lineDatabaseGroups(text)
+}
+
+func jsonDatabaseGroups(value interface{}) []map[string]string {
+	object, ok := value.(map[string]interface{})
+	if !ok {
+		if list, ok := value.([]interface{}); ok {
+			var groups []map[string]string
+			for _, item := range list {
+				groups = append(groups, jsonDatabaseGroups(item)...)
+			}
+			return groups
+		}
+		return nil
+	}
+
+	fields := make(map[string]string)
+	var nested []map[string]string
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value := object[key]
+		normalized := normalizeStructuredField(key)
+		if normalized != "" {
+			if scalar, ok := value.(string); ok {
+				fields[normalized] = strings.TrimSpace(scalar)
+			} else if number, ok := value.(float64); ok {
+				fields[normalized] = formatStructuredNumber(number)
+			}
+		}
+		if _, isObject := value.(map[string]interface{}); isObject {
+			nested = append(nested, jsonDatabaseGroups(value)...)
+		}
+		if _, isList := value.([]interface{}); isList {
+			nested = append(nested, jsonDatabaseGroups(value)...)
+		}
+	}
+	if len(fields) > 0 {
+		nested = append([]map[string]string{fields}, nested...)
+	}
+	return nested
+}
+
+func lineDatabaseGroups(text string) []map[string]string {
+	groupByScope := make(map[string]map[string]string)
+	var order []string
+	section := ""
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+			continue
+		}
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") && strings.HasSuffix(trimmed, ":") && !strings.Contains(trimmed, " ") {
+			section = strings.TrimSuffix(trimmed, ":")
+			continue
+		}
+		match := structuredDatabaseFieldRegex.FindStringSubmatch(trimmed)
+		if len(match) < 5 {
+			continue
+		}
+		key := normalizeStructuredField(match[1])
+		value := strings.TrimSpace(firstNonEmpty(match[2], match[3], match[4]))
+		if key == "" || value == "" || value == "{" {
+			continue
+		}
+		scope := structuredFieldScope(match[1], key, section)
+		if _, exists := groupByScope[scope]; !exists {
+			groupByScope[scope] = make(map[string]string)
+			order = append(order, scope)
+		}
+		groupByScope[scope][key] = value
+	}
+	groups := make([]map[string]string, 0, len(order))
+	for _, scope := range order {
+		groups = append(groups, groupByScope[scope])
+	}
+	return groups
+}
+
+func structuredFieldScope(rawKey, normalized, section string) string {
+	key := strings.ToLower(strings.TrimSpace(rawKey))
+	key = strings.NewReplacer("-", "_", ".", "_", " ", "_").Replace(key)
+	for _, suffix := range []string{"_db_host", "_db_name"} {
+		if strings.HasSuffix(key, suffix) {
+			return strings.TrimSuffix(key, suffix)
+		}
+	}
+	if strings.HasSuffix(key, "_"+normalized) {
+		return strings.TrimSuffix(key, "_"+normalized)
+	}
+	if key == normalized {
+		if section != "" {
+			return strings.ToLower(section)
+		}
+		return "_default"
+	}
+	return key
+}
+
+func fieldsFromStructuredText(text string) map[string]string {
+	fields := make(map[string]string)
+	for _, match := range structuredDatabaseFieldRegex.FindAllStringSubmatch(text, -1) {
+		if len(match) < 5 {
+			continue
+		}
+		key := normalizeStructuredField(match[1])
+		value := strings.TrimSpace(firstNonEmpty(match[2], match[3], match[4]))
+		if key != "" && value != "" && value != "{" {
+			fields[key] = value
+		}
+	}
+	return fields
+}
+
+func formatStructuredNumber(value float64) string {
+	return strings.TrimSuffix(strings.TrimSuffix(fmt.Sprintf("%.6f", value), "0"), ".")
+}
+
+func normalizeStructuredField(key string) string {
+	key = strings.ToLower(strings.TrimSpace(key))
+	key = strings.NewReplacer("-", "_", ".", "_", " ", "_").Replace(key)
+	if key == "db_name" || strings.HasSuffix(key, "_db_name") {
+		return "database"
+	}
+	for _, suffix := range []string{"server", "host", "hostname", "datasource", "database", "dbname", "db_name", "catalog", "service", "service_name", "instance", "port", "provider", "driver", "engine", "authentication", "integrated_security", "username", "user", "uid", "password", "pwd", "name"} {
+		if key == suffix || strings.HasSuffix(key, "_"+suffix) {
+			return suffix
+		}
+	}
+	return ""
+}
+
+func hasDatabaseStructuredContext(text string) bool {
+	for _, token := range []string{"database", "datasource", "connection", "jdbc", "dsn", "db_", "db."} {
+		if strings.Contains(text, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func summarizeStructuredFields(fields map[string]string) string {
+	ordered := []string{"provider", "server", "host", "port", "instance", "database", "dbname", "catalog", "service", "authentication"}
+	parts := make([]string, 0, len(ordered))
+	seen := make(map[string]struct{})
+	for _, key := range ordered {
+		if value := strings.TrimSpace(fields[key]); value != "" {
+			parts = append(parts, key+"="+value)
+			seen[key] = struct{}{}
+		}
+	}
+	if _, exists := seen["database"]; !exists {
+		if value := strings.TrimSpace(fields["name"]); value != "" {
+			parts = append(parts, "database="+value)
+		}
+	}
+	return strings.Join(parts, ";")
+}
 
 func inspectOracleTNS(candidate Candidate, text string, seen map[string]struct{}) []Match {
 	name := normalizedName(candidate)

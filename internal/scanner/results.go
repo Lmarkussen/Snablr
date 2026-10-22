@@ -85,6 +85,7 @@ type Finding struct {
 	Snippet             string              `json:"snippet,omitempty"`
 	Context             string              `json:"context,omitempty"`
 	ContextRedacted     string              `json:"context_redacted,omitempty"`
+	ObservationID       string              `json:"observation_id,omitempty"`
 	PotentialAccount    string              `json:"potential_account,omitempty"`
 	LineNumber          int                 `json:"line_number,omitempty"`
 	MatchReason         string              `json:"match_reason,omitempty"`

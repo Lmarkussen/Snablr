@@ -67,6 +67,36 @@ func TestInspectZIPSkipsNestedAndBinaryMembers(t *testing.T) {
 	}
 }
 
+func TestInspectZIPRetainsSQLiteMembersForBoundedStructuralInspection(t *testing.T) {
+	t.Parallel()
+
+	sqlite := make([]byte, 4096)
+	copy(sqlite, []byte("SQLite format 3\x00"))
+	binary.BigEndian.PutUint16(sqlite[16:18], 4096)
+	sqlite[18], sqlite[19], sqlite[21], sqlite[22], sqlite[23] = 1, 1, 64, 32, 32
+	binary.BigEndian.PutUint32(sqlite[28:32], 1)
+	content := buildZIPBytes(t, map[string][]byte{"nested/opaque.sqlite": sqlite})
+
+	result, err := InspectZIP(content, ".zip", Options{
+		Enabled:                  true,
+		AutoZIPMaxSize:           10 * 1024 * 1024,
+		MaxZIPSize:               10 * 1024 * 1024,
+		MaxMembers:               64,
+		MaxMemberBytes:           512 * 1024,
+		MaxTotalUncompressed:     4 * 1024 * 1024,
+		InspectExtensionlessText: true,
+	}, map[string]struct{}{".sqlite": {}})
+	if err != nil {
+		t.Fatalf("InspectZIP returned error: %v", err)
+	}
+	if len(result.Members) != 1 || result.Members[0].Path != "nested/opaque.sqlite" {
+		t.Fatalf("expected SQLite member to be retained, got %#v", result.Members)
+	}
+	if !bytes.Equal(result.Members[0].Content, sqlite) {
+		t.Fatal("SQLite member content changed during archive inspection")
+	}
+}
+
 func TestInspectZIPHonorsMemberAndTotalLimits(t *testing.T) {
 	t.Parallel()
 

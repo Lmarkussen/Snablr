@@ -256,6 +256,7 @@ type jsonFinding struct {
 	ShareDescription    string                      `json:"share_description,omitempty"`
 	ShareType           string                      `json:"share_type,omitempty"`
 	FilePath            string                      `json:"file_path"`
+	ObservationID       string                      `json:"observation_id,omitempty"`
 	Source              string                      `json:"source,omitempty"`
 	ArchivePath         string                      `json:"archive_path,omitempty"`
 	ArchiveMemberPath   string                      `json:"archive_member_path,omitempty"`
@@ -311,6 +312,7 @@ func toJSONFinding(f scanner.Finding, delta diff.FindingDelta) jsonFinding {
 		ShareDescription:    f.ShareDescription,
 		ShareType:           f.ShareType,
 		FilePath:            f.FilePath,
+		ObservationID:       f.ObservationID,
 		Source:              f.Source,
 		ArchivePath:         f.ArchivePath,
 		ArchiveMemberPath:   f.ArchiveMemberPath,

@@ -22,10 +22,11 @@ func correlateFindings(meta FileMetadata, findings []Finding) []Finding {
 	}
 
 	type bucketKey struct {
-		host     string
-		share    string
-		path     string
-		category string
+		host        string
+		share       string
+		path        string
+		category    string
+		observation string
 	}
 
 	grouped := make(map[bucketKey][]Finding, len(findings))
@@ -35,6 +36,9 @@ func correlateFindings(meta FileMetadata, findings []Finding) []Finding {
 			share:    strings.ToLower(strings.TrimSpace(finding.Share)),
 			path:     strings.ToLower(strings.TrimSpace(finding.FilePath)),
 			category: strings.ToLower(strings.TrimSpace(finding.Category)),
+		}
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(finding.RuleID)), "dbinspect.") && strings.TrimSpace(finding.ObservationID) != "" {
+			key.observation = strings.TrimSpace(finding.ObservationID)
 		}
 		grouped[key] = append(grouped[key], finding)
 	}

@@ -86,7 +86,7 @@ func reportFindingDedupKey(f scanner.Finding) string {
 		f.Match,
 		f.Snippet,
 	)))
-	return strings.Join([]string{
+	parts := []string{
 		strings.ToLower(strings.TrimSpace(f.RuleID)),
 		strings.ToLower(strings.TrimSpace(f.Category)),
 		strings.ToLower(strings.TrimSpace(f.Host)),
@@ -98,7 +98,11 @@ func reportFindingDedupKey(f scanner.Finding) string {
 		strings.ToLower(strings.TrimSpace(f.DatabaseColumn)),
 		strconv.Itoa(f.LineNumber),
 		evidence,
-	}, "|")
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(f.RuleID)), "dbinspect.") && strings.TrimSpace(f.ObservationID) != "" {
+		parts = append(parts, strings.TrimSpace(f.ObservationID))
+	}
+	return strings.Join(parts, "|")
 }
 
 func betterReportFinding(left, right scanner.Finding) scanner.Finding {

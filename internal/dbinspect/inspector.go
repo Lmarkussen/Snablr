@@ -1,6 +1,9 @@
 package dbinspect
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 func New() Inspector {
 	return Inspector{}
@@ -55,18 +58,18 @@ func (Inspector) InspectMetadata(candidate Candidate) []Match {
 }
 
 func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
+	seen := make(map[string]struct{})
+	matches := inspectSQLiteArtifact(candidate, content, seen)
 	text := normalizedContent(content)
 	if text == "" {
-		return nil
+		return matches
 	}
-
-	seen := make(map[string]struct{})
-	var matches []Match
 
 	matches = append(matches, inspectOracleTNS(candidate, text, seen)...)
 	matches = append(matches, inspectINISections(text, seen)...)
 	matches = append(matches, inspectScopedCredentialFields(text, seen)...)
 	matches = append(matches, inspectSQLDump(candidate, text, seen)...)
+	matches = append(matches, inspectStructuredDatabaseConfig(candidate, content, text, seen)...)
 
 	lines := strings.Split(text, "\n")
 	for idx, rawLine := range lines {
@@ -77,6 +80,9 @@ func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
 		for _, fragment := range candidateFragments(line) {
 			if observation, ok := inspectKVFragment(fragment, idx+1); ok {
 				key := observation.id + "::" + strings.ToLower(observation.match)
+				if strings.HasPrefix(observation.id, "dbinspect.infrastructure.") {
+					key = observation.id + "::" + strconv.Itoa(observation.lineNumber) + "::" + strings.ToLower(observation.match)
+				}
 				if _, exists := seen[key]; !exists {
 					seen[key] = struct{}{}
 					matches = append(matches, matchFromObservation(observation, fragment))
@@ -84,6 +90,9 @@ func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
 			}
 			if observation, ok := inspectURLFragment(fragment, idx+1); ok {
 				key := observation.id + "::" + strings.ToLower(observation.match)
+				if strings.HasPrefix(observation.id, "dbinspect.infrastructure.") {
+					key = observation.id + "::" + strconv.Itoa(observation.lineNumber) + "::" + strings.ToLower(observation.match)
+				}
 				if _, exists := seen[key]; !exists {
 					seen[key] = struct{}{}
 					matches = append(matches, matchFromObservation(observation, fragment))

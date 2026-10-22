@@ -179,6 +179,7 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 		{"Credentials", "Confirmed and review-level plaintext credential material"},
 		{"Keys & Certificates", "Validated private-key and certificate material"},
 		{"Hashes & Captures", "Validated NT hash and NetNTLM capture material"},
+		{"Database Locations & Connections", "Observed database files, endpoints, and configuration"},
 		{"Application & Cloud Secrets", "Tokens, API keys, and application authentication material"},
 		{"Connection & Database Secrets", "Connection strings, DSNs, and database credentials"},
 		{"Windows & Deployment Artifacts", "Windows, SCCM, and deployment evidence"},
@@ -259,6 +260,25 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 	}
 	for _, item := range findings {
 		f := item.Finding
+		if databaseLocationFinding(f) {
+			name := "Database Locations & Connections"
+			group := groups[name]
+			group.Discoveries = append(group.Discoveries, discovery{
+				Title:          firstNonEmpty(f.RuleName, f.RuleID),
+				Subcategory:    databaseLocationSubcategory(f),
+				MaterialFamily: name,
+				MaterialType:   "database observation",
+				Host:           f.Host,
+				Share:          f.Share,
+				Path:           f.FilePath,
+				Confidence:     firstNonEmpty(f.Confidence, "unknown"),
+				Verification:   firstNonEmpty(f.TriageClass, f.SignalType, "observed"),
+				Reason:         f.MatchReason,
+				Sources:        []string{sourceLabelFinding(f)},
+				Finding:        &f,
+			})
+			continue
+		}
 		if !f.Actionable && !strings.EqualFold(f.TriageClass, "review") {
 			if len(groups["Original Findings"].Discoveries) < 50 {
 				groups["Original Findings"].Discoveries = append(groups["Original Findings"].Discoveries, discovery{
@@ -306,6 +326,30 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 		}
 	}
 	return result, auditCredentialProjection(scanID, credentials, result)
+}
+
+func databaseLocationFinding(f scanner.Finding) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(f.RuleID)), "dbinspect.")
+}
+
+func databaseLocationSubcategory(f scanner.Finding) string {
+	ruleID := strings.ToLower(strings.TrimSpace(f.RuleID))
+	switch {
+	case strings.Contains(ruleID, "structured_config"):
+		return "Database Servers & Instances"
+	case strings.Contains(ruleID, "connection") || strings.Contains(ruleID, "jdbc") || strings.Contains(ruleID, "url"):
+		return "Database Connection Strings"
+	case strings.Contains(ruleID, "tns") || strings.Contains(ruleID, "server") || strings.Contains(ruleID, "endpoint"):
+		return "Database Servers & Instances"
+	case strings.Contains(ruleID, "odbc") || strings.Contains(ruleID, "udl") || strings.Contains(ruleID, "dsn"):
+		return "DSN/ODBC Configurations"
+	case strings.Contains(ruleID, "artifact") && (strings.Contains(ruleID, "tns") || strings.Contains(ruleID, "sqlnet") || strings.Contains(ruleID, "ini")):
+		return "Database Configuration Artifacts"
+	case strings.Contains(ruleID, "artifact") || strings.Contains(ruleID, "backup"):
+		return "Database Files & Backups"
+	default:
+		return "Database Configuration Artifacts"
+	}
 }
 
 func classifyCandidate(candidate credentialanalysis.Candidate) (string, string) {

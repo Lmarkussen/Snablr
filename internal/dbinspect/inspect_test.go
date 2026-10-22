@@ -1,11 +1,62 @@
 package dbinspect
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func validSQLiteFixture() []byte {
+	content := make([]byte, 4096)
+	copy(content, []byte("SQLite format 3\x00"))
+	binary.BigEndian.PutUint16(content[16:18], 4096)
+	content[18] = 1
+	content[19] = 1
+	content[21] = 64
+	content[22] = 32
+	content[23] = 32
+	binary.BigEndian.PutUint32(content[28:32], 1)
+	return content
+}
+
+func hasMatchID(matches []Match, id string) bool {
+	for _, match := range matches {
+		if match.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func TestSQLiteStructuralArtifactUsesContentNotFilename(t *testing.T) {
+	t.Parallel()
+
+	content := validSQLiteFixture()
+	for _, name := range []string{"reporting.sqlite", "reporting.bin", "extensionless-artifact"} {
+		matches := New().InspectContent(Candidate{FilePath: name, Name: name}, content)
+		if !hasMatchID(matches, "dbinspect.artifact.sqlite_structural") {
+			t.Fatalf("%s: expected structural SQLite match, got %#v", name, matches)
+		}
+	}
+}
+
+func TestSQLiteStructuralArtifactRejectsInvalidAndTruncatedHeaders(t *testing.T) {
+	t.Parallel()
+
+	valid := validSQLiteFixture()
+	cases := [][]byte{valid[:99], []byte("SQLite format 3\\x00")}
+	invalidPageSize := append([]byte(nil), valid...)
+	binary.BigEndian.PutUint16(invalidPageSize[16:18], 1000)
+	cases = append(cases, invalidPageSize)
+	for index, content := range cases {
+		matches := New().InspectContent(Candidate{FilePath: "misleading.db", Name: "misleading.db"}, content)
+		if hasMatchID(matches, "dbinspect.artifact.sqlite_structural") {
+			t.Fatalf("case %d: invalid SQLite content was structurally confirmed: %#v", index, matches)
+		}
+	}
+}
 
 func TestInspectorFixtures(t *testing.T) {
 	t.Parallel()

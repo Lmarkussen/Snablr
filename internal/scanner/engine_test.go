@@ -199,6 +199,57 @@ func TestEngineEvaluateIncludesDatabaseInspectionFindings(t *testing.T) {
 	}
 }
 
+func TestEngineEvaluatesExtensionlessSQLiteByContent(t *testing.T) {
+	t.Parallel()
+
+	content := make([]byte, 4096)
+	copy(content, []byte("SQLite format 3\x00"))
+	binary.BigEndian.PutUint16(content[16:18], 4096)
+	content[18], content[19] = 1, 1
+	content[21], content[22], content[23] = 64, 32, 32
+	binary.BigEndian.PutUint32(content[28:32], 1)
+
+	engine := NewEngine(Options{}, &rules.Manager{}, nil, logx.New("error"))
+	meta := FileMetadata{FilePath: "exports/opaque-copy", Name: "opaque-copy", Size: int64(len(content))}
+	if !engine.NeedsContent(meta) {
+		t.Fatal("expected extensionless SQLite artifact to be content-eligible")
+	}
+	evaluation := engine.Evaluate(meta, content)
+	for _, finding := range evaluation.Findings {
+		if finding.RuleID == "dbinspect.artifact.sqlite_structural" {
+			if finding.SignalType != "validated" || !containsString(finding.Tags, "db:status:confirmed") {
+				t.Fatalf("unexpected SQLite structural classification: %#v", finding)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected extensionless SQLite structural finding, got %#v", evaluation.Findings)
+}
+
+func TestEngineEvaluatesExtensionlessDatabaseConfigurationByContent(t *testing.T) {
+	t.Parallel()
+
+	content := []byte(`{"database":{"host":"db.example.test","port":5432,"name":"payroll"}}`)
+	engine := NewEngine(Options{}, &rules.Manager{}, nil, logx.New("error"))
+	meta := FileMetadata{FilePath: "exports/opaque-config", Name: "opaque-config", Size: int64(len(content))}
+	if !engine.NeedsContent(meta) {
+		t.Fatal("expected extensionless database configuration to be content-eligible")
+	}
+	evaluation := engine.Evaluate(meta, content)
+	for _, finding := range evaluation.Findings {
+		if finding.RuleID == "dbinspect.infrastructure.structured_config" {
+			if finding.SignalType != "validated" || !containsString(finding.Tags, "db:status:configured") {
+				t.Fatalf("unexpected configured endpoint classification: %#v", finding)
+			}
+			if finding.MatchedText != string(content) {
+				t.Fatalf("configured endpoint evidence changed: %q", finding.MatchedText)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected extensionless configured endpoint finding, got %#v", evaluation.Findings)
+}
+
 func TestCorrelateFindingsDatabaseArtifactAloneStaysMediumConfidence(t *testing.T) {
 	t.Parallel()
 

@@ -1,6 +1,9 @@
 package scanner
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"fmt"
 	"strings"
 
 	"snablr/internal/credentialanalysis"
@@ -20,6 +23,14 @@ func dbCandidate(meta FileMetadata) dbinspect.Candidate {
 func findingsFromDBMatches(meta FileMetadata, matches []dbinspect.Match) []Finding {
 	findings := make([]Finding, 0, len(matches))
 	for _, match := range matches {
+		observationID := strings.TrimSpace(match.ObservationID)
+		ruleID := strings.ToLower(strings.TrimSpace(match.ID))
+		if observationID == "" && (strings.HasPrefix(ruleID, "dbinspect.infrastructure.") || ruleID == "dbinspect.artifact.sqlite_structural") {
+			observationID = fmt.Sprintf("%s|%s|%d", match.ID, strings.TrimSpace(match.Match), match.LineNumber)
+		}
+		if observationID != "" && (strings.HasPrefix(ruleID, "dbinspect.") || ruleID == "dbinspect.artifact.sqlite_structural") {
+			observationID = sourceScopedDBObservationID(meta, match.ID, observationID)
+		}
 		findings = append(findings, newFinding(ruleFromDBMatch(match), meta, findingEvidence{
 			SignalType:          strings.TrimSpace(match.SignalType),
 			Match:               strings.TrimSpace(match.Match),
@@ -30,8 +41,30 @@ func findingsFromDBMatches(meta FileMetadata, matches []dbinspect.Match) []Findi
 			ContextRedacted:     match.ContextRedacted,
 			LineNumber:          match.LineNumber,
 		}))
+		findings[len(findings)-1].ObservationID = observationID
 	}
 	return findings
+}
+
+func sourceScopedDBObservationID(meta FileMetadata, ruleID, observationID string) string {
+	hash := sha256.New()
+	hash.Write([]byte("snablr:p4:db-observation:v1\x00"))
+	for _, component := range []string{
+		meta.Source,
+		meta.Host,
+		meta.Share,
+		meta.FilePath,
+		meta.ArchivePath,
+		meta.ArchiveMemberPath,
+		ruleID,
+		observationID,
+	} {
+		var length [8]byte
+		binary.BigEndian.PutUint64(length[:], uint64(len(component)))
+		hash.Write(length[:])
+		hash.Write([]byte(component))
+	}
+	return fmt.Sprintf("p4obs-v1:%x", hash.Sum(nil))
 }
 
 func (e *Engine) recordDBConnectionCandidates(meta FileMetadata, matches []dbinspect.Match) {

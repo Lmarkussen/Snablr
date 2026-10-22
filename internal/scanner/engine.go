@@ -26,9 +26,11 @@ import (
 	"snablr/internal/legacyoffice"
 	"snablr/internal/metrics"
 	"snablr/internal/rules"
+	"snablr/internal/sccminspect"
 	"snablr/internal/sqliteinspect"
 	"snablr/internal/wiminspect"
 	"snablr/internal/wincredinspect"
+	"snablr/internal/windowsinspect"
 	"snablr/pkg/logx"
 )
 
@@ -73,6 +75,8 @@ type Engine struct {
 	sqliteInspector    sqliteinspect.Inspector
 	wimInspector       wiminspect.Options
 	winCredInspector   wincredinspect.Inspector
+	windowsInspector   windowsinspect.Inspector
+	sccmInspector      sccminspect.Inspector
 	validationMode     bool
 	validationSink     ValidationObserver
 	credentialExporter SensitiveCredentialExporter
@@ -135,6 +139,8 @@ func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx
 		sqliteInspector:   sqliteinspect.New(opts.SQLite),
 		wimInspector:      opts.WIM,
 		winCredInspector:  wincredinspect.New(),
+		windowsInspector:  windowsinspect.New(),
+		sccmInspector:     sccminspect.New(),
 		validationMode:    opts.ValidationMode,
 		validationSink:    validationObserverForSink(sink),
 		bundleCoordinator: opts.BundleCoordinator,
@@ -272,7 +278,9 @@ func (e *Engine) NeedsContent(meta FileMetadata) bool {
 		e.dbInspector.NeedsContent(dbCandidate(meta)) ||
 		e.keyInspector.NeedsContent(keyCandidate(meta)) ||
 		e.sqliteInspector.NeedsContent(sqliteCandidate(meta)) ||
-		e.winCredInspector.NeedsContent(winCredCandidate(meta))
+		e.winCredInspector.NeedsContent(winCredCandidate(meta)) ||
+		e.windowsInspector.NeedsContent(windowsCandidate(meta)) ||
+		e.sccmInspector.NeedsContent(sccmCandidate(meta))
 }
 
 func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceContent bool) Evaluation {
@@ -294,7 +302,9 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 		e.dbInspector.NeedsContent(dbCandidate(meta)) ||
 		e.keyInspector.NeedsContent(keyCandidate(meta)) ||
 		e.sqliteInspector.NeedsContent(sqliteCandidate(meta)) ||
-		e.winCredInspector.NeedsContent(winCredCandidate(meta))
+		e.winCredInspector.NeedsContent(winCredCandidate(meta)) ||
+		e.windowsInspector.NeedsContent(windowsCandidate(meta)) ||
+		e.sccmInspector.NeedsContent(sccmCandidate(meta))
 	if !evaluation.NeedContent || len(content) == 0 {
 		evaluation.Findings = correlateFindings(meta, evaluation.Findings)
 		evaluation.Findings = adjustAWSArtifactVisibility(evaluation.Findings)
@@ -341,6 +351,8 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 	evaluation.Findings = append(evaluation.Findings, e.contentScanner.Scan(e.contentRules, meta, ruleContent)...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromAWSMatches(meta, e.awsInspector.InspectContent(awsCandidate(meta), content))...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromCloudMatches(meta, e.cloudInspector.InspectContent(cloudCandidate(meta), content))...)
+	evaluation.Findings = append(evaluation.Findings, findingsFromWindowsMatches(meta, e.windowsInspector.InspectContent(windowsCandidate(meta), content))...)
+	evaluation.Findings = append(evaluation.Findings, findingsFromSCCMMatches(meta, e.sccmInspector.InspectContent(sccmCandidate(meta), content))...)
 	dbMatches := e.dbInspector.InspectContent(dbCandidate(meta), content)
 	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, dbMatches)...)
 	e.recordDBConnectionCandidates(meta, dbMatches)

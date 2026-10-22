@@ -171,7 +171,7 @@ func buildContentMatchDetails(rule rules.Rule, content string, snippetBytes int)
 		matchedText:         match,
 		matchedTextRedacted: redactedMatch,
 		snippet:             flattenSnippet(context, snippetBytes),
-		context:             limitRunes(context, 320),
+		context:             context,
 		contextRedacted:     limitRunes(redactedContext, 320),
 		potentialAccount:    limitRunes(potentialAccount, 160),
 		lineNumber:          lineNumber,
@@ -262,9 +262,8 @@ func normalizedIndex(content string, idx int) int {
 }
 
 func flattenSnippet(content string, maxBytes int) string {
-	content = strings.ReplaceAll(content, "\n", `\n`)
-	content = strings.ReplaceAll(content, "\r", "")
-	return limitRunes(content, maxBytes)
+	_ = maxBytes
+	return content
 }
 
 func nearbyIdentityLine(lines []string, lineIndex int) string {

@@ -485,11 +485,8 @@ func displayContext(f scanner.Finding) string {
 }
 
 func reportEvidenceText(value string, limit int) string {
-	value = strings.TrimSpace(value)
-	if strings.Contains(value, "BEGIN ") && strings.Contains(value, " PRIVATE KEY-----") {
-		return value
-	}
-	return boundReportText(value, limit)
+	_ = limit
+	return value
 }
 
 // contextAddsInformation reports whether the context block adds anything beyond

@@ -2133,7 +2133,7 @@ func TestHTMLWriterRendersStandaloneTriageReport(t *testing.T) {
 	}
 }
 
-func TestHTMLWriterBoundsLargeDatabaseEvidence(t *testing.T) {
+func TestHTMLWriterPreservesLargeDatabaseEvidence(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
@@ -2148,6 +2148,7 @@ func TestHTMLWriterBoundsLargeDatabaseEvidence(t *testing.T) {
 	finding.Context = large
 	finding.ContextRedacted = large
 	finding.Snippet = large
+	finding.Actionable = true
 
 	if err := writer.WriteFinding(finding); err != nil {
 		t.Fatalf("WriteFinding returned error: %v", err)
@@ -2157,11 +2158,11 @@ func TestHTMLWriterBoundsLargeDatabaseEvidence(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "[truncated]") {
-		t.Fatalf("expected html output to mark truncated oversized DB evidence, got:\n%s", out)
+	if !strings.Contains(out, "SELECT secret FROM payroll_users WHERE password=") || !strings.Contains(out, "UNION SELECT token FROM audit_log; ") || strings.Count(out, "UNION SELECT token FROM audit_log;") < 80 {
+		t.Fatalf("expected html output to preserve complete DB evidence")
 	}
-	if strings.Count(out, "UNION SELECT token FROM audit_log;") > 20 {
-		t.Fatalf("expected bounded DB evidence and search text, got excessive repeated SQL in report")
+	if !strings.Contains(out, "[truncated]") {
+		t.Fatalf("expected bounded search metadata to remain marked as truncated")
 	}
 }
 

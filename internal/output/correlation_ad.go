@@ -100,7 +100,10 @@ func reportFindingDedupKey(f scanner.Finding) string {
 		evidence,
 	}
 	ruleID := strings.ToLower(strings.TrimSpace(f.RuleID))
-	if (strings.HasPrefix(ruleID, "dbinspect.") || strings.HasPrefix(ruleID, "cloudinspect.")) && strings.TrimSpace(f.ObservationID) != "" {
+	if (strings.HasPrefix(ruleID, "dbinspect.") ||
+		strings.HasPrefix(ruleID, "cloudinspect.") ||
+		strings.HasPrefix(ruleID, "windowsinspect.") ||
+		strings.HasPrefix(ruleID, "sccminspect.")) && strings.TrimSpace(f.ObservationID) != "" {
 		parts = append(parts, strings.TrimSpace(f.ObservationID))
 	}
 	return strings.Join(parts, "|")

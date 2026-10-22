@@ -38,7 +38,7 @@ func correlateFindings(meta FileMetadata, findings []Finding) []Finding {
 			category: strings.ToLower(strings.TrimSpace(finding.Category)),
 		}
 		ruleID := strings.ToLower(strings.TrimSpace(finding.RuleID))
-		if (strings.HasPrefix(ruleID, "dbinspect.") || strings.HasPrefix(ruleID, "cloudinspect.")) && strings.TrimSpace(finding.ObservationID) != "" {
+		if (strings.HasPrefix(ruleID, "dbinspect.") || strings.HasPrefix(ruleID, "cloudinspect.") || strings.HasPrefix(ruleID, "windowsinspect.") || strings.HasPrefix(ruleID, "sccminspect.")) && strings.TrimSpace(finding.ObservationID) != "" {
 			key.observation = strings.TrimSpace(finding.ObservationID)
 		}
 		grouped[key] = append(grouped[key], finding)
@@ -52,6 +52,9 @@ func correlateFindings(meta FileMetadata, findings []Finding) []Finding {
 	sort.Slice(out, func(i, j int) bool {
 		if severityRank(out[i].Severity) == severityRank(out[j].Severity) {
 			if out[i].Category == out[j].Category {
+				if out[i].FilePath == out[j].FilePath {
+					return out[i].ObservationID < out[j].ObservationID
+				}
 				return out[i].FilePath < out[j].FilePath
 			}
 			return out[i].Category < out[j].Category

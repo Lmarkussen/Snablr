@@ -61,6 +61,11 @@ func isConfigOnlyFinding(f Finding) bool {
 }
 
 func isWeakReviewFinding(f Finding) bool {
+	for _, tag := range f.Tags {
+		if strings.EqualFold(strings.TrimSpace(tag), "sccm:synthetic-contract") {
+			return true
+		}
+	}
 	return !hasStrongEvidence(f)
 }
 

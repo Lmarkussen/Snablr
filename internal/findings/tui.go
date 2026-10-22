@@ -265,6 +265,25 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 	}
 	for _, item := range findings {
 		f := item.Finding
+		if windowsArtifactFinding(f) {
+			name := "Windows & Deployment Artifacts"
+			group := groups[name]
+			group.Discoveries = append(group.Discoveries, discovery{
+				Title:          firstNonEmpty(f.RuleName, f.RuleID),
+				Subcategory:    windowsArtifactSubcategory(f),
+				MaterialFamily: name,
+				MaterialType:   "Windows artifact observation",
+				Host:           f.Host,
+				Share:          f.Share,
+				Path:           f.FilePath,
+				Confidence:     firstNonEmpty(f.Confidence, "unknown"),
+				Verification:   firstNonEmpty(f.TriageClass, f.SignalType, "observed"),
+				Reason:         f.MatchReason,
+				Sources:        []string{sourceLabelFinding(f)},
+				Finding:        &f,
+			})
+			continue
+		}
 		if applicationCloudFinding(f) {
 			name := "Application & Cloud Secrets"
 			group := groups[name]
@@ -354,6 +373,35 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 
 func applicationCloudFinding(f scanner.Finding) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(f.RuleID)), "cloudinspect.")
+}
+
+func windowsArtifactFinding(f scanner.Finding) bool {
+	ruleID := strings.ToLower(strings.TrimSpace(f.RuleID))
+	return strings.HasPrefix(ruleID, "windowsinspect.") || strings.HasPrefix(ruleID, "sccminspect.")
+}
+
+func windowsArtifactSubcategory(f scanner.Finding) string {
+	ruleID := strings.ToLower(strings.TrimSpace(f.RuleID))
+	switch {
+	case strings.Contains(ruleID, "sccminspect") && strings.Contains(ruleID, "distribution_point"):
+		return "SCCM Infrastructure & Distribution Points"
+	case strings.Contains(ruleID, "sccminspect") && strings.Contains(ruleID, "task_sequence"):
+		return "SCCM Packages & Task Sequences"
+	case strings.Contains(ruleID, "sccminspect") && strings.Contains(ruleID, "deployment"):
+		return "SCCM Deployment References"
+	case strings.Contains(ruleID, "sccminspect"):
+		return "SCCM Site & Client Configuration"
+	case strings.Contains(ruleID, "unattend"):
+		return "Windows Setup & Unattend"
+	case strings.Contains(ruleID, "scheduled_task"):
+		return "Windows Scheduled Tasks"
+	case strings.Contains(ruleID, "gpp"):
+		return "Group Policy & Preferences"
+	case strings.Contains(ruleID, "registry_export"):
+		return "Registry Exports"
+	default:
+		return "Windows Setup & Unattend"
+	}
 }
 
 func applicationCloudSubcategory(f scanner.Finding) string {

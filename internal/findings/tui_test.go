@@ -53,6 +53,27 @@ func TestDatabaseLocationFindingsUseDedicatedCategory(t *testing.T) {
 	}
 }
 
+func TestWindowsArtifactFindingsUseDedicatedCategoryAndSubcategory(t *testing.T) {
+	categories := buildCategories(nil, []Finding{{Finding: scanner.Finding{
+		RuleID: "windowsinspect.registry_export.structured", RuleName: "Windows Registry Editor Export", Category: "windows-deployment", SignalType: "validated", Confidence: "high", FilePath: "export.reg", MatchedText: "Windows Registry Editor Version 5.00",
+	}}}, nil)
+	if len(categories) != 1 || categories[0].Name != "Windows & Deployment Artifacts" {
+		t.Fatalf("expected Windows artifact category, got %#v", categories)
+	}
+	if len(categories[0].Discoveries) != 1 || categories[0].Discoveries[0].Subcategory != "Registry Exports" {
+		t.Fatalf("unexpected Windows artifact projection: %#v", categories[0].Discoveries)
+	}
+}
+
+func TestSCCMArtifactFindingsUseInfrastructureSubcategories(t *testing.T) {
+	categories := buildCategories(nil, []Finding{{Finding: scanner.Finding{
+		RuleID: "sccminspect.infrastructure.distribution_point", RuleName: "SCCM Distribution Point", Category: "windows-deployment", SignalType: "validated", Confidence: "high", FilePath: "sccm.json",
+	}}}, nil)
+	if len(categories) != 1 || len(categories[0].Discoveries) != 1 || categories[0].Discoveries[0].Subcategory != "SCCM Infrastructure & Distribution Points" {
+		t.Fatalf("unexpected SCCM projection: %#v", categories)
+	}
+}
+
 func TestStructuredDatabaseEndpointUsesServerSubcategory(t *testing.T) {
 	categories := buildCategories(nil, []Finding{{Finding: scanner.Finding{
 		RuleID: "dbinspect.infrastructure.structured_config", RuleName: "Validated Database Configuration Endpoint",

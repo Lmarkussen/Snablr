@@ -161,6 +161,10 @@ func TestFinderClassificationUsesPersistedMaterialType(t *testing.T) {
 		{"password", "password", "Synthetic!", "Review", "Password Only"},
 		{"hash", "nt_hash", "00112233445566778899aabbccddeeff", "Hashes & Captures", "NT Hashes"},
 		{"netntlm", "netntlmv2", "user::domain:challenge:proof:blob", "Hashes & Captures", "NetNTLMv2"},
+		{"asrep", "kerberos_asrep", "asrep-record", "Hashes & Captures", "Kerberos AS-REP"},
+		{"tgs", "kerberos_tgs", "tgs-record", "Hashes & Captures", "Kerberos TGS"},
+		{"dcc", "dcc", "dcc-record", "Hashes & Captures", "DCC1"},
+		{"dcc2", "dcc2", "dcc2-record", "Hashes & Captures", "DCC2"},
 		{"key", "private_key", "-----BEGIN RSA PRIVATE KEY-----", "Keys & Certificates", "RSA Keys"},
 		{"review", "password", "${UNRESOLVED}", "Review", "Password Only"},
 	}

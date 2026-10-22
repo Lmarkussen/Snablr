@@ -927,6 +927,9 @@ func harvestLines(text string, add func(Candidate)) {
 		if harvestNetNTLMRecord(line, index+1, add) {
 			continue
 		}
+		if harvestCaptureRecord(line, index+1, add) {
+			continue
+		}
 		if harvestCanonicalNTHashRecord(line, index+1, add) {
 			continue
 		}

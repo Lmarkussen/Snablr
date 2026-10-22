@@ -295,6 +295,32 @@ func TestCredsOutIncludesNetNTLMMaterial(t *testing.T) {
 	}
 }
 
+func TestCredsOutIncludesP3CaptureMaterial(t *testing.T) {
+	values := []credentialanalysis.Candidate{
+		{Verification: credentialanalysis.Confirmed, CredentialType: "kerberos_asrep", Identity: "alice", Value: "$krb5asrep$23$alice@SYNTHETIC:00112233445566778899aabbccddeeff$00112233445566778899aabbccddeeff"},
+		{Verification: credentialanalysis.Confirmed, CredentialType: "kerberos_tgs", Identity: "alice", Value: "$krb5tgs$23$*alice$SYNTHETIC$cifs/server*$00112233445566778899aabbccddeeff$00112233445566778899aabbccddeeff"},
+		{Verification: credentialanalysis.Confirmed, CredentialType: "dcc", Identity: "alice", Value: "$DCC1#alice#00112233445566778899aabbccddeeff"},
+		{Verification: credentialanalysis.Confirmed, CredentialType: "dcc2", Identity: "alice", Value: "$DCC2$10240#alice#00112233445566778899aabbccddeeff"},
+	}
+	var buf bytes.Buffer
+	writer := NewCredsWriter(&buf, nopCloser{})
+	for _, candidate := range values {
+		if err := writer.RecordCredentialCandidate(candidate); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range values {
+		for _, want := range []string{"Type: " + candidate.CredentialType, candidate.Value} {
+			if !strings.Contains(buf.String(), want) {
+				t.Fatalf("P3 capture material missing from creds-out (%q):\n%s", want, buf.String())
+			}
+		}
+	}
+}
+
 // TestCredentialReviewSectionIsBounded proves a large review set cannot flood
 // the top of the report with thousands of rows while the underlying data stays
 // available to the non-HTML exports.

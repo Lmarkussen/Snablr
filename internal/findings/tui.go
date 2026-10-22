@@ -321,6 +321,14 @@ func classifyCandidate(candidate credentialanalysis.Candidate) (string, string) 
 		return "Hashes & Captures", "NetNTLMv1"
 	case "netntlmv2":
 		return "Hashes & Captures", "NetNTLMv2"
+	case "kerberos_asrep":
+		return "Hashes & Captures", "Kerberos AS-REP"
+	case "kerberos_tgs":
+		return "Hashes & Captures", "Kerberos TGS"
+	case "dcc":
+		return "Hashes & Captures", "DCC1"
+	case "dcc2":
+		return "Hashes & Captures", "DCC2"
 	case "private_key":
 		return "Keys & Certificates", privateKeySubcategory(candidate)
 	case "certificate":

@@ -133,3 +133,45 @@ func TestProviderBoundsFindingPage(t *testing.T) {
 		t.Fatal("expected page size error")
 	}
 }
+
+func TestProviderPreservesP3CaptureValuesAndTypes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "p3-captures.db")
+	values := []credentialanalysis.Candidate{
+		{CredentialType: "kerberos_asrep", Identity: "alice", Domain: "SYNTHETIC", Value: "$krb5asrep$23$alice@SYNTHETIC:00112233445566778899aabbccddeeff$00112233445566778899aabbccddeeff", Verification: credentialanalysis.Confirmed, Path: "captures"},
+		{CredentialType: "kerberos_tgs", Identity: "alice", Domain: "SYNTHETIC", Value: "$krb5tgs$23$*alice$SYNTHETIC$cifs/server*$00112233445566778899aabbccddeeff$00112233445566778899aabbccddeeff", Verification: credentialanalysis.Confirmed, Path: "captures"},
+		{CredentialType: "dcc", Identity: "alice", Value: "$DCC1#alice#00112233445566778899aabbccddeeff", Verification: credentialanalysis.Confirmed, Path: "captures"},
+		{CredentialType: "dcc2", Identity: "alice", Value: "$DCC2$10240#alice#00112233445566778899aabbccddeeff", Verification: credentialanalysis.Confirmed, Path: "archive.zip!captures"},
+	}
+	state, err := store.Open(path, store.Options{ScanID: "p3-scan", SnablrVersion: "test", Semantics: "p3", QueueSize: 8, BatchSize: 1, FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range values {
+		if err := state.RecordCredential(candidate); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	got, err := provider.Credentials(context.Background(), "p3-scan", 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(values) {
+		t.Fatalf("credential count = %d, want %d", len(got), len(values))
+	}
+	for index, expected := range values {
+		if got[index].Candidate.CredentialType != expected.CredentialType || got[index].Candidate.Value != expected.Value || got[index].Candidate.Path != expected.Path {
+			t.Fatalf("credential %d = %#v, want %#v", index, got[index].Candidate, expected)
+		}
+	}
+}

@@ -49,7 +49,7 @@ func TestHarvestRejectsMalformedNetNTLMRecords(t *testing.T) {
 }
 
 func TestCredentialPresentationClassification(t *testing.T) {
-	for _, credentialType := range []string{"hash", "nt_hash", "netntlmv1", "netntlmv2"} {
+	for _, credentialType := range []string{"hash", "nt_hash", "netntlmv1", "netntlmv2", "kerberos_asrep", "kerberos_tgs", "dcc", "dcc2"} {
 		if got := CredentialPresentationLabel(credentialType); got != "HASH" {
 			t.Errorf("%s label = %q, want HASH", credentialType, got)
 		}

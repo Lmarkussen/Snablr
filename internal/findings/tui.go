@@ -260,6 +260,25 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 	}
 	for _, item := range findings {
 		f := item.Finding
+		if applicationCloudFinding(f) {
+			name := "Application & Cloud Secrets"
+			group := groups[name]
+			group.Discoveries = append(group.Discoveries, discovery{
+				Title:          firstNonEmpty(f.RuleName, f.RuleID),
+				Subcategory:    applicationCloudSubcategory(f),
+				MaterialFamily: name,
+				MaterialType:   "application/cloud observation",
+				Host:           f.Host,
+				Share:          f.Share,
+				Path:           f.FilePath,
+				Confidence:     firstNonEmpty(f.Confidence, "unknown"),
+				Verification:   firstNonEmpty(f.TriageClass, f.SignalType, "observed"),
+				Reason:         f.MatchReason,
+				Sources:        []string{sourceLabelFinding(f)},
+				Finding:        &f,
+			})
+			continue
+		}
 		if databaseLocationFinding(f) {
 			name := "Database Locations & Connections"
 			group := groups[name]
@@ -326,6 +345,26 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 		}
 	}
 	return result, auditCredentialProjection(scanID, credentials, result)
+}
+
+func applicationCloudFinding(f scanner.Finding) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(f.RuleID)), "cloudinspect.")
+}
+
+func applicationCloudSubcategory(f scanner.Finding) string {
+	ruleID := strings.ToLower(strings.TrimSpace(f.RuleID))
+	switch {
+	case strings.HasPrefix(ruleID, "cloudinspect.aws."):
+		return "AWS Credentials"
+	case strings.HasPrefix(ruleID, "cloudinspect.azure."):
+		return "Azure / Entra Credentials"
+	case strings.HasPrefix(ruleID, "cloudinspect.gcp.external_account"):
+		return "Secret References & Configuration Artifacts"
+	case strings.HasPrefix(ruleID, "cloudinspect.gcp."):
+		return "Google Cloud Credentials"
+	default:
+		return "Other Cloud Provider Credentials"
+	}
 }
 
 func databaseLocationFinding(f scanner.Finding) bool {

@@ -51,6 +51,34 @@ func TestInspectContentRequiresRealCredentialBundle(t *testing.T) {
 	}
 }
 
+func TestInspectContentPreservesCompleteEvidenceProjections(t *testing.T) {
+	t.Parallel()
+
+	accessKey := testAWSAccessKey()
+	secretKey := testAWSSecretKey()
+	sessionToken := testAWSSessionToken()
+	want := "aws_access_key_id=" + accessKey + "\n" +
+		"aws_secret_access_key=" + secretKey + "\n" +
+		"aws_session_token=" + sessionToken
+
+	matches := New().InspectContent(Candidate{FilePath: `Users/Alice/.aws/credentials`}, []byte("[default]\n"+want+"\n"))
+	if len(matches) != 1 {
+		t.Fatalf("expected one credential bundle, got %#v", matches)
+	}
+	match := matches[0]
+	for field, got := range map[string]string{
+		"matched_text":          match.MatchedText,
+		"matched_text_redacted": match.MatchedTextRedacted,
+		"snippet":               match.Snippet,
+		"context":               match.Context,
+		"context_redacted":      match.ContextRedacted,
+	} {
+		if got != want {
+			t.Errorf("%s changed evidence: got %q, want %q", field, got, want)
+		}
+	}
+}
+
 func TestProfileContextUsesPrefixBeforeDotAWS(t *testing.T) {
 	t.Parallel()
 

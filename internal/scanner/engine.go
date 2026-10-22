@@ -19,6 +19,7 @@ import (
 	"snablr/internal/awsinspect"
 	"snablr/internal/backupinspect"
 	"snablr/internal/browsercredinspect"
+	"snablr/internal/cloudinspect"
 	"snablr/internal/credentialanalysis"
 	"snablr/internal/dbinspect"
 	"snablr/internal/keyinspect"
@@ -65,6 +66,7 @@ type Engine struct {
 	hasGenericText     bool
 	backupInspector    backupinspect.Inspector
 	awsInspector       awsinspect.Inspector
+	cloudInspector     cloudinspect.Inspector
 	browserInspector   browsercredinspect.Inspector
 	dbInspector        dbinspect.Inspector
 	keyInspector       keyinspect.Inspector
@@ -126,6 +128,7 @@ func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx
 		hasGenericText:    hasGenericText,
 		backupInspector:   backupinspect.New(),
 		awsInspector:      awsinspect.New(),
+		cloudInspector:    cloudinspect.New(),
 		browserInspector:  browsercredinspect.New(),
 		dbInspector:       dbinspect.New(),
 		keyInspector:      keyinspect.New(),
@@ -265,6 +268,7 @@ func (e *Engine) NeedsContent(meta FileMetadata) bool {
 	return e.shouldReadContent(meta, e.contentRules) ||
 		credentialanalysis.NeedsContent(meta.FilePath, meta.Name, meta.Size) ||
 		e.awsInspector.NeedsContent(awsCandidate(meta)) ||
+		e.cloudInspector.NeedsContent(cloudCandidate(meta)) ||
 		e.dbInspector.NeedsContent(dbCandidate(meta)) ||
 		e.keyInspector.NeedsContent(keyCandidate(meta)) ||
 		e.sqliteInspector.NeedsContent(sqliteCandidate(meta)) ||
@@ -286,6 +290,7 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 		e.shouldReadContent(meta, e.contentRules) ||
 		credentialanalysis.NeedsContent(meta.FilePath, meta.Name, meta.Size) ||
 		e.awsInspector.NeedsContent(awsCandidate(meta)) ||
+		e.cloudInspector.NeedsContent(cloudCandidate(meta)) ||
 		e.dbInspector.NeedsContent(dbCandidate(meta)) ||
 		e.keyInspector.NeedsContent(keyCandidate(meta)) ||
 		e.sqliteInspector.NeedsContent(sqliteCandidate(meta)) ||
@@ -335,6 +340,7 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 	}
 	evaluation.Findings = append(evaluation.Findings, e.contentScanner.Scan(e.contentRules, meta, ruleContent)...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromAWSMatches(meta, e.awsInspector.InspectContent(awsCandidate(meta), content))...)
+	evaluation.Findings = append(evaluation.Findings, findingsFromCloudMatches(meta, e.cloudInspector.InspectContent(cloudCandidate(meta), content))...)
 	dbMatches := e.dbInspector.InspectContent(dbCandidate(meta), content)
 	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, dbMatches)...)
 	e.recordDBConnectionCandidates(meta, dbMatches)

@@ -99,7 +99,8 @@ func reportFindingDedupKey(f scanner.Finding) string {
 		strconv.Itoa(f.LineNumber),
 		evidence,
 	}
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(f.RuleID)), "dbinspect.") && strings.TrimSpace(f.ObservationID) != "" {
+	ruleID := strings.ToLower(strings.TrimSpace(f.RuleID))
+	if (strings.HasPrefix(ruleID, "dbinspect.") || strings.HasPrefix(ruleID, "cloudinspect.")) && strings.TrimSpace(f.ObservationID) != "" {
 		parts = append(parts, strings.TrimSpace(f.ObservationID))
 	}
 	return strings.Join(parts, "|")

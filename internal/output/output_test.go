@@ -351,10 +351,10 @@ func sampleAWSCredentialsFinding() scanner.Finding {
 		SignalType:          "validated",
 		Match:               "aws_access_key_id + aws_secret_access_key",
 		MatchedText:         "aws_access_key_id=" + accessKey + "\naws_secret_access_key=" + secretKey,
-		MatchedTextRedacted: "aws_access_key_id=AWSK********\naws_secret_access_key=AWSS********",
-		Snippet:             "aws_access_key_id=AWSK********",
+		MatchedTextRedacted: "aws_access_key_id=" + accessKey + "\naws_secret_access_key=" + secretKey,
+		Snippet:             "aws_access_key_id=" + accessKey + "\naws_secret_access_key=" + secretKey,
 		Context:             "aws_access_key_id=" + accessKey + "\naws_secret_access_key=" + secretKey,
-		ContextRedacted:     "aws_access_key_id=AWSK********\naws_secret_access_key=AWSS********",
+		ContextRedacted:     "aws_access_key_id=" + accessKey + "\naws_secret_access_key=" + secretKey,
 		MatchReason:         "file contents contained text that matches the rule.",
 		MatchedRuleIDs:      []string{"awsinspect.path.credentials", "awsinspect.content.credentials_bundle"},
 		MatchedSignalTypes:  []string{"validated", "content", "path"},
@@ -389,6 +389,17 @@ func sampleAWSConfigFinding() scanner.Finding {
 			{SignalType: "validated", RuleID: "awsinspect.path.config", RuleName: "AWS Config Artifact", Match: ".aws/config", Confidence: "high", Weight: 18, Reason: "exact AWS shared config artifact was identified"},
 		},
 		Tags: []string{"aws", "cloud", "artifact:aws-config"},
+	}
+}
+
+func TestAWSJSONProjectionPreservesCompleteEvidence(t *testing.T) {
+	t.Parallel()
+
+	finding := sampleAWSCredentialsFinding()
+	projected := toJSONFinding(finding, diff.FindingDelta{})
+	want := finding.MatchedText
+	if projected.MatchedText != want || projected.MatchedTextRedacted != want || projected.Context != want || projected.ContextRedacted != want || projected.Snippet != want || projected.MatchSnippet != want {
+		t.Fatalf("AWS JSON projection changed evidence: %#v", projected)
 	}
 }
 

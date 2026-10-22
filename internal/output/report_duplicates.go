@@ -54,6 +54,9 @@ func groupDuplicateReportFindings(findings []scanner.Finding) []reportFindingGro
 
 func reportDuplicateGroupKey(f scanner.Finding) string {
 	ruleID := strings.ToLower(strings.TrimSpace(f.RuleID))
+	if strings.HasPrefix(ruleID, "cloudinspect.") && strings.TrimSpace(f.ObservationID) != "" {
+		return "cloud-observation|" + strings.TrimSpace(f.ObservationID)
+	}
 	if strings.HasPrefix(ruleID, "correlation.") || strings.EqualFold(strings.TrimSpace(primarySignal(f)), "correlation") {
 		return "correlated|" + reportFindingDedupKey(f)
 	}

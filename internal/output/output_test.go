@@ -1560,9 +1560,23 @@ func TestCredsWriterExportsRawPrivateKeyAndAdditionalProvenance(t *testing.T) {
 	}
 }
 
-func TestSafeReportersKeepJSONPrivateKeyRedactionAndHTMLPrivateKeyVisibility(t *testing.T) {
+func TestEvidenceReportersPreserveJSONPrivateKeyEvidenceAndHTMLPrivateKeyVisibility(t *testing.T) {
 	key := "-----BEGIN RSA PRIVATE KEY-----\nUNIQUE-PRIVATE-KEY-BODY\n-----END RSA PRIVATE KEY-----\n"
-	finding := scanner.Finding{FilePath: "id_rsa.pem", MatchedText: key, Context: key, Snippet: key, Match: key}
+	finding := scanner.Finding{
+		RuleID:              "synthetic.private_key",
+		RuleName:            "Synthetic private key",
+		Severity:            "high",
+		Category:            "crypto",
+		Actionable:          true,
+		SignalType:          "content",
+		FilePath:            "id_rsa.pem",
+		MatchedText:         key,
+		MatchedTextRedacted: "-----BEGIN RSA PRIVATE KEY-----\n[private key material redacted]\n-----END RSA PRIVATE KEY-----\n",
+		Context:             key,
+		ContextRedacted:     "-----BEGIN RSA PRIVATE KEY-----\n[private key material redacted]\n-----END RSA PRIVATE KEY-----\n",
+		Snippet:             key,
+		Match:               key,
+	}
 
 	var jsonOut bytes.Buffer
 	jsonWriter := NewJSONWriter(&jsonOut, nil, false)
@@ -1572,8 +1586,35 @@ func TestSafeReportersKeepJSONPrivateKeyRedactionAndHTMLPrivateKeyVisibility(t *
 	if err := jsonWriter.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(jsonOut.String(), "UNIQUE-PRIVATE-KEY-BODY") {
-		t.Fatal("JSON safe report exposed private-key material")
+	if !strings.Contains(jsonOut.String(), "UNIQUE-PRIVATE-KEY-BODY") {
+		t.Fatal("JSON evidence report omitted private-key material")
+	}
+	if strings.Contains(jsonOut.String(), "[private key material redacted]") {
+		t.Fatal("JSON evidence report retained a private-key replacement")
+	}
+
+	var consoleOut bytes.Buffer
+	consoleWriter := NewConsoleWriter(&consoleOut, nil)
+	if err := consoleWriter.WriteFinding(finding); err != nil {
+		t.Fatal(err)
+	}
+	if err := consoleWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(consoleOut.String(), "UNIQUE-PRIVATE-KEY-BODY") || strings.Contains(consoleOut.String(), "[private key material redacted]") {
+		t.Fatalf("console evidence was not preserved: %s", consoleOut.String())
+	}
+
+	var markdownOut bytes.Buffer
+	markdownWriter := NewMarkdownWriter(&markdownOut, nil)
+	if err := markdownWriter.WriteFinding(finding); err != nil {
+		t.Fatal(err)
+	}
+	if err := markdownWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(markdownOut.String(), "UNIQUE-PRIVATE-KEY-BODY") || strings.Contains(markdownOut.String(), "[private key material redacted]") {
+		t.Fatalf("Markdown evidence was not preserved: %s", markdownOut.String())
 	}
 
 	var htmlOut bytes.Buffer

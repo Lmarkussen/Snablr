@@ -397,6 +397,28 @@ func (m *Manager) HostComplete(host string, expectedShares int) bool {
 	return seen >= expectedShares && completed >= expectedShares
 }
 
+// ShareOutcome reports the current share-level execution outcome without
+// changing the persisted state. It is used to distinguish a partial scan from
+// a scan that could not meaningfully execute.
+func (m *Manager) ShareOutcome() (completed, skipped, failed int) {
+	if m == nil {
+		return 0, 0, 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, status := range m.shareStatus {
+		switch status {
+		case "completed":
+			completed++
+		case "skipped":
+			skipped++
+		case "failed", "partial":
+			failed++
+		}
+	}
+	return completed, skipped, failed
+}
+
 func (m *Manager) MarkHostComplete(host string) {
 	if !m.Enabled() {
 		return

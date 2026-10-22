@@ -92,6 +92,44 @@ func TestDiscoverySelectionUpdatesFullDetailsWithoutEvidenceScreen(t *testing.T)
 	}
 }
 
+func TestEvidenceFirstAndSecretHighlighting(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(previous)
+
+	secret := category{Name: "Credentials", Discoveries: []discovery{{Title: "secret", MaterialFamily: "Credentials", MaterialType: "password", Value: "SyntheticSecret!", Verification: "confirmed"}}}
+	m := &model{scans: []Scan{{ID: "scan"}}, categories: []category{secret}, screen: screenDiscoveries, discoveries: secret.Discoveries, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(100, 24)
+	view := m.preview.View()
+	if strings.Index(view, "RECOVERED EVIDENCE") > strings.Index(view, "Material family:") {
+		t.Fatalf("secret metadata preceded evidence: %q", view)
+	}
+	if !strings.Contains(view, "38;2;251;146;60m") {
+		t.Fatalf("secret evidence was not highlighted orange: %q", view)
+	}
+
+	observed := category{Name: "Database Locations & Connections", Discoveries: []discovery{{Title: "SQLite", MaterialFamily: "Database Locations & Connections", MaterialType: "database artifact", Value: "SQLite format 3\\x00", Verification: "review"}}}
+	m = &model{scans: []Scan{{ID: "scan"}}, categories: []category{observed}, screen: screenDiscoveries, discoveries: observed.Discoveries, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(100, 24)
+	view = m.preview.View()
+	if !strings.Contains(view, "OBSERVED EVIDENCE") || strings.Contains(view, "38;2;251;146;60m") {
+		t.Fatalf("non-secret evidence styling was incorrect: %q", view)
+	}
+}
+
+func TestDisplayScanStatusUsesOperatorFriendlyLabels(t *testing.T) {
+	for input, want := range map[string]string{
+		"completed":            "completed",
+		"completed_with_skips": "completed with skips",
+		"timed_out":            "timed out",
+		"failed":               "failed",
+	} {
+		if got := displayScanStatus(input); got != want {
+			t.Fatalf("displayScanStatus(%q)=%q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestFinderFocusIndicatorAndPaneNavigation(t *testing.T) {
 	item := category{Name: "Credentials", Discoveries: []discovery{{Title: "identity", Subcategory: "Passwords", Value: "secret"}}}
 	m := &model{scans: []Scan{{ID: "scan"}}, categories: []category{item}, screen: screenCategories, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
@@ -377,10 +415,14 @@ func TestCredentialOriginClassificationAndPresentation(t *testing.T) {
 	m := &model{scans: []Scan{{ID: "scan"}}, categories: categories, screen: screenDiscoveries, discoveries: categories[0].Discoveries, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
 	m.resizeTo(120, 40)
 	details := m.preview.View()
-	for _, want := range []string{"USERNAME + PASSWORD COMBINATION", "Username: SYNTHETIC\\join-xml", "Password: Synthetic-SCCM-XML-482!", "Origin type: SCCM / MECM Credential", "Source context: SCCM / MECM", "Host: HOST", "Share: Share", "Source: task.xml"} {
+	for _, want := range []string{"RECOVERED EVIDENCE", "Synthetic-SCCM-XML-482!", "USERNAME + PASSWORD COMBINATION", "Username: SYNTHETIC\\join-xml", "Password: Synthetic-SCCM-XML-482!", "Origin type: SCCM / MECM Credential"} {
 		if !strings.Contains(details, want) {
 			t.Fatalf("details missing %q: %q", want, details)
 		}
+	}
+	m.preview.GotoBottom()
+	if !strings.Contains(m.preview.View(), "Source: task.xml") {
+		t.Fatalf("details did not remain accessible after scrolling: %q", m.preview.View())
 	}
 }
 
@@ -676,7 +718,7 @@ func TestCorrelationDetailsExplainSourcesAndPreserveRawRecord(t *testing.T) {
 	m := &model{scans: []Scan{{ID: "scan"}}, screen: screenDiscoveries, discoveries: []discovery{d}, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
 	m.resizeTo(80, 24)
 	text := m.evidenceText()
-	for _, want := range []string{"CROSS-FILE RELATIONSHIP", "same identity and material", `\\host\share\one.txt`, `\\host\share\two.txt`, "RAW RECORD", `"same_identity_value"`} {
+	for _, want := range []string{"OBSERVED EVIDENCE", "same identity and material", `\\host\share\one.txt`, `\\host\share\two.txt`, "RAW RECORD", `"same_identity_value"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("correlation details missing %q: %s", want, text)
 		}

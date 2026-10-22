@@ -234,15 +234,18 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			inventory.AttachStore(shadow, shadow.ScanID())
 		}
 		defer func() {
-			status := store.StatusCompleted
-			if errors.Is(scanCtx.Err(), context.DeadlineExceeded) {
-				status = store.StatusTimedOut
-			} else if operatorInterrupted || errors.Is(scanCtx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.Canceled) || output.WasCanceledByUser(sink) {
-				status = store.StatusInterrupted
+			completedShares, skippedShares := 0, 0
+			if stateManager != nil {
+				completedShares, skippedShares, _ = stateManager.ShareOutcome()
 			}
-			if shadow.Failure() != nil || (err != nil && status != store.StatusInterrupted) {
-				status = store.StatusFailed
-			}
+			status := classifyScanStatus(
+				errors.Is(scanCtx.Err(), context.DeadlineExceeded),
+				operatorInterrupted || errors.Is(scanCtx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.Canceled) || output.WasCanceledByUser(sink),
+				shadow.Failure() != nil,
+				err != nil,
+				completedShares,
+				skippedShares,
+			)
 			if statusErr := shadow.SetScanStatus(status, time.Now().UTC()); statusErr != nil && err == nil {
 				err = fmt.Errorf("authoritative SQLite status update failed: %w", statusErr)
 			}

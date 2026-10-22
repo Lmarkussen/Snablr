@@ -36,6 +36,7 @@ type discovery struct {
 	Reason                                               string
 	PairingStatus, PairingBasis, OriginalVerification    string
 	ConnectionDetails                                    []connectionDetail
+	Evidence                                             []string
 	CorrelationKey, CorrelationType, CorrelationIdentity string
 	CorrelationDomain, CorrelationConfidenceRationale    string
 	CorrelationSources                                   []credentialanalysis.CorrelationSource
@@ -224,6 +225,9 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 			group.Discoveries[ref.index].Sources = appendUnique(group.Discoveries[ref.index].Sources, sourceLabel(candidate))
 			group.Discoveries[ref.index].SourceContext = appendContext(group.Discoveries[ref.index].SourceContext, sourceContext(candidate))
 			group.Discoveries[ref.index].OriginType = mergeOrigin(group.Discoveries[ref.index].OriginType, originType(candidate))
+			if candidate.Value != "" {
+				group.Discoveries[ref.index].Evidence = append(group.Discoveries[ref.index].Evidence, candidate.Value)
+			}
 			continue
 		}
 		d := discovery{
@@ -251,6 +255,7 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 			OriginType:           originType(candidate),
 			Reason:               strings.Join(candidate.ReviewReasons, "; "),
 			ConnectionDetails:    connectionDetails(candidate),
+			Evidence:             uniqueNonEmpty([]string{candidate.Value}),
 			Sources:              []string{sourceLabel(candidate)},
 			PersistedRefs:        []string{rowRef},
 		}
@@ -331,7 +336,7 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 		parsed := json.Unmarshal([]byte(item.Payload), &record) == nil
 		title := correlationTitle(item.Key, record, parsed)
 		groups["Correlations"].Discoveries = append(groups["Correlations"].Discoveries, discovery{
-			Title: title, Subcategory: "Cross-file Relationships", MaterialType: "correlation", Value: item.Payload,
+			Title: title, Subcategory: "Cross-file Relationships", MaterialType: "correlation", Value: item.Payload, Evidence: []string{item.Payload},
 			Verification: "persisted correlation", Confidence: firstNonEmpty(record.Confidence, "contextual"),
 			CorrelationKey: item.Key, CorrelationType: record.Type, CorrelationIdentity: record.Identity,
 			CorrelationDomain: record.Domain, CorrelationConfidenceRationale: record.ConfidenceRationale,
@@ -853,6 +858,21 @@ func (m *model) evidenceText() string {
 	if d.MaterialType == "correlation" {
 		return correlationEvidenceText(d)
 	}
+	if evidence := discoveryEvidence(d); len(evidence) > 0 {
+		section := "OBSERVED EVIDENCE"
+		if discoveryIsSecretBearing(d) {
+			section = "RECOVERED EVIDENCE"
+		}
+		fmt.Fprintf(&b, "%s\n", evidenceSectionForDiscovery(section, d))
+		for index, value := range evidence {
+			if len(evidence) > 1 {
+				fmt.Fprintf(&b, "Observation %d\n", index+1)
+			}
+			b.WriteString(evidenceValueForDiscovery(value, d))
+			b.WriteByte('\n')
+		}
+		b.WriteByte('\n')
+	}
 	fmt.Fprintf(&b, "%s\n%s\n\nMaterial family: %s\nMaterial type: %s\nVerification: %s\nConfidence: %s\nPersisted rows: %d\nSource observations: %d\n", evidenceSection("DISCOVERY"), d.Title, firstNonEmpty(d.MaterialFamily, "unknown"), firstNonEmpty(d.MaterialType, "unknown"), firstNonEmpty(d.Verification, "unknown"), firstNonEmpty(d.Confidence, "unknown"), len(d.PersistedRefs), len(d.Sources))
 	if d.RecoveredPassword != "" && d.Identity != "" {
 		fmt.Fprintf(&b, "\n%s\n", evidenceSection("USERNAME + PASSWORD COMBINATION"))
@@ -950,23 +970,72 @@ func (m *model) evidenceText() string {
 		if f.MatchedRuleIDs != nil {
 			fmt.Fprintf(&b, "Rule IDs: %s\n", strings.Join(f.MatchedRuleIDs, ", "))
 		}
-		if f.MatchedText != "" {
-			b.WriteString("\nEvidence\n--------\n")
-			b.WriteString(f.MatchedText)
-			b.WriteByte('\n')
-		}
-		if f.Context != "" {
-			b.WriteString("\nContext\n-------\n")
-			b.WriteString(f.Context)
-			b.WriteByte('\n')
-		}
-		if f.Snippet != "" {
-			b.WriteString("\nSnippet\n-------\n")
-			b.WriteString(f.Snippet)
-			b.WriteByte('\n')
-		}
 	}
 	return b.String()
+}
+
+func discoveryEvidence(d discovery) []string {
+	if len(d.Evidence) > 0 {
+		return d.Evidence
+	}
+	if d.Finding != nil {
+		values := []string{d.Finding.MatchedText, d.Finding.Context, d.Finding.Snippet, d.Finding.Match}
+		return uniqueNonEmpty(values)
+	}
+	if d.Value != "" {
+		return []string{d.Value}
+	}
+	if d.RecoveredPassword != "" {
+		return []string{d.RecoveredPassword}
+	}
+	return nil
+}
+
+func uniqueNonEmpty(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func discoveryIsSecretBearing(d discovery) bool {
+	if d.MaterialType == "correlation" || strings.EqualFold(d.Subcategory, "Secret References & Configuration Artifacts") {
+		return false
+	}
+	if strings.EqualFold(d.MaterialFamily, "Credentials") || strings.EqualFold(d.MaterialFamily, "Keys & Certificates") {
+		return len(discoveryEvidence(d)) > 0
+	}
+	if strings.EqualFold(d.MaterialFamily, "Connection & Database Secrets") {
+		for _, detail := range d.ConnectionDetails {
+			if strings.EqualFold(detail.Label, "Password") && detail.Value != "" {
+				return true
+			}
+		}
+	}
+	if strings.EqualFold(d.MaterialFamily, "Application & Cloud Secrets") {
+		return len(discoveryEvidence(d)) > 0
+	}
+	if d.Finding != nil {
+		if strings.EqualFold(d.Finding.Category, "credentials") {
+			return true
+		}
+		for _, tag := range d.Finding.Tags {
+			lower := strings.ToLower(tag)
+			if strings.Contains(lower, "secret") || strings.Contains(lower, "token") || strings.Contains(lower, "credential") || strings.Contains(lower, "private-key") || strings.Contains(lower, "hash") || strings.Contains(lower, "password") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func correlationTitle(key string, record credentialanalysis.Correlation, parsed bool) string {
@@ -1019,7 +1088,7 @@ func correlationEvidenceText(d discovery) string {
 	var b strings.Builder
 	sources := d.CorrelationSources
 	count := uniqueCorrelationSourceCount(sources)
-	fmt.Fprintf(&b, "%s\n%s\n\nRelationship: %s\nMaterial type: %s\nVerification: %s\nConfidence: %s\nRelated source observations: %d\n", evidenceSection("CROSS-FILE RELATIONSHIP"), d.Title, correlationLabel(d.CorrelationType), firstNonEmpty(d.CorrelationType, "unknown"), firstNonEmpty(d.Verification, "persisted correlation"), firstNonEmpty(d.Confidence, "contextual"), count)
+	fmt.Fprintf(&b, "%s\n%s\nSource-backed relationship record; original secret values remain in the related source observations below.\n\nRelationship: %s\nMaterial type: %s\nVerification: %s\nConfidence: %s\nRelated source observations: %d\n", evidenceSection("OBSERVED EVIDENCE"), d.Title, correlationLabel(d.CorrelationType), firstNonEmpty(d.CorrelationType, "unknown"), firstNonEmpty(d.Verification, "persisted correlation"), firstNonEmpty(d.Confidence, "contextual"), count)
 	if d.CorrelationIdentity != "" {
 		fmt.Fprintf(&b, "Identity reference: %s\n", d.CorrelationIdentity)
 	}
@@ -1072,6 +1141,13 @@ func evidenceSection(title string) string {
 	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#60A5FA")).Render(title)
 }
 
+func evidenceSectionForDiscovery(title string, d discovery) string {
+	if discoveryIsSecretBearing(d) {
+		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FB923C")).Render(title)
+	}
+	return evidenceSection(title)
+}
+
 func evidenceLabel(label string) string {
 	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#B5C4D0")).Render(label)
 }
@@ -1082,6 +1158,13 @@ func evidencePasswordLabel(label string) string {
 
 func evidenceValue(value string) string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("#EDF4F8")).Render(value)
+}
+
+func evidenceValueForDiscovery(value string, d discovery) string {
+	if discoveryIsSecretBearing(d) {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#FB923C")).Render(value)
+	}
+	return evidenceValue(value)
 }
 
 func evidenceStatus(value string) string {
@@ -1164,7 +1247,7 @@ func (m *model) View() string {
 	if displayID == "" {
 		displayID = scan.ID
 	}
-	header := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render("SNABLR // FINDINGS") + "  " + displayID + "  " + scan.Status
+	header := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render("SNABLR // FINDINGS") + "  " + displayID + "  " + displayScanStatus(scan.Status)
 	if scan.Targets != "" {
 		header += "  " + scan.Targets
 	}
@@ -1234,10 +1317,22 @@ func scanList(scans []Scan, selected int) string {
 		if displayID == "" {
 			displayID = scan.ID
 		}
-		lines = append(lines, marker+displayID+"  "+scan.Status+"  "+scan.Targets+fmt.Sprintf("  %d findings", scan.FindingCount))
+		lines = append(lines, marker+displayID+"  "+displayScanStatus(scan.Status)+"  "+scan.Targets+fmt.Sprintf("  %d findings", scan.FindingCount))
 	}
 	return strings.Join(lines, "\n")
 }
+
+func displayScanStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed_with_skips":
+		return "completed with skips"
+	case "timed_out":
+		return "timed out"
+	default:
+		return status
+	}
+}
+
 func categoryList(items []category, selected, width int) string {
 	var lines []string
 	arrow := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)

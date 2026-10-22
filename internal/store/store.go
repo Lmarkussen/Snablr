@@ -42,11 +42,13 @@ type Options struct {
 type Status string
 
 const (
-	StatusRunning     Status = "running"
-	StatusCompleted   Status = "completed"
-	StatusInterrupted Status = "interrupted"
-	StatusTimedOut    Status = "timed_out"
-	StatusFailed      Status = "failed"
+	StatusRunning            Status = "running"
+	StatusCompleted          Status = "completed"
+	StatusCompletedWithSkips Status = "completed_with_skips"
+	StatusPartial            Status = "partial"
+	StatusInterrupted        Status = "interrupted"
+	StatusTimedOut           Status = "timed_out"
+	StatusFailed             Status = "failed"
 )
 
 type FileState struct {

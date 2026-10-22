@@ -132,6 +132,10 @@ type Candidate struct {
 	AccountType     string
 	Disabled        bool
 	Encrypted       bool
+	KeyFormat       string
+	KeyAlgorithm    string
+	KeyStatus       string
+	KeyFingerprint  string
 	Source          string
 	Host            string
 	Share           string
@@ -165,6 +169,10 @@ type SafeCandidate struct {
 	AccountType     string       `json:"account_type,omitempty"`
 	Disabled        bool         `json:"disabled,omitempty"`
 	Encrypted       bool         `json:"encrypted,omitempty"`
+	KeyFormat       string       `json:"key_format,omitempty"`
+	KeyAlgorithm    string       `json:"key_algorithm,omitempty"`
+	KeyStatus       string       `json:"key_status,omitempty"`
+	KeyFingerprint  string       `json:"key_fingerprint,omitempty"`
 	Source          string       `json:"source,omitempty"`
 	Host            string       `json:"host,omitempty"`
 	Share           string       `json:"share,omitempty"`
@@ -513,6 +521,7 @@ func toSafe(candidate Candidate) SafeCandidate {
 		Verification: candidate.Verification, CredentialType: candidate.CredentialType,
 		Identity: candidate.Identity, Domain: candidate.Domain, ValuePresent: candidate.Value != "",
 		RID: candidate.RID, SID: candidate.SID, AccountType: candidate.AccountType, Disabled: candidate.Disabled, Encrypted: candidate.Encrypted,
+		KeyFormat: candidate.KeyFormat, KeyAlgorithm: candidate.KeyAlgorithm, KeyStatus: candidate.KeyStatus, KeyFingerprint: candidate.KeyFingerprint,
 		Source: candidate.Source, Host: candidate.Host, Share: candidate.Share, Path: candidate.Path,
 		Container: candidate.Container, Occurrences: candidate.Occurrences, Locations: append([]string{}, candidate.Locations...),
 		Material: classifyMaterial(candidate), ValidationBasis: candidate.ValidationBasis,

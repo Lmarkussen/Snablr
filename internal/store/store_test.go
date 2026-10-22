@@ -450,6 +450,43 @@ func TestSQLiteSinkCredentialWriteSuccessIsPersisted(t *testing.T) {
 	}
 }
 
+func TestSQLiteSinkPrivateKeyEvidenceAndMetadataArePersisted(t *testing.T) {
+	t.Parallel()
+
+	state, path := openTestStore(t)
+	defer state.Close()
+	sink := WrapSink(credentialSinkFindingStub{}, state)
+	candidate := credentialanalysis.Candidate{
+		Verification:    credentialanalysis.Confirmed,
+		CredentialType:  "private_key",
+		Value:           "SYNTHETIC-PRIVATE-KEY-BODY",
+		KeyFormat:       "PEM",
+		KeyAlgorithm:    "EC",
+		KeyStatus:       "confirmed",
+		ValidationBasis: "private_key_structural_parser",
+		Path:            "exports/customer-key",
+	}
+	if err := sink.RecordCredentialCandidate(candidate); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var value, payload string
+	if err := db.QueryRow(`SELECT value,payload FROM credentials WHERE credential_type=?`, "private_key").Scan(&value, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if value != candidate.Value || !strings.Contains(payload, candidate.Value) || !strings.Contains(payload, candidate.KeyStatus) {
+		t.Fatalf("private-key evidence or metadata was not preserved: value=%q payload=%q", value, payload)
+	}
+}
+
 func TestSQLiteSinkCredentialWriteFailureIsReturned(t *testing.T) {
 	t.Parallel()
 

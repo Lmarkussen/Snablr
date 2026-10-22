@@ -30,6 +30,8 @@ type discovery struct {
 	MaterialFamily, SourceContext                        string
 	OriginType                                           string
 	Value, Host, Share, Path, Confidence, Verification   string
+	KeyFormat, KeyAlgorithm, KeyStatus                   string
+	Encrypted                                            bool
 	RecoveredPassword                                    string
 	Reason                                               string
 	PairingStatus, PairingBasis, OriginalVerification    string
@@ -235,6 +237,10 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 			Share:                candidate.Share,
 			Path:                 candidate.Path,
 			Confidence:           string(candidate.Verification),
+			KeyFormat:            candidate.KeyFormat,
+			KeyAlgorithm:         candidate.KeyAlgorithm,
+			KeyStatus:            candidate.KeyStatus,
+			Encrypted:            candidate.Encrypted,
 			Verification:         firstNonEmpty(pairing.Status, string(candidate.Verification)),
 			PairingStatus:        pairing.Status,
 			PairingBasis:         pairing.Basis,
@@ -442,6 +448,15 @@ func connectionFieldLabel(key string) string {
 }
 
 func reviewSubcategory(candidate credentialanalysis.Candidate) string {
+	if strings.EqualFold(candidate.CredentialType, "private_key") {
+		if candidate.Encrypted || strings.EqualFold(candidate.KeyStatus, "encrypted") {
+			return "Encrypted Private Keys"
+		}
+		if strings.EqualFold(candidate.KeyStatus, "malformed") {
+			return "Malformed Key Candidates"
+		}
+		return "Private Keys — Review"
+	}
 	if isOpaqueCredential(candidate) {
 		return "Encrypted Credential Material"
 	}
@@ -459,11 +474,14 @@ func reviewSubcategory(candidate credentialanalysis.Candidate) string {
 
 func privateKeySubcategory(candidate credentialanalysis.Candidate) string {
 	value := strings.ToLower(candidate.Value)
-	if strings.Contains(value, "openssh") || strings.Contains(value, "ed25519") || strings.Contains(value, "begin ssh") {
+	if strings.Contains(strings.ToLower(candidate.KeyFormat), "openssh") || strings.Contains(strings.ToLower(candidate.KeyAlgorithm), "openssh") || strings.Contains(value, "openssh") || strings.Contains(value, "begin ssh") {
 		return "OpenSSH Keys"
 	}
-	if strings.Contains(value, "begin rsa") {
+	if strings.Contains(strings.ToLower(candidate.KeyAlgorithm), "rsa") || strings.Contains(value, "begin rsa") {
 		return "RSA Keys"
+	}
+	if strings.Contains(strings.ToLower(candidate.KeyFormat), "pem") {
+		return "PEM Keys"
 	}
 	return "Other Private Keys"
 }
@@ -763,6 +781,18 @@ func (m *model) evidenceText() string {
 	} else if strings.EqualFold(d.MaterialFamily, "Keys & Certificates") {
 		fmt.Fprintf(&b, "\n%s\n", evidenceSection("KEY / CERTIFICATE MATERIAL"))
 		fmt.Fprintf(&b, "Key or certificate type: %s\n", firstNonEmpty(keyType(d), "validated material"))
+		if d.KeyFormat != "" {
+			fmt.Fprintf(&b, "Format: %s\n", d.KeyFormat)
+		}
+		if d.KeyAlgorithm != "" {
+			fmt.Fprintf(&b, "Algorithm: %s\n", d.KeyAlgorithm)
+		}
+		if d.KeyStatus != "" {
+			fmt.Fprintf(&b, "Structural status: %s\n", d.KeyStatus)
+		}
+		if d.Encrypted {
+			b.WriteString("Encryption: detected; decryption was not attempted.\n")
+		}
 		if d.Identity != "" {
 			fmt.Fprintf(&b, "Associated identity: %s\n", qualifiedIdentity(d))
 		}
@@ -991,6 +1021,11 @@ func keyType(d discovery) string {
 		return "RSA private key"
 	case "OpenSSH Keys":
 		return "OpenSSH private key"
+	case "PEM Keys":
+		if d.KeyAlgorithm != "" {
+			return d.KeyAlgorithm + " private key"
+		}
+		return "PEM private key"
 	case "Certificates":
 		return "certificate"
 	default:

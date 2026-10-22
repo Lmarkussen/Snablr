@@ -1,6 +1,10 @@
 package scanner
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"testing"
 
 	"snablr/internal/credentialanalysis"
@@ -109,5 +113,35 @@ func TestPrivateKeyInspectorEmitsRawPrivateKeyCandidate(t *testing.T) {
 	}
 	if candidate.ValidationBasis != "validated_private_key_header" {
 		t.Fatalf("unexpected validation basis: %#v", candidate)
+	}
+}
+
+func TestPrivateKeyInspectorFindsArbitraryExtensionlessName(t *testing.T) {
+	t.Parallel()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+	engine := NewEngine(Options{}, &rules.Manager{}, nil, logx.New("error"))
+	sink := &collectingCandidateSink{}
+	engine.SetCredentialCandidateSink(sink)
+
+	evaluation := engine.Evaluate(FileMetadata{
+		FilePath: "Exports/customer-prod-key",
+		Name:     "customer-prod-key",
+		Size:     int64(len(content)),
+	}, content)
+	if len(evaluation.Findings) == 0 || len(sink.candidates) != 1 {
+		t.Fatalf("expected extensionless structural key result, findings=%#v candidates=%#v", evaluation.Findings, sink.candidates)
+	}
+	candidate := sink.candidates[0]
+	if candidate.Verification != credentialanalysis.Confirmed || candidate.KeyAlgorithm != "RSA/PKCS#8" || candidate.Value != string(content) {
+		t.Fatalf("unexpected extensionless key candidate: %#v", candidate)
 	}
 }

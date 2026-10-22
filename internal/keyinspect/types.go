@@ -26,6 +26,12 @@ type Match struct {
 	Explanation         string
 	Remediation         string
 	Tags                []string
+	Format              string
+	Algorithm           string
+	Status              string
+	Encrypted           bool
+	ValidationBasis     string
+	ReviewReason        string
 }
 
 type Inspector struct{}

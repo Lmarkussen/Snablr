@@ -1637,10 +1637,11 @@ func TestEngineEvaluatesZIPArchiveWithPrivateKeyAndClientAuthMembers(t *testing.
 
 	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
 	content := buildZIPFixture(t, map[string][]byte{
-		"keys/id_rsa":     []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nLAB_ONLY_SYNTHETIC\n-----END OPENSSH PRIVATE KEY-----\n"),
-		"vpn/client.ovpn": []byte("client\nauth-user-pass creds.txt\nremote vpn.lab.example.invalid 1194\n"),
-		"ssh/known_hosts": []byte("vpn.lab.example.invalid ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnly\n"),
-		"docs/readme.txt": []byte("synthetic notes"),
+		"keys/id_rsa":          []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nLAB_ONLY_SYNTHETIC\n-----END OPENSSH PRIVATE KEY-----\n"),
+		"exports/customer-key": []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ==\n-----END OPENSSH PRIVATE KEY-----\n"),
+		"vpn/client.ovpn":      []byte("client\nauth-user-pass creds.txt\nremote vpn.lab.example.invalid 1194\n"),
+		"ssh/known_hosts":      []byte("vpn.lab.example.invalid ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnly\n"),
+		"docs/readme.txt":      []byte("synthetic notes"),
 	})
 	meta := FileMetadata{
 		FilePath:  "Archive/ssh-recovery.zip",
@@ -1655,16 +1656,19 @@ func TestEngineEvaluatesZIPArchiveWithPrivateKeyAndClientAuthMembers(t *testing.
 	}
 
 	foundPrivateKey := false
+	foundArbitraryPrivateKey := false
 	foundOVPN := false
 	for _, finding := range evaluation.Findings {
 		switch finding.FilePath {
 		case "Archive/ssh-recovery.zip!keys/id_rsa":
 			foundPrivateKey = true
+		case "Archive/ssh-recovery.zip!exports/customer-key":
+			foundArbitraryPrivateKey = true
 		case "Archive/ssh-recovery.zip!vpn/client.ovpn":
 			foundOVPN = true
 		}
 	}
-	if !foundPrivateKey || !foundOVPN {
+	if !foundPrivateKey || !foundArbitraryPrivateKey || !foundOVPN {
 		t.Fatalf("expected archive member findings for private key and ovpn, got %#v", evaluation.Findings)
 	}
 }

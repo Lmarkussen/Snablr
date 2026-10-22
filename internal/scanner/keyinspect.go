@@ -42,22 +42,33 @@ func (e *Engine) recordKeyMaterialCandidates(meta FileMetadata, content []byte, 
 		if match.ID != "keyinspect.content.private_key_header" {
 			continue
 		}
+		verification := credentialanalysis.Review
+		if match.Status == keyinspect.StatusConfirmed {
+			verification = credentialanalysis.Confirmed
+		}
 		candidate := credentialanalysis.Candidate{
-			Verification:    credentialanalysis.Confirmed,
+			Verification:    verification,
 			CredentialType:  "private_key",
 			Value:           string(content),
+			Encrypted:       match.Encrypted,
 			Source:          meta.Source,
 			Host:            meta.Host,
 			Share:           meta.Share,
 			Path:            meta.FilePath,
 			Container:       meta.ArchivePath,
-			ValidationBasis: "validated_private_key_header",
+			KeyFormat:       match.Format,
+			KeyAlgorithm:    match.Algorithm,
+			KeyStatus:       match.Status,
+			ValidationBasis: match.ValidationBasis,
 			Evidence: []credentialanalysis.Evidence{{
 				RuleID:   match.ID,
 				Source:   meta.Source,
 				Path:     meta.FilePath,
 				Location: strings.TrimSpace(match.Match),
 			}},
+		}
+		if match.ReviewReason != "" {
+			candidate.ReviewReasons = []string{match.ReviewReason}
 		}
 		if err := e.candidateSink.RecordCredentialCandidate(candidate); err != nil && e.log != nil {
 			e.log.Errorf("private-key credential candidate recording failed for %s: %v", meta.FilePath, err)

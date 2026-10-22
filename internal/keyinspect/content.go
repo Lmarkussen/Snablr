@@ -11,14 +11,12 @@ func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
 	if len(content) == 0 {
 		return nil
 	}
-	if _, ok := exactPrivateKeyFiles[normalizedName(candidate)]; !ok {
-		return nil
-	}
 
 	header := matchedHeader(content)
 	if header == "" {
 		return nil
 	}
+	format, algorithm, status, reviewReason, encrypted := parsePrivateKey(content, header)
 
 	text := textdecode.Normalize(content)
 	if text == "" {
@@ -28,7 +26,8 @@ func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
 	snippet := header
 	context := limitText(text, 320)
 
-	return []Match{{
+	validationBasis := "validated_private_key_header"
+	match := Match{
 		ID:                  "keyinspect.content.private_key_header",
 		Name:                "Validated Private Key Header",
 		Description:         "Validated private key material was identified from an exact high-value private key artifact filename and a real private key header.",
@@ -53,7 +52,14 @@ func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
 			"artifact:private-key",
 			"validated:private-key-header",
 		},
-	}}
+		Format:          format,
+		Algorithm:       algorithm,
+		Status:          status,
+		Encrypted:       encrypted,
+		ValidationBasis: validationBasis,
+		ReviewReason:    reviewReason,
+	}
+	return []Match{match}
 }
 
 func matchedHeader(content []byte) string {

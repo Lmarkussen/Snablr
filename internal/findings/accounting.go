@@ -6,9 +6,9 @@ import (
 	"strings"
 )
 
-// ProjectionAudit describes how every persisted credential row is represented
-// by the Finder read model. It intentionally contains stable row references,
-// not credential values, so it is safe for diagnostics and regression output.
+// ProjectionAudit describes how every persisted material row is represented by
+// the Finder read model. It intentionally contains stable row references, not
+// evidence values, so it is safe for diagnostics and regression output.
 type ProjectionAudit struct {
 	ScanID                   string         `json:"scan_id"`
 	TotalPersistedRows       int            `json:"total_persisted_rows"`
@@ -18,6 +18,8 @@ type ProjectionAudit struct {
 	UnaccountedRows          int            `json:"unaccounted_rows"`
 	LogicalDiscoveryCount    int            `json:"logical_discovery_count"`
 	SourceObservationCount   int            `json:"source_observation_count"`
+	PersistedFindingRows     int            `json:"persisted_finding_rows"`
+	PersistedCorrelationRows int            `json:"persisted_correlation_rows"`
 	ExcludedByReason         map[string]int `json:"excluded_by_reason,omitempty"`
 	UnaccountedRefs          []string       `json:"unaccounted_refs,omitempty"`
 	MissingCredentialKeyRefs []string       `json:"missing_credential_key_refs,omitempty"`
@@ -33,11 +35,17 @@ func credentialRowRef(item Credential) string {
 	return fmt.Sprintf("row:%d", item.ID)
 }
 
-func auditCredentialProjection(scanID string, credentials []Credential, categories []category) ProjectionAudit {
+func findingRowRef(item Finding) string { return fmt.Sprintf("finding:%d", item.ID) }
+
+func correlationRowRef(item Correlation) string { return "correlation:" + item.Key }
+
+func auditProjection(scanID string, credentials []Credential, findings []Finding, correlations []Correlation, categories []category) ProjectionAudit {
 	audit := ProjectionAudit{
-		ScanID:             scanID,
-		TotalPersistedRows: len(credentials),
-		ExcludedByReason:   make(map[string]int),
+		ScanID:                   scanID,
+		TotalPersistedRows:       len(credentials) + len(findings) + len(correlations),
+		PersistedFindingRows:     len(findings),
+		PersistedCorrelationRows: len(correlations),
+		ExcludedByReason:         make(map[string]int),
 	}
 	accounted := make(map[string]struct{}, len(credentials))
 	presented := make(map[string]struct{}, len(credentials))
@@ -53,6 +61,12 @@ func auditCredentialProjection(scanID string, credentials []Credential, categori
 		} else {
 			seenSources["row:"+ref] = struct{}{}
 		}
+	}
+	for _, item := range findings {
+		seenSources["finding:"+item.Finding.Host+"\x00"+item.Finding.Share+"\x00"+item.Finding.FilePath] = struct{}{}
+	}
+	for _, item := range correlations {
+		seenSources[correlationRowRef(item)] = struct{}{}
 	}
 	for _, group := range categories {
 		for _, discovery := range group.Discoveries {
@@ -73,15 +87,21 @@ func auditCredentialProjection(scanID string, credentials []Credential, categori
 	audit.PresentedRows = len(presented)
 	audit.GroupedRows = len(grouped)
 	audit.SourceObservationCount = len(seenSources)
+	refs := make([]string, 0, audit.TotalPersistedRows)
 	for _, item := range credentials {
-		ref := credentialRowRef(item)
+		refs = append(refs, credentialRowRef(item))
+	}
+	for _, item := range findings {
+		refs = append(refs, findingRowRef(item))
+	}
+	for _, item := range correlations {
+		refs = append(refs, correlationRowRef(item))
+	}
+	for _, ref := range refs {
 		if _, ok := accounted[ref]; !ok {
 			audit.UnaccountedRefs = append(audit.UnaccountedRefs, ref)
 		}
 	}
-	// Exclusions are intentionally empty in this first accounting milestone:
-	// invalid, opaque, password-only, and review rows remain visible in Finder
-	// review categories rather than being hidden.
 	audit.UnaccountedRows = len(audit.UnaccountedRefs)
 	if audit.PresentedRows+audit.GroupedRows+audit.ExcludedRows+audit.UnaccountedRows != audit.TotalPersistedRows {
 		// Keep the diagnostic internally consistent even if a future projection
@@ -91,6 +111,10 @@ func auditCredentialProjection(scanID string, credentials []Credential, categori
 	sort.Strings(audit.UnaccountedRefs)
 	sort.Strings(audit.MissingCredentialKeyRefs)
 	return audit
+}
+
+func auditCredentialProjection(scanID string, credentials []Credential, categories []category) ProjectionAudit {
+	return auditProjection(scanID, credentials, nil, nil, categories)
 }
 
 func credentialSourceObservation(item Credential) string {

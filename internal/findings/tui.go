@@ -113,7 +113,7 @@ func (m *model) loadScan() error {
 	m.findings = findings
 	categories, audit := buildCategoriesWithAccounting(m.scans[m.selectedScan].ID, credentials, findings, correlations)
 	if audit.UnaccountedRows != 0 {
-		return fmt.Errorf("findings credential projection accounting failed: %d unaccounted rows (%s)", audit.UnaccountedRows, strings.Join(audit.UnaccountedRefs, ", "))
+		return fmt.Errorf("findings projection accounting failed: %d unaccounted rows (%s)", audit.UnaccountedRows, strings.Join(audit.UnaccountedRefs, ", "))
 	}
 	m.categories = categories
 	m.allMaterial = buildAllPersistedMaterial(categories)
@@ -279,8 +279,8 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 				Confidence:     firstNonEmpty(f.Confidence, "unknown"),
 				Verification:   firstNonEmpty(f.TriageClass, f.SignalType, "observed"),
 				Reason:         f.MatchReason,
-				Sources:        []string{sourceLabelFinding(f)},
-				Finding:        &f,
+				Sources:        []string{sourceLabelFinding(f)}, PersistedRefs: []string{findingRowRef(item)},
+				Finding: &f,
 			})
 			continue
 		}
@@ -298,8 +298,8 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 				Confidence:     firstNonEmpty(f.Confidence, "unknown"),
 				Verification:   firstNonEmpty(f.TriageClass, f.SignalType, "observed"),
 				Reason:         f.MatchReason,
-				Sources:        []string{sourceLabelFinding(f)},
-				Finding:        &f,
+				Sources:        []string{sourceLabelFinding(f)}, PersistedRefs: []string{findingRowRef(item)},
+				Finding: &f,
 			})
 			continue
 		}
@@ -317,19 +317,17 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 				Confidence:     firstNonEmpty(f.Confidence, "unknown"),
 				Verification:   firstNonEmpty(f.TriageClass, f.SignalType, "observed"),
 				Reason:         f.MatchReason,
-				Sources:        []string{sourceLabelFinding(f)},
-				Finding:        &f,
+				Sources:        []string{sourceLabelFinding(f)}, PersistedRefs: []string{findingRowRef(item)},
+				Finding: &f,
 			})
 			continue
 		}
 		if !f.Actionable && !strings.EqualFold(f.TriageClass, "review") {
-			if len(groups["Original Findings"].Discoveries) < 50 {
-				groups["Original Findings"].Discoveries = append(groups["Original Findings"].Discoveries, discovery{
-					Title: firstNonEmpty(f.RuleName, f.RuleID), Subcategory: "Supporting Findings", MaterialType: "supporting finding",
-					Host: f.Host, Share: f.Share, Path: f.FilePath, Confidence: firstNonEmpty(f.Confidence, "unknown"), Verification: "supporting",
-					Sources: []string{sourceLabelFinding(f)}, Finding: &f,
-				})
-			}
+			groups["Original Findings"].Discoveries = append(groups["Original Findings"].Discoveries, discovery{
+				Title: firstNonEmpty(f.RuleName, f.RuleID), Subcategory: "Supporting Findings", MaterialType: "supporting finding",
+				Host: f.Host, Share: f.Share, Path: f.FilePath, Confidence: firstNonEmpty(f.Confidence, "unknown"), Verification: "supporting",
+				Sources: []string{sourceLabelFinding(f)}, PersistedRefs: []string{findingRowRef(item)}, Finding: &f,
+			})
 			continue
 		}
 		name := "Original Findings"
@@ -346,8 +344,8 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 			Confidence:     firstNonEmpty(f.Confidence, "unknown"),
 			Verification:   firstNonEmpty(f.TriageClass, "actionable"),
 			Reason:         f.MatchReason,
-			Sources:        []string{sourceLabelFinding(f)},
-			Finding:        &f,
+			Sources:        []string{sourceLabelFinding(f)}, PersistedRefs: []string{findingRowRef(item)},
+			Finding: &f,
 		})
 	}
 	for _, item := range correlations {
@@ -360,6 +358,7 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 			CorrelationKey: item.Key, CorrelationType: record.Type, CorrelationIdentity: record.Identity,
 			CorrelationDomain: record.Domain, CorrelationConfidenceRationale: record.ConfidenceRationale,
 			CorrelationSources: append([]credentialanalysis.CorrelationSource(nil), record.Sources...), CorrelationParsed: parsed,
+			PersistedRefs: []string{correlationRowRef(item)},
 		})
 	}
 	result := make([]category, 0, len(ordered))
@@ -368,7 +367,7 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 			result = append(result, *group)
 		}
 	}
-	return result, auditCredentialProjection(scanID, credentials, result)
+	return result, auditProjection(scanID, credentials, findings, correlations, result)
 }
 
 func applicationCloudFinding(f scanner.Finding) bool {
@@ -675,7 +674,11 @@ func sourceLabel(candidate credentialanalysis.Candidate) string {
 }
 
 func sourceLabelFinding(f scanner.Finding) string {
-	return fmt.Sprintf("\\\\%s\\%s\\%s", f.Host, f.Share, strings.TrimPrefix(f.FilePath, `/`))
+	label := fmt.Sprintf("\\\\%s\\%s\\%s", f.Host, f.Share, strings.TrimPrefix(f.FilePath, `/`))
+	if f.ArchiveMemberPath != "" {
+		label += "!" + f.ArchiveMemberPath
+	}
+	return label
 }
 
 func appendUnique(values []string, value string) []string {
@@ -1014,7 +1017,13 @@ func (m *model) evidenceText() string {
 	}
 	if d.Finding != nil {
 		f := d.Finding
-		fmt.Fprintf(&b, "\nOriginal finding\n----------------\nRule: %s\nSeverity: %s\nCategory: %s\n", firstNonEmpty(f.RuleName, f.RuleID), f.Severity, f.Category)
+		fmt.Fprintf(&b, "\nORIGINAL SCANNER OBSERVATION — INTERPRETATION NOT ESTABLISHED\n------------------------------------------------------------\nRule: %s\nSeverity: %s\nCategory: %s\nRaw triage class: %s\nObservation ID: %s\n", firstNonEmpty(f.RuleName, f.RuleID), f.Severity, f.Category, firstNonEmpty(f.TriageClass, "not assigned"), firstNonEmpty(f.ObservationID, "not assigned"))
+		if f.ArchivePath != "" || f.ArchiveMemberPath != "" {
+			fmt.Fprintf(&b, "Archive container: %s\nArchive member: %s\n", firstNonEmpty(f.ArchivePath, "not persisted"), firstNonEmpty(f.ArchiveMemberPath, "not persisted"))
+		}
+		if f.LineNumber > 0 {
+			fmt.Fprintf(&b, "Source line: %d\n", f.LineNumber)
+		}
 		if f.MatchedRuleIDs != nil {
 			fmt.Fprintf(&b, "Rule IDs: %s\n", strings.Join(f.MatchedRuleIDs, ", "))
 		}
@@ -1570,7 +1579,10 @@ func filterDiscoveries(items []discovery, query string) []discovery {
 	}
 	result := make([]discovery, 0, len(items))
 	for _, item := range items {
-		fields := []string{item.Title, item.Subcategory, item.MaterialType, item.Identity, item.Domain, item.Value, item.Host, item.Share, item.Path, item.SourceContext, item.OriginType, item.PairingStatus}
+		fields := []string{item.Title, item.Subcategory, item.MaterialType, item.Identity, item.Domain, item.Value, item.Host, item.Share, item.Path, item.SourceContext, item.OriginType, item.PairingStatus, item.Reason}
+		if item.Finding != nil {
+			fields = append(fields, item.Finding.RuleID, item.Finding.RuleName, item.Finding.Category, item.Finding.TriageClass, item.Finding.SignalType, item.Finding.Match, item.Finding.MatchedText, item.Finding.Snippet, item.Finding.Context, item.Finding.ArchivePath, item.Finding.ArchiveMemberPath, item.Finding.ObservationID)
+		}
 		fields = append(fields, item.Sources...)
 		matched := false
 		for _, field := range fields {

@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"snablr/internal/credentialanalysis"
+	"snablr/internal/scanner"
 	"snablr/internal/store"
 )
 
@@ -57,6 +59,34 @@ func TestCredentialProjectionAccountingReconcilesGroupedAndDistinctRows(t *testi
 	}
 	if aliceSources != 2 {
 		t.Fatalf("grouped source rows = %d, want 2", aliceSources)
+	}
+}
+
+func TestProjectionAccountingIncludesRawFindingsAndCorrelations(t *testing.T) {
+	findings := []Finding{{ID: 41, Finding: scanner.Finding{
+		RuleID: "review.rule", RuleName: "Review artifact", Category: "configuration",
+		TriageClass: "review", Host: "host", Share: "share", FilePath: "bundle.zip",
+		ArchivePath: "bundle.zip", ArchiveMemberPath: "nested/config.xml", ObservationID: "obs-41",
+		MatchedText: "æ ø å\nsecond line", Context: "English and norsk context",
+	}}}
+	correlations := []Correlation{{Key: "corr-1", Payload: `{"type":"same_identity_value"}`}}
+	categories, audit := buildCategoriesWithAccounting("scan-raw", nil, findings, correlations)
+	if audit.TotalPersistedRows != 2 || audit.PersistedFindingRows != 1 || audit.PersistedCorrelationRows != 1 || audit.UnaccountedRows != 0 {
+		t.Fatalf("raw projection accounting mismatch: %#v", audit)
+	}
+	if audit.PresentedRows != 2 || len(categories) != 2 {
+		t.Fatalf("raw rows were not independently presented: %#v", audit)
+	}
+	var rendered discovery
+	for _, group := range categories {
+		for _, item := range group.Discoveries {
+			if item.Finding != nil {
+				rendered = item
+			}
+		}
+	}
+	if got := strings.Join(discoveryEvidence(rendered), "\n"); !strings.Contains(got, "æ ø å\nsecond line") || !strings.Contains(got, "English and norsk context") {
+		t.Fatalf("raw evidence was not retained: %q", got)
 	}
 }
 

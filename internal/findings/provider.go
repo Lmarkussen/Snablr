@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	SchemaVersion = 2
-	PageSize      = 500
+	SchemaVersion  = 2
+	PageSize       = 500
+	LoadBatchPages = 8
 )
 
 type Provider struct {
@@ -177,6 +178,18 @@ func (p *Provider) Findings(ctx context.Context, scanID string, offset, limit in
 	return result, nil
 }
 
+func (p *Provider) Finding(ctx context.Context, scanID string, id int64) (Finding, error) {
+	var item Finding
+	var payload string
+	if err := p.db.QueryRowContext(ctx, `SELECT id,fingerprint,payload FROM findings WHERE scan_id=? AND id=?`, scanID, id).Scan(&item.ID, &item.Fingerprint, &payload); err != nil {
+		return Finding{}, fmt.Errorf("read persisted finding %d: %w", id, err)
+	}
+	if err := json.Unmarshal([]byte(payload), &item.Finding); err != nil {
+		return Finding{}, fmt.Errorf("decode persisted finding %d: %w", id, err)
+	}
+	return item, nil
+}
+
 func (p *Provider) Credentials(ctx context.Context, scanID string, offset, limit int) ([]Credential, error) {
 	if offset < 0 || limit <= 0 || limit > PageSize {
 		return nil, fmt.Errorf("invalid credentials page bounds")
@@ -210,6 +223,18 @@ func (p *Provider) Credentials(ctx context.Context, scanID string, offset, limit
 	return result, nil
 }
 
+func (p *Provider) Credential(ctx context.Context, scanID, key string) (Credential, error) {
+	var item Credential
+	var payload string
+	if err := p.db.QueryRowContext(ctx, `SELECT id,credential_key,payload FROM credentials WHERE scan_id=? AND credential_key=?`, scanID, key).Scan(&item.ID, &item.CredentialKey, &payload); err != nil {
+		return Credential{}, fmt.Errorf("read persisted credential %q: %w", key, err)
+	}
+	if err := json.Unmarshal([]byte(payload), &item.Candidate); err != nil {
+		return Credential{}, fmt.Errorf("decode persisted credential %q: %w", key, err)
+	}
+	return item, nil
+}
+
 func (p *Provider) Correlations(ctx context.Context, scanID string, offset, limit int) ([]Correlation, error) {
 	if offset < 0 || limit <= 0 || limit > PageSize {
 		return nil, fmt.Errorf("invalid correlations page bounds")
@@ -231,6 +256,52 @@ func (p *Provider) Correlations(ctx context.Context, scanID string, offset, limi
 		return nil, fmt.Errorf("iterate persisted correlations: %w", err)
 	}
 	return result, nil
+}
+
+func (p *Provider) Correlation(ctx context.Context, scanID, key string) (Correlation, error) {
+	var item Correlation
+	if err := p.db.QueryRowContext(ctx, `SELECT correlation_key,payload FROM correlations WHERE scan_id=? AND correlation_key=?`, scanID, key).Scan(&item.Key, &item.Payload); err != nil {
+		return Correlation{}, fmt.Errorf("read persisted correlation %q: %w", key, err)
+	}
+	return item, nil
+}
+
+// SearchRefs returns stable persisted-row references whose source metadata or
+// raw payload matches query. It keeps evidence in SQLite while preserving
+// Finder's evidence-first search behavior after metadata compaction.
+func (p *Provider) SearchRefs(ctx context.Context, scanID, query string) (map[string]struct{}, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+	rows, err := p.db.QueryContext(ctx, `
+SELECT 'finding:' || id FROM findings
+ WHERE scan_id=? AND (instr(payload,?)>0 OR instr(path,?)>0 OR instr(rule_id,?)>0)
+UNION ALL
+SELECT credential_key FROM credentials
+ WHERE scan_id=? AND (instr(payload,?)>0 OR instr(credential_key,?)>0 OR instr(identity,?)>0 OR instr(value,?)>0)
+UNION ALL
+SELECT 'correlation:' || correlation_key FROM correlations
+ WHERE scan_id=? AND instr(payload,?)>0`,
+		scanID, query, query, query,
+		scanID, query, query, query, query,
+		scanID, query)
+	if err != nil {
+		return nil, fmt.Errorf("search persisted evidence: %w", err)
+	}
+	defer rows.Close()
+	refs := make(map[string]struct{})
+	for rows.Next() {
+		var ref string
+		if err := rows.Scan(&ref); err != nil {
+			return nil, fmt.Errorf("read persisted evidence search result: %w", err)
+		}
+		refs[ref] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate persisted evidence search results: %w", err)
+	}
+	return refs, nil
 }
 
 func parseTime(value string) time.Time {

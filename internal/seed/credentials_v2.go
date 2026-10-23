@@ -48,19 +48,37 @@ func generateCredentialCorpusV2(opts GenerateOptions) ([]SeedFile, error) {
 			username, password = "multi-password-user", fmt.Sprintf("V2-Password-%03d!", index)
 		}
 		file := SeedFile{
-			Category:            "credentials-v2",
-			Format:              variant.format,
-			RelativePath:        joinSeedPath(prefix, subset, variant.family),
-			Filename:            fmt.Sprintf("%s-%03d.%s", variant.name, index+1, variant.extension),
-			IntendedAs:          "credential-v2-blind-acceptance",
-			ExpectedClass:       "credential",
-			ExpectedTriageClass: "review",
-			ExpectedConfidence:  "medium",
-			ExpectedSeverity:    "medium",
-			ExpectedInspectable: true,
-			FixtureID:           fixtureID,
-			Subset:              subset,
-			SeedVariant:         variant.name,
+			Category:                     "credentials-v2",
+			Format:                       variant.format,
+			RelativePath:                 joinSeedPath(prefix, subset, variant.family),
+			Filename:                     fmt.Sprintf("%s-%03d.%s", variant.name, index+1, variant.extension),
+			IntendedAs:                   "credential-v2-blind-acceptance",
+			ExpectedClass:                "credential",
+			ExpectedTriageClass:          "review",
+			ExpectedConfidence:           "medium",
+			ExpectedSeverity:             "medium",
+			ExpectedInspectable:          true,
+			ExpectedOwner:                "credentials-v2",
+			ExpectedFinderCategory:       "credentials",
+			ExpectedProvenance:           "source file",
+			ExpectedGrouping:             "independent observation",
+			ExpectedCorrelationSemantics: "correlation only when explicitly seeded across source files",
+			SupportStatus:                "supported",
+			ExpectedJustification:        "deterministic credential grammar selected independently of scanner output",
+			FixtureID:                    fixtureID,
+			Subset:                       subset,
+			SeedVariant:                  variant.name,
+		}
+		if variant.archive {
+			member := "nested/credential.txt"
+			switch variant.name {
+			case "docx-member":
+				member = "word/document.xml"
+			case "xlsx-member":
+				member = "xl/sharedStrings.xml"
+			}
+			file.ExpectedArchive = true
+			file.ExpectedPath = joinSeedPath(file.RelativePath, file.Filename) + "!" + member
 		}
 
 		switch {

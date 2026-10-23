@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -56,31 +58,70 @@ type category struct {
 	Discoveries       []discovery
 }
 
+type scanLoadedMsg struct {
+	scanID       string
+	findings     []Finding
+	credentials  []Credential
+	correlations []Correlation
+	categories   []category
+	audit        ProjectionAudit
+	elapsed      time.Duration
+	complete     bool
+	err          error
+}
+
+const (
+	evidenceCacheLimit = 32
+	evidenceCacheBytes = 8 << 20
+)
+
+type evidenceCacheItem struct {
+	key         string
+	finding     *scanner.Finding
+	candidate   *credentialanalysis.Candidate
+	correlation string
+	size        int
+}
+
 type model struct {
-	provider        *Provider
-	ctx             context.Context
-	output          io.Writer
-	scans           []Scan
-	selectedScan    int
-	selectingScan   bool
-	screen          screen
-	focus           int
-	selected        int
-	selectedSub     int
-	selectedDisc    int
-	categories      []category
-	allMaterial     category
-	subs            []string
-	discoveries     []discovery
-	findings        []Finding
-	width, height   int
-	list, preview   viewport.Model
-	previewHeight   int
-	status          string
-	filter          string
-	filterMode      bool
-	discoveryTotal  int
-	discoverySource []discovery
+	provider          *Provider
+	ctx               context.Context
+	output            io.Writer
+	scans             []Scan
+	selectedScan      int
+	selectingScan     bool
+	screen            screen
+	focus             int
+	selected          int
+	selectedSub       int
+	selectedDisc      int
+	categories        []category
+	allMaterial       category
+	subs              []string
+	discoveries       []discovery
+	findings          []Finding
+	width, height     int
+	list, preview     viewport.Model
+	previewHeight     int
+	status            string
+	filter            string
+	filterMode        bool
+	discoveryTotal    int
+	discoverySource   []discovery
+	loading           bool
+	loadError         string
+	loadedFindings    []Finding
+	loadedCreds       []Credential
+	loadedCorrs       []Correlation
+	findingOffset     int
+	credentialOffset  int
+	correlationOffset int
+	findingsDone      bool
+	credentialsDone   bool
+	correlationsDone  bool
+	evidenceCache     map[string]evidenceCacheItem
+	evidenceOrder     []string
+	evidenceBytes     int
 }
 
 // Run starts the offline viewer. It only queries the supplied read-only provider.
@@ -88,12 +129,9 @@ func Run(ctx context.Context, provider *Provider, scans []Scan, output io.Writer
 	if len(scans) == 0 {
 		return fmt.Errorf("findings database contains no scan records")
 	}
-	m := &model{provider: provider, ctx: ctx, output: output, scans: scans, selectingScan: len(scans) > 1, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
-	if len(scans) == 1 {
-		if err := m.loadScan(); err != nil {
-			return err
-		}
-	}
+	loadCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	m := &model{provider: provider, ctx: loadCtx, output: output, scans: scans, selectingScan: len(scans) > 1, loading: len(scans) == 1, evidenceCache: make(map[string]evidenceCacheItem), list: viewport.New(1, 1), preview: viewport.New(1, 1)}
 	program := tea.NewProgram(m, tea.WithOutput(output), tea.WithAltScreen())
 	_, err := program.Run()
 	return err
@@ -124,6 +162,116 @@ func (m *model) loadScan() error {
 	m.filterMode = false
 	m.screen = screenCategories
 	m.status = fmt.Sprintf("%d categories · %d findings · %d logical credentials · %d correlations", len(m.categories), len(findings), audit.LogicalDiscoveryCount, len(correlations))
+	m.refresh()
+	return nil
+}
+
+func (m *model) loadScanCmd() tea.Cmd {
+	scanID := m.scans[m.selectedScan].ID
+	findingOffset, credentialOffset, correlationOffset := m.findingOffset, m.credentialOffset, m.correlationOffset
+	findingsDone, credentialsDone, correlationsDone := m.findingsDone, m.credentialsDone, m.correlationsDone
+	return func() tea.Msg {
+		started := time.Now()
+		var findings []Finding
+		for page := 0; page < LoadBatchPages && !findingsDone; page++ {
+			rows, err := m.provider.Findings(m.ctx, scanID, findingOffset+len(findings), PageSize)
+			if err != nil {
+				return scanLoadedMsg{scanID: scanID, elapsed: time.Since(started), err: err}
+			}
+			findings = append(findings, rows...)
+			if len(rows) < PageSize {
+				findingsDone = true
+			}
+		}
+		var credentials []Credential
+		for page := 0; page < LoadBatchPages && !credentialsDone; page++ {
+			rows, err := m.provider.Credentials(m.ctx, scanID, credentialOffset+len(credentials), PageSize)
+			if err != nil {
+				return scanLoadedMsg{scanID: scanID, elapsed: time.Since(started), err: err}
+			}
+			credentials = append(credentials, rows...)
+			if len(rows) < PageSize {
+				credentialsDone = true
+			}
+		}
+		var correlations []Correlation
+		for page := 0; page < LoadBatchPages && !correlationsDone; page++ {
+			rows, err := m.provider.Correlations(m.ctx, scanID, correlationOffset+len(correlations), PageSize)
+			if err != nil {
+				return scanLoadedMsg{scanID: scanID, elapsed: time.Since(started), err: err}
+			}
+			correlations = append(correlations, rows...)
+			if len(rows) < PageSize {
+				correlationsDone = true
+			}
+		}
+		complete := findingsDone && credentialsDone && correlationsDone
+		return scanLoadedMsg{scanID: scanID, findings: findings, credentials: credentials, correlations: correlations, complete: complete, elapsed: time.Since(started)}
+	}
+}
+
+func (m *model) applyScanLoaded(msg scanLoadedMsg) tea.Cmd {
+	if msg.scanID != m.scans[m.selectedScan].ID {
+		return nil
+	}
+	if msg.err != nil {
+		m.loading = false
+		m.loadError = msg.err.Error()
+		m.status = "Load failed: " + m.loadError
+		m.refresh()
+		return nil
+	}
+	m.loadedFindings = append(m.loadedFindings, msg.findings...)
+	m.loadedCreds = append(m.loadedCreds, msg.credentials...)
+	m.loadedCorrs = append(m.loadedCorrs, msg.correlations...)
+	if len(msg.findings) < PageSize {
+		m.findingsDone = true
+	} else {
+		m.findingOffset += len(msg.findings)
+	}
+	if len(msg.credentials) < PageSize {
+		m.credentialsDone = true
+	} else {
+		m.credentialOffset += len(msg.credentials)
+	}
+	if len(msg.correlations) < PageSize {
+		m.correlationsDone = true
+	} else {
+		m.correlationOffset += len(msg.correlations)
+	}
+	categories, audit := buildCategoriesWithAccounting(m.scans[m.selectedScan].ID, m.loadedCreds, m.loadedFindings, m.loadedCorrs)
+	if msg.complete && msg.categories != nil {
+		categories, audit = msg.categories, msg.audit
+	}
+	m.categories = categories
+	m.allMaterial = buildAllPersistedMaterial(categories)
+	m.findings = m.loadedFindings
+	m.selected, m.selectedSub, m.selectedDisc = 0, 0, 0
+	m.screen = screenCategories
+	m.status = fmt.Sprintf("Loading persisted observations: %d findings, %d credentials, %d correlations", len(m.loadedFindings), len(m.loadedCreds), len(m.loadedCorrs))
+	if !msg.complete {
+		m.loading = true
+		m.refresh()
+		return m.loadScanCmd()
+	}
+	m.loading = false
+	if audit.UnaccountedRows != 0 {
+		m.loadError = fmt.Sprintf("findings projection accounting failed: %d unaccounted rows (%s)", audit.UnaccountedRows, strings.Join(audit.UnaccountedRefs, ", "))
+		m.status = "Load failed: " + m.loadError
+		m.refresh()
+		return nil
+	}
+	m.loadError = ""
+	m.filter = ""
+	m.filterMode = false
+	findingCount, correlationCount := len(m.loadedFindings), len(m.loadedCorrs)
+	compactDiscoveries(m.categories)
+	compactDiscoveries([]category{m.allMaterial})
+	m.loadedFindings = nil
+	m.loadedCreds = nil
+	m.loadedCorrs = nil
+	m.findings = nil
+	m.status = fmt.Sprintf("%d categories · %d findings · %d logical credentials · %d correlations · loaded in %s", len(m.categories), findingCount, audit.LogicalDiscoveryCount, correlationCount, msg.elapsed.Round(time.Millisecond))
 	m.refresh()
 	return nil
 }
@@ -692,14 +840,31 @@ func appendUnique(values []string, value string) []string {
 	return append(values, value)
 }
 
-func (m *model) Init() tea.Cmd { return nil }
+func (m *model) Init() tea.Cmd {
+	if m.loading {
+		return m.loadScanCmd()
+	}
+	return nil
+}
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case scanLoadedMsg:
+		cmd := m.applyScanLoaded(msg)
+		if m.width > 0 && m.height > 0 {
+			m.resize()
+		}
+		return m, cmd
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resize()
 	case tea.KeyMsg:
+		if m.loading {
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			return m, nil
+		}
 		if m.filterMode {
 			m.handleFilterKey(msg)
 			return m, nil
@@ -724,7 +889,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter", "right":
 			if m.focus == 0 {
-				m.open()
+				return m, m.open()
 			}
 		case "left", "esc":
 			m.back()
@@ -775,19 +940,19 @@ func (m *model) page(direction int) {
 	m.move(direction * 8)
 }
 
-func (m *model) open() {
+func (m *model) open() tea.Cmd {
 	if m.selectingScan {
-		if err := m.loadScan(); err != nil {
-			m.status = err.Error()
-		} else {
-			m.selectingScan = false
-		}
+		m.selectingScan = false
+		m.loading = true
+		m.loadError = ""
+		m.screen = screenCategories
+		m.status = "Loading persisted observations..."
 		if m.width > 0 && m.height > 0 {
 			m.resize()
 		} else {
 			m.refresh()
 		}
-		return
+		return m.loadScanCmd()
 	}
 	switch m.screen {
 	case screenCategories:
@@ -810,6 +975,7 @@ func (m *model) open() {
 	} else {
 		m.refresh()
 	}
+	return nil
 }
 
 func (m *model) back() {
@@ -854,6 +1020,16 @@ func subcategoryDiscoveries(item category, sub string) []discovery {
 }
 
 func (m *model) refresh() {
+	if m.loading && len(m.categories) == 0 {
+		m.list.SetContent("Loading persisted observations...")
+		m.preview.SetContent("The Finder is loading a bounded startup view. Complete evidence and accounting will appear when loading finishes.")
+		return
+	}
+	if m.loadError != "" {
+		m.list.SetContent("Unable to load persisted observations.")
+		m.preview.SetContent(m.loadError)
+		return
+	}
 	if m.selectingScan {
 		m.list.SetContent(scanList(m.scans, m.selectedScan))
 		m.preview.SetContent("No scan selected.")
@@ -884,6 +1060,37 @@ func (m *model) refresh() {
 		}
 		m.discoveryTotal = len(base)
 		m.discoveries = filterDiscoveries(base, m.filter)
+		if strings.TrimSpace(m.filter) != "" && m.provider != nil {
+			if refs, err := m.provider.SearchRefs(m.ctx, m.scans[m.selectedScan].ID, m.filter); err == nil {
+				seen := make(map[string]struct{}, len(m.discoveries))
+				for _, item := range m.discoveries {
+					for _, ref := range item.PersistedRefs {
+						seen[ref] = struct{}{}
+					}
+				}
+				for _, item := range base {
+					match := false
+					for _, ref := range item.PersistedRefs {
+						if _, ok := refs[ref]; ok {
+							match = true
+							break
+						}
+					}
+					if match {
+						duplicate := false
+						for _, ref := range item.PersistedRefs {
+							if _, ok := seen[ref]; ok {
+								duplicate = true
+								break
+							}
+						}
+						if !duplicate {
+							m.discoveries = append(m.discoveries, item)
+						}
+					}
+				}
+			}
+		}
 		m.selectedDisc = clamp(m.selectedDisc, 0, max(0, len(m.discoveries)-1))
 		if len(m.discoveries) == 0 {
 			m.list.SetContent("No discoveries match the current filter.")
@@ -915,6 +1122,7 @@ func (m *model) evidenceText() string {
 	if len(m.discoveries) == 0 {
 		return "No discovery selected."
 	}
+	m.hydrateDiscovery(&m.discoveries[m.selectedDisc])
 	d := m.discoveries[m.selectedDisc]
 	var b strings.Builder
 	if d.MaterialType == "correlation" {
@@ -1067,6 +1275,127 @@ func discoveryEvidence(d discovery) []string {
 		return []string{d.RecoveredPassword}
 	}
 	return nil
+}
+
+func compactDiscoveries(categories []category) {
+	for categoryIndex := range categories {
+		for discoveryIndex := range categories[categoryIndex].Discoveries {
+			d := &categories[categoryIndex].Discoveries[discoveryIndex]
+			d.Value = ""
+			d.RecoveredPassword = ""
+			d.Evidence = nil
+			d.ConnectionDetails = nil
+			if d.Finding != nil {
+				f := d.Finding
+				f.Match = ""
+				f.MatchedText = ""
+				f.MatchedTextRedacted = ""
+				f.Snippet = ""
+				f.Context = ""
+				f.ContextRedacted = ""
+				f.ConfidenceReasons = nil
+				f.MatchedRuleIDs = nil
+				f.MatchedSignalTypes = nil
+			}
+		}
+	}
+}
+
+func (m *model) hydrateDiscovery(d *discovery) {
+	if m.provider == nil || len(d.PersistedRefs) == 0 {
+		return
+	}
+	for _, ref := range d.PersistedRefs {
+		item, ok := m.cachedEvidence(ref)
+		if !ok {
+			item = m.fetchEvidence(ref)
+			if item.key == "" {
+				continue
+			}
+			m.cacheEvidence(item)
+		}
+		switch {
+		case item.finding != nil:
+			finding := *item.finding
+			d.Finding = &finding
+			for _, value := range discoveryEvidenceFromFinding(finding) {
+				d.Evidence = appendUnique(d.Evidence, value)
+			}
+		case item.candidate != nil:
+			candidate := *item.candidate
+			d.Value = candidate.Value
+			d.RecoveredPassword = candidate.Value
+			d.Evidence = appendUnique(d.Evidence, candidate.Value)
+			d.ConnectionDetails = connectionDetails(candidate)
+		case item.correlation != "":
+			d.Value = item.correlation
+			d.Evidence = appendUnique(d.Evidence, item.correlation)
+		}
+	}
+}
+
+func discoveryEvidenceFromFinding(f scanner.Finding) []string {
+	return uniqueNonEmpty([]string{f.MatchedText, f.Context, f.Snippet, f.Match})
+}
+
+func (m *model) fetchEvidence(ref string) evidenceCacheItem {
+	item := evidenceCacheItem{key: ref}
+	scanID := m.scans[m.selectedScan].ID
+	switch {
+	case strings.HasPrefix(ref, "finding:"):
+		id, err := strconv.ParseInt(strings.TrimPrefix(ref, "finding:"), 10, 64)
+		if err == nil {
+			finding, err := m.provider.Finding(m.ctx, scanID, id)
+			if err == nil {
+				item.finding = &finding.Finding
+			}
+		}
+	case strings.HasPrefix(ref, "correlation:"):
+		key := strings.TrimPrefix(ref, "correlation:")
+		correlation, err := m.provider.Correlation(m.ctx, scanID, key)
+		if err == nil {
+			item.correlation = correlation.Payload
+		}
+	default:
+		credential, err := m.provider.Credential(m.ctx, scanID, ref)
+		if err == nil {
+			item.candidate = &credential.Candidate
+		}
+	}
+	if item.finding == nil && item.candidate == nil && item.correlation == "" {
+		item.key = ""
+	}
+	return item
+}
+
+func (m *model) cachedEvidence(key string) (evidenceCacheItem, bool) {
+	item, ok := m.evidenceCache[key]
+	return item, ok
+}
+
+func (m *model) cacheEvidence(item evidenceCacheItem) {
+	if m.evidenceCache == nil {
+		m.evidenceCache = make(map[string]evidenceCacheItem)
+	}
+	if _, exists := m.evidenceCache[item.key]; exists {
+		return
+	}
+	item.size = len(item.correlation)
+	if item.finding != nil {
+		item.size += len(item.finding.MatchedText) + len(item.finding.Context) + len(item.finding.Snippet) + len(item.finding.Match)
+	}
+	if item.candidate != nil {
+		item.size += len(item.candidate.Value) + len(item.candidate.Identity) + len(item.candidate.Path)
+	}
+	m.evidenceCache[item.key] = item
+	m.evidenceOrder = append(m.evidenceOrder, item.key)
+	m.evidenceBytes += item.size
+	for len(m.evidenceOrder) > evidenceCacheLimit || m.evidenceBytes > evidenceCacheBytes {
+		oldest := m.evidenceOrder[0]
+		m.evidenceOrder = m.evidenceOrder[1:]
+		m.evidenceBytes -= m.evidenceCache[oldest].size
+		delete(m.evidenceCache, oldest)
+	}
 }
 
 func uniqueNonEmpty(values []string) []string {

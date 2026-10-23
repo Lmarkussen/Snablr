@@ -758,3 +758,66 @@ func TestMalformedCorrelationKeepsRawPayload(t *testing.T) {
 		t.Fatalf("malformed correlation payload was not preserved: %s", text)
 	}
 }
+
+func TestCategoryFilterPreservesStableReferenceAndCounts(t *testing.T) {
+	items := []discovery{
+		{Title: "first", Subcategory: "Review", MaterialType: "artifact", Path: "one.txt", PersistedRefs: []string{"finding:1"}},
+		{Title: "second", Subcategory: "Review", MaterialType: "artifact", Path: "two.txt", PersistedRefs: []string{"finding:2"}},
+	}
+	m := &model{
+		scans:           []Scan{{ID: "scan"}},
+		screen:          screenDiscoveries,
+		subs:            []string{"Review"},
+		discoveries:     append([]discovery(nil), items...),
+		discoverySource: append([]discovery(nil), items...),
+		selectedDisc:    1,
+		filter:          "two.txt",
+		list:            viewport.New(1, 1),
+		preview:         viewport.New(1, 1),
+	}
+	m.refresh()
+	if len(m.discoveries) != 1 || m.discoveries[0].PersistedRefs[0] != "finding:2" {
+		t.Fatalf("filtered discoveries = %#v", m.discoveries)
+	}
+	if m.discoveryTotal != 2 || !strings.Contains(m.status, "Showing 1/2 discoveries") {
+		t.Fatalf("filter counts not exposed: total=%d status=%q", m.discoveryTotal, m.status)
+	}
+}
+
+func TestFindingDetailSeparatesRawAndFinderClassification(t *testing.T) {
+	finding := Finding{ID: 77, Finding: scanner.Finding{
+		RuleID:            "windowsinspect.registry_export.structured",
+		RuleName:          "Registry Export",
+		Category:          "windows-deployment",
+		TriageClass:       "weak-review",
+		Actionable:        false,
+		Confidence:        "medium",
+		MatchReason:       "structured artifact observed",
+		Host:              "10.1.10.41",
+		Share:             "share_iso",
+		FilePath:          "bundle.zip!member.reg",
+		ArchivePath:       "bundle.zip",
+		ArchiveMemberPath: "member.reg",
+		ObservationID:     "obs-77",
+		LineNumber:        12,
+		MatchedText:       "Gjennomgang æøå\nsecond line",
+	}}
+	categories := buildCategories(nil, []Finding{finding}, nil)
+	m := &model{scans: []Scan{{ID: "scan"}}, categories: categories, screen: screenDiscoveries, discoveries: categories[0].Discoveries, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(120, 40)
+	text := m.evidenceText()
+	for _, want := range []string{
+		"Gjennomgang æøå\nsecond line",
+		"ORIGINAL SCANNER OBSERVATION",
+		"Raw triage class: weak-review",
+		"Finder category: Windows & Deployment Artifacts",
+		"Archive container: bundle.zip",
+		"Archive member: member.reg",
+		"Observation ID: obs-77",
+		"Source line: 12",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("finding detail missing %q: %q", want, text)
+		}
+	}
+}

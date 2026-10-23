@@ -57,28 +57,30 @@ type category struct {
 }
 
 type model struct {
-	provider      *Provider
-	ctx           context.Context
-	output        io.Writer
-	scans         []Scan
-	selectedScan  int
-	selectingScan bool
-	screen        screen
-	focus         int
-	selected      int
-	selectedSub   int
-	selectedDisc  int
-	categories    []category
-	allMaterial   category
-	subs          []string
-	discoveries   []discovery
-	findings      []Finding
-	width, height int
-	list, preview viewport.Model
-	previewHeight int
-	status        string
-	filter        string
-	filterMode    bool
+	provider        *Provider
+	ctx             context.Context
+	output          io.Writer
+	scans           []Scan
+	selectedScan    int
+	selectingScan   bool
+	screen          screen
+	focus           int
+	selected        int
+	selectedSub     int
+	selectedDisc    int
+	categories      []category
+	allMaterial     category
+	subs            []string
+	discoveries     []discovery
+	findings        []Finding
+	width, height   int
+	list, preview   viewport.Model
+	previewHeight   int
+	status          string
+	filter          string
+	filterMode      bool
+	discoveryTotal  int
+	discoverySource []discovery
 }
 
 // Run starts the offline viewer. It only queries the supplied read-only provider.
@@ -716,7 +718,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pgdown", "space":
 			m.page(1)
 		case "/":
-			if m.screen == screenDiscoveries && m.isAllMaterial() {
+			if m.screen == screenDiscoveries {
 				m.filterMode = true
 				m.status = "Filter: " + m.filter
 			}
@@ -797,9 +799,7 @@ func (m *model) open() {
 	case screenSubcategories:
 		items := m.categoryItems()
 		m.discoveries = subcategoryDiscoveries(items[m.selected], m.subs[m.selectedSub])
-		if m.isAllMaterial() {
-			m.discoveries = filterDiscoveries(m.discoveries, m.filter)
-		}
+		m.discoverySource = append(m.discoverySource[:0], m.discoveries...)
 		m.selectedDisc = 0
 		m.screen = screenDiscoveries
 	}
@@ -873,16 +873,27 @@ func (m *model) refresh() {
 		m.keepListSelectionVisible(m.selectedSub)
 		m.preview.SetContent(subcategoryPreview(items[m.selected], m.subs, m.selectedSub))
 	case screenDiscoveries:
-		if m.isAllMaterial() {
-			items := m.categoryItems()
-			m.discoveries = filterDiscoveries(subcategoryDiscoveries(items[m.selected], m.subs[m.selectedSub]), m.filter)
-			m.selectedDisc = clamp(m.selectedDisc, 0, max(0, len(m.discoveries)-1))
+		base := m.discoverySource
+		if len(base) == 0 {
+			if len(m.subs) > 0 {
+				items := m.categoryItems()
+				base = subcategoryDiscoveries(items[m.selected], m.subs[m.selectedSub])
+			} else {
+				base = m.discoveries
+			}
 		}
+		m.discoveryTotal = len(base)
+		m.discoveries = filterDiscoveries(base, m.filter)
 		m.selectedDisc = clamp(m.selectedDisc, 0, max(0, len(m.discoveries)-1))
-		m.list.SetContent(discoveryList(m.discoveries, m.selectedDisc))
+		if len(m.discoveries) == 0 {
+			m.list.SetContent("No discoveries match the current filter.")
+		} else {
+			m.list.SetContent(discoveryList(m.discoveries, m.selectedDisc))
+		}
 		m.keepListSelectionVisible(m.selectedDisc)
 		m.preview.GotoTop()
 		m.preview.SetContent(wrapDetails(m.evidenceText(), m.preview.Width))
+		m.status = fmt.Sprintf("Showing %d/%d discoveries", len(m.discoveries), m.discoveryTotal)
 	}
 }
 
@@ -1001,6 +1012,16 @@ func (m *model) evidenceText() string {
 		for _, ref := range d.PersistedRefs {
 			fmt.Fprintf(&b, "Persisted row: %s\n", ref)
 		}
+	}
+	fmt.Fprintf(&b, "\n%s\nFinder category: %s\nFinder subcategory: %s\nFinder status: %s\n", evidenceSection("PRESENTATION CLASSIFICATION"), firstNonEmpty(d.MaterialFamily, "not assigned"), firstNonEmpty(d.Subcategory, "not assigned"), firstNonEmpty(d.Verification, "not assigned"))
+	if d.Finding != nil {
+		f := d.Finding
+		fmt.Fprintf(&b, "Original scanner triage: %s\nOriginal scanner actionability: %t\nOriginal scanner confidence: %s\n", firstNonEmpty(f.TriageClass, "not assigned"), f.Actionable, firstNonEmpty(f.Confidence, "not assigned"))
+		if f.MatchReason != "" {
+			fmt.Fprintf(&b, "Scanner explanation: %s\n", f.MatchReason)
+		}
+	} else if d.PairingStatus != "" {
+		fmt.Fprintf(&b, "Credential pairing status: %s\n", d.PairingStatus)
 	}
 	if d.PairingStatus != "" {
 		fmt.Fprintf(&b, "\n%s\n", evidenceSection("EVIDENCE QUALITY"))
@@ -1331,7 +1352,7 @@ func (m *model) frame(header, crumb, leftTitle, leftContent, rightTitle, rightCo
 	if m.screen == screenCategories || m.selectingScan {
 		footer = "↑/↓ j/k move  Enter/→ select  Ctrl-C quit"
 	}
-	if m.screen == screenDiscoveries && m.isAllMaterial() {
+	if m.screen == screenDiscoveries {
 		footer = "↑/↓ j/k move  / filter  Enter/→ open  ←/Esc back  PgUp/PgDn scroll  Ctrl-C quit"
 	}
 	return joinFinderSections(header, crumb, left, preview, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(footer+"  "+m.status))
@@ -1473,7 +1494,16 @@ func subcategoryPreview(item category, subs []string, selected int) string {
 	if len(subs) == 0 {
 		return "No subcategories are available."
 	}
-	return fmt.Sprintf("%s\n\n%d logical discoveries", subs[selected], len(subcategoryDiscoveries(item, subs[selected])))
+	discoveries := subcategoryDiscoveries(item, subs[selected])
+	return fmt.Sprintf("%s\n\nLogical discoveries: %d\nPersisted rows represented: %d", subs[selected], len(discoveries), persistedRefCount(discoveries))
+}
+
+func persistedRefCount(items []discovery) int {
+	count := 0
+	for _, item := range items {
+		count += len(item.PersistedRefs)
+	}
+	return count
 }
 func statusStyle(value string) lipgloss.Style {
 	switch strings.ToLower(strings.TrimSpace(value)) {

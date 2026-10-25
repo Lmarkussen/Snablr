@@ -1,8 +1,10 @@
 package output
 
 import (
+	"context"
 	"strconv"
 	"strings"
+	"sync"
 
 	"snablr/internal/credentialanalysis"
 	"snablr/internal/scanner"
@@ -12,6 +14,8 @@ import (
 // The underlying review set is never deleted: the JSON export and the explicit
 // sensitive creds export still carry every record.
 const maxReviewRows = 200
+
+const credentialRowChannelBuffer = 32
 
 // maxCredentialExtraLocations bounds how many additional locations one credential
 // row renders inside its collapsed provenance block. A single credential can be
@@ -23,11 +27,13 @@ const maxCredentialExtraLocations = 40
 // analysis. It carries recovered values because the HTML report is a sensitive
 // security-assessment artifact.
 type credentialReportView struct {
-	Confirmed              []credentialRow
-	Supporting             []credentialRow
-	Review                 []credentialRow
-	RecoveredSecrets       int
+	Confirmed              any
+	Supporting             any
+	Review                 any
+	ConfirmedCount         int
 	SupportingCount        int
+	ReviewCount            int
+	RecoveredSecrets       int
 	ReviewTotal            int
 	ReviewTruncated        bool
 	ReviewRendered         int
@@ -59,39 +65,180 @@ func buildCredentialReportView(analysis credentialanalysis.Report, groups ...[]h
 	for _, group := range groups {
 		indexFindingAnchors(group, index)
 	}
+	return buildCredentialReportViewWithResolver(analysis, func(candidate credentialanalysis.SafeCandidate) string {
+		return lookupCredentialAnchor(candidate, index)
+	})
+}
+
+type credentialAnchorResolver func(credentialanalysis.SafeCandidate) string
+
+func buildCredentialReportViewWithResolver(analysis credentialanalysis.Report, resolve credentialAnchorResolver) credentialReportView {
 	view := credentialReportView{
 		SuppressedPlaceholders: analysis.SuppressedPlaceholders,
 		SuppressedWeakReview:   analysis.SuppressedWeakReview,
 		SuppressedTotal:        analysis.SuppressedPlaceholders + analysis.SuppressedWeakReview,
 	}
+	var confirmed, supporting, review []credentialRow
 	for _, candidate := range analysis.Confirmed {
-		row := credentialRowFromCandidate(candidate, candidateValue(analysis.Candidates, candidate), index)
+		row := credentialRowFromCandidateResolver(candidate, candidateValue(analysis.Candidates, candidate), resolve)
 		// Only records that carry real secret material belong in the actionable
 		// credential table. Credential-related records without a secret type stay
 		// in the supporting hierarchy below the findings.
 		if candidate.Material == credentialanalysis.MaterialCorrelation {
-			view.Supporting = append(view.Supporting, row)
+			supporting = append(supporting, row)
+			view.SupportingCount++
 			continue
 		}
 		if row.Validation == validationCryptographic {
 			view.RecoveredSecrets++
 		}
-		view.Confirmed = append(view.Confirmed, row)
+		confirmed = append(confirmed, row)
+		view.ConfirmedCount++
 	}
-	view.SupportingCount = len(view.Supporting)
 	view.ReviewTotal = len(analysis.Review)
+	view.ReviewCount = view.ReviewTotal
 	for i, candidate := range analysis.Review {
 		if i >= maxReviewRows {
 			view.ReviewTruncated = true
 			break
 		}
-		view.Review = append(view.Review, credentialRowFromCandidate(candidate, candidateValue(analysis.Candidates, candidate), index))
+		review = append(review, credentialRowFromCandidateResolver(candidate, candidateValue(analysis.Candidates, candidate), resolve))
 	}
-	view.ReviewRendered = len(view.Review)
+	view.Confirmed, view.Supporting, view.Review = confirmed, supporting, review
+	view.ReviewRendered = len(review)
 	return view
 }
 
+// buildPersistedCredentialReportView performs a bounded count pass, then
+// streams rows from compact persisted records. It never calls the legacy
+// merger Iterate method and never reconstructs a complete candidate/report
+// slice. The returned error channel covers the rendering pass.
+func buildPersistedCredentialReportView(ctx context.Context, analysis *credentialanalysis.PersistedAnalysis, resolve credentialAnchorResolver) (credentialReportView, <-chan error, error) {
+	view := credentialReportView{}
+	stats := analysis.Stats()
+	view.SuppressedPlaceholders = stats.SuppressedPlaceholders
+	view.SuppressedWeakReview = stats.SuppressedWeakReview
+	view.SuppressedTotal = stats.SuppressedPlaceholders + stats.SuppressedWeakReview
+	if err := analysis.IterateRecords(ctx, func(record credentialanalysis.PersistedMergedRecord) error {
+		candidate := record.Candidate
+		if candidate.Verification != credentialanalysis.Confirmed {
+			view.ReviewCount++
+			return nil
+		}
+		if candidate.Material == credentialanalysis.MaterialCorrelation {
+			view.SupportingCount++
+			return nil
+		}
+		view.ConfirmedCount++
+		if validationBasisLabel(candidate.ValidationBasis) == validationCryptographic {
+			view.RecoveredSecrets++
+		}
+		return nil
+	}); err != nil {
+		return view, nil, err
+	}
+	view.ReviewTotal = view.ReviewCount
+	view.ReviewRendered = minIntValue(view.ReviewCount, maxReviewRows)
+	view.ReviewTruncated = view.ReviewCount > maxReviewRows
+	confirmed := make(chan credentialRow, credentialRowChannelBuffer)
+	supporting := make(chan credentialRow, credentialRowChannelBuffer)
+	review := make(chan credentialRow, credentialRowChannelBuffer)
+	errs := make(chan error, 3)
+	view.Confirmed, view.Supporting, view.Review = confirmed, supporting, review
+	var resolveMu sync.Mutex
+	serializedResolve := func(candidate credentialanalysis.SafeCandidate) string {
+		resolveMu.Lock()
+		defer resolveMu.Unlock()
+		return resolve(candidate)
+	}
+	var producers sync.WaitGroup
+	start := func(out chan<- credentialRow, matches func(credentialanalysis.PersistedMergedRecord) bool, limit int) {
+		producers.Add(1)
+		go func() {
+			defer producers.Done()
+			defer close(out)
+			emitted := 0
+			err := analysis.IterateRecords(ctx, func(record credentialanalysis.PersistedMergedRecord) error {
+				if !matches(record) || (limit > 0 && emitted >= limit) {
+					return nil
+				}
+				row, err := persistedCredentialRow(ctx, analysis, record, serializedResolve)
+				if err != nil {
+					return err
+				}
+				select {
+				case out <- row:
+					emitted++
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			})
+			if err != nil {
+				errs <- err
+			}
+		}()
+	}
+	start(confirmed, func(record credentialanalysis.PersistedMergedRecord) bool {
+		return record.Candidate.Verification == credentialanalysis.Confirmed && record.Candidate.Material != credentialanalysis.MaterialCorrelation
+	}, 0)
+	start(supporting, func(record credentialanalysis.PersistedMergedRecord) bool {
+		return record.Candidate.Verification == credentialanalysis.Confirmed && record.Candidate.Material == credentialanalysis.MaterialCorrelation
+	}, 0)
+	start(review, func(record credentialanalysis.PersistedMergedRecord) bool {
+		return record.Candidate.Verification != credentialanalysis.Confirmed
+	}, maxReviewRows)
+	go func() {
+		producers.Wait()
+		close(errs)
+	}()
+	return view, errs, nil
+}
+
+func minIntValue(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
+}
+
+func persistedCredentialRow(ctx context.Context, analysis *credentialanalysis.PersistedAnalysis, record credentialanalysis.PersistedMergedRecord, resolve credentialAnchorResolver) (credentialRow, error) {
+	candidate := record.Candidate
+	safe := credentialanalysis.SafeCandidateForPersistence(candidate)
+	anchor := resolve(safe)
+	if anchor == "" {
+		var cursor credentialanalysis.EvidenceCursor
+		for {
+			var more bool
+			var err error
+			cursor, more, err = analysis.IterateEvidencePage(ctx, record.ID, cursor, 32, func(evidence credentialanalysis.Evidence) error {
+				probe := safe
+				probe.Evidence = []credentialanalysis.Evidence{evidence}
+				if found := resolve(probe); found != "" {
+					anchor = found
+				}
+				return nil
+			})
+			if err != nil {
+				return credentialRow{}, err
+			}
+			if anchor != "" || !more {
+				break
+			}
+		}
+	}
+	row := credentialRowFromCandidateResolver(safe, candidate.Value, func(credentialanalysis.SafeCandidate) string { return anchor })
+	row.ExtraLocationTotal = maxIntValue(record.LocationCount-1, 0)
+	return row, nil
+}
+
 func credentialRowFromCandidate(candidate credentialanalysis.SafeCandidate, value string, index map[string]string) credentialRow {
+	return credentialRowFromCandidateResolver(candidate, value, func(candidate credentialanalysis.SafeCandidate) string {
+		return lookupCredentialAnchor(candidate, index)
+	})
+}
+
+func credentialRowFromCandidateResolver(candidate credentialanalysis.SafeCandidate, value string, resolve credentialAnchorResolver) credentialRow {
 	row := credentialRow{
 		Identity:        candidate.Identity,
 		Type:            candidate.CredentialType,
@@ -123,7 +270,9 @@ func credentialRowFromCandidate(candidate credentialanalysis.SafeCandidate, valu
 		extra = extra[:maxCredentialExtraLocations]
 	}
 	row.ExtraLocations = extra
-	row.Anchor = lookupCredentialAnchor(candidate, index)
+	if resolve != nil {
+		row.Anchor = resolve(candidate)
+	}
 	if row.Anchor == "" {
 		row.Status = credentialStatusText(candidate)
 	}

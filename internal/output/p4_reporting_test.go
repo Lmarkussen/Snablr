@@ -75,3 +75,19 @@ func TestP4JSONAndMarkdownRetainDistinctDatabaseObservations(t *testing.T) {
 		t.Fatalf("Markdown omitted distinct P4 evidence: %s", markdown)
 	}
 }
+
+func TestAugmentFindingsForReportingPreservesEvidenceWithoutInputClone(t *testing.T) {
+	input := []scanner.Finding{{
+		RuleID:      "content.password_assignment_indicators",
+		Category:    "credentials",
+		Host:        "host",
+		Share:       "share",
+		FilePath:    "config.txt",
+		MatchedText: "password=Random-123!",
+		Tags:        []string{"credentials", "passwords"},
+	}}
+	got := augmentFindingsForReporting(input)
+	if len(got) != 1 || got[0].MatchedText != input[0].MatchedText {
+		t.Fatalf("report augmentation lost canonical evidence: %#v", got)
+	}
+}

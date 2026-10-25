@@ -45,6 +45,7 @@ type discovery struct {
 	CorrelationParsed                                    bool
 	Sources                                              []string
 	PersistedRefs                                        []string
+	FindingRef                                           string
 	Finding                                              *scanner.Finding
 }
 
@@ -67,7 +68,42 @@ type scanLoadedMsg struct {
 	audit        ProjectionAudit
 	elapsed      time.Duration
 	complete     bool
+	partial      bool
+	totals       ScanCounts
 	err          error
+}
+
+type browseLoadedMsg struct {
+	scanID           string
+	start            browseCursor
+	findings         []Finding
+	credentials      []Credential
+	correlations     []Correlation
+	findingCount     int
+	credentialCount  int
+	correlationCount int
+	complete         bool
+	err              error
+}
+
+type browseCursor struct {
+	finding     int64
+	credential  int64
+	correlation string
+}
+
+type searchPageLoadedMsg struct {
+	scanID string
+	query  string
+	start  searchCursor
+	page   SearchPage
+	err    error
+}
+
+type searchCursor struct {
+	finding     int64
+	credential  int64
+	correlation string
 }
 
 const (
@@ -84,74 +120,112 @@ type evidenceCacheItem struct {
 }
 
 type model struct {
-	provider          *Provider
-	ctx               context.Context
-	output            io.Writer
-	scans             []Scan
-	selectedScan      int
-	selectingScan     bool
-	screen            screen
-	focus             int
-	selected          int
-	selectedSub       int
-	selectedDisc      int
-	categories        []category
-	allMaterial       category
-	subs              []string
-	discoveries       []discovery
-	findings          []Finding
-	width, height     int
-	list, preview     viewport.Model
-	previewHeight     int
-	status            string
-	filter            string
-	filterMode        bool
-	discoveryTotal    int
-	discoverySource   []discovery
-	loading           bool
-	loadError         string
-	loadedFindings    []Finding
-	loadedCreds       []Credential
-	loadedCorrs       []Correlation
-	findingOffset     int
-	credentialOffset  int
-	correlationOffset int
-	findingsDone      bool
-	credentialsDone   bool
-	correlationsDone  bool
-	evidenceCache     map[string]evidenceCacheItem
-	evidenceOrder     []string
-	evidenceBytes     int
+	provider                *Provider
+	ctx                     context.Context
+	output                  io.Writer
+	scans                   []Scan
+	selectedScan            int
+	selectingScan           bool
+	screen                  screen
+	focus                   int
+	selected                int
+	selectedSub             int
+	selectedDisc            int
+	categories              []category
+	allMaterial             category
+	subs                    []string
+	discoveries             []discovery
+	findings                []Finding
+	width, height           int
+	list, preview           viewport.Model
+	previewHeight           int
+	status                  string
+	filter                  string
+	filterMode              bool
+	discoveryTotal          int
+	discoverySource         []discovery
+	loading                 bool
+	browseLoading           bool
+	accountingComplete      bool
+	totals                  ScanCounts
+	loadError               string
+	loadedFindings          []Finding
+	loadedCreds             []Credential
+	loadedCorrs             []Correlation
+	findingCursor           int64
+	credentialCursor        int64
+	correlationCursor       string
+	findingsDone            bool
+	credentialsDone         bool
+	correlationsDone        bool
+	browseStart             browseCursor
+	browseHistory           []browseCursor
+	searchQuery             string
+	searchFindingCursor     int64
+	searchCredentialCursor  int64
+	searchCorrelationCursor string
+	searchDone              bool
+	searchLoading           bool
+	searchStart             searchCursor
+	searchHistory           []searchCursor
+	evidenceCache           map[string]evidenceCacheItem
+	evidenceOrder           []string
+	evidenceBytes           int
+	profiler                *finderProfiler
+}
+
+type RunOptions struct {
+	ProfileDir string
 }
 
 // Run starts the offline viewer. It only queries the supplied read-only provider.
 func Run(ctx context.Context, provider *Provider, scans []Scan, output io.Writer) error {
+	return RunWithOptions(ctx, provider, scans, output, RunOptions{})
+}
+
+func RunWithOptions(ctx context.Context, provider *Provider, scans []Scan, output io.Writer, options RunOptions) error {
 	if len(scans) == 0 {
 		return fmt.Errorf("findings database contains no scan records")
 	}
+	profiler, err := newFinderProfiler(options.ProfileDir)
+	if err != nil {
+		return err
+	}
+	if profiler != nil {
+		defer profiler.close()
+	}
 	loadCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	m := &model{provider: provider, ctx: loadCtx, output: output, scans: scans, selectingScan: len(scans) > 1, loading: len(scans) == 1, evidenceCache: make(map[string]evidenceCacheItem), list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m := &model{provider: provider, ctx: loadCtx, output: output, scans: scans, profiler: profiler, selectingScan: len(scans) > 1, loading: len(scans) == 1, evidenceCache: make(map[string]evidenceCacheItem), list: viewport.New(1, 1), preview: viewport.New(1, 1)}
 	program := tea.NewProgram(m, tea.WithOutput(output), tea.WithAltScreen())
-	_, err := program.Run()
+	_, err = program.Run()
 	return err
 }
 
 func (m *model) loadScan() error {
-	findings, err := readAllFindings(m.ctx, m.provider, m.scans[m.selectedScan].ID)
+	scanID := m.scans[m.selectedScan].ID
+	totals, err := m.provider.Counts(m.ctx, scanID)
 	if err != nil {
 		return err
 	}
-	credentials, err := readAllCredentials(m.ctx, m.provider, m.scans[m.selectedScan].ID)
+	findings, err := m.provider.FindingsAfter(m.ctx, scanID, 0, PageSize)
 	if err != nil {
 		return err
 	}
-	correlations, err := readAllCorrelations(m.ctx, m.provider, m.scans[m.selectedScan].ID)
+	credentials, err := m.provider.CredentialsAfter(m.ctx, scanID, 0, PageSize)
+	if err != nil {
+		return err
+	}
+	correlations, err := m.provider.CorrelationsAfter(m.ctx, scanID, "", PageSize)
 	if err != nil {
 		return err
 	}
 	m.findings = findings
-	categories, audit := buildCategoriesWithAccounting(m.scans[m.selectedScan].ID, credentials, findings, correlations)
+	credentials, err = expandCredentialGroups(m.ctx, m.provider, scanID, credentials)
+	if err != nil {
+		return err
+	}
+	categories, audit := buildCategoriesWithAccounting(scanID, credentials, findings, correlations)
 	if audit.UnaccountedRows != 0 {
 		return fmt.Errorf("findings projection accounting failed: %d unaccounted rows (%s)", audit.UnaccountedRows, strings.Join(audit.UnaccountedRefs, ", "))
 	}
@@ -161,52 +235,70 @@ func (m *model) loadScan() error {
 	m.filter = ""
 	m.filterMode = false
 	m.screen = screenCategories
-	m.status = fmt.Sprintf("%d categories · %d findings · %d logical credentials · %d correlations", len(m.categories), len(findings), audit.LogicalDiscoveryCount, len(correlations))
+	m.totals = totals
+	m.accountingComplete = len(findings) >= totals.Findings && len(credentials) >= totals.Credentials && len(correlations) >= totals.Correlations
+	m.status = fmt.Sprintf("Initial page: %d/%d findings · %d/%d credentials · %d/%d correlations", len(findings), totals.Findings, len(credentials), totals.Credentials, len(correlations), totals.Correlations)
 	m.refresh()
 	return nil
 }
 
 func (m *model) loadScanCmd() tea.Cmd {
 	scanID := m.scans[m.selectedScan].ID
-	findingOffset, credentialOffset, correlationOffset := m.findingOffset, m.credentialOffset, m.correlationOffset
+	findingCursor, credentialCursor, correlationCursor := m.findingCursor, m.credentialCursor, m.correlationCursor
 	findingsDone, credentialsDone, correlationsDone := m.findingsDone, m.credentialsDone, m.correlationsDone
 	return func() tea.Msg {
 		started := time.Now()
+		totals, err := m.provider.Counts(m.ctx, scanID)
+		if err != nil {
+			return scanLoadedMsg{scanID: scanID, elapsed: time.Since(started), err: err}
+		}
 		var findings []Finding
-		for page := 0; page < LoadBatchPages && !findingsDone; page++ {
-			rows, err := m.provider.Findings(m.ctx, scanID, findingOffset+len(findings), PageSize)
+		for page := 0; page < 1 && !findingsDone; page++ {
+			rows, err := m.provider.FindingsAfter(m.ctx, scanID, findingCursor, PageSize)
 			if err != nil {
 				return scanLoadedMsg{scanID: scanID, elapsed: time.Since(started), err: err}
 			}
 			findings = append(findings, rows...)
+			if len(rows) > 0 {
+				findingCursor = rows[len(rows)-1].ID
+			}
 			if len(rows) < PageSize {
 				findingsDone = true
 			}
 		}
 		var credentials []Credential
-		for page := 0; page < LoadBatchPages && !credentialsDone; page++ {
-			rows, err := m.provider.Credentials(m.ctx, scanID, credentialOffset+len(credentials), PageSize)
+		for page := 0; page < 1 && !credentialsDone; page++ {
+			rows, err := m.provider.CredentialsAfter(m.ctx, scanID, credentialCursor, PageSize)
 			if err != nil {
 				return scanLoadedMsg{scanID: scanID, elapsed: time.Since(started), err: err}
 			}
 			credentials = append(credentials, rows...)
+			if len(rows) > 0 {
+				credentialCursor = rows[len(rows)-1].ID
+			}
 			if len(rows) < PageSize {
 				credentialsDone = true
 			}
 		}
 		var correlations []Correlation
-		for page := 0; page < LoadBatchPages && !correlationsDone; page++ {
-			rows, err := m.provider.Correlations(m.ctx, scanID, correlationOffset+len(correlations), PageSize)
+		for page := 0; page < 1 && !correlationsDone; page++ {
+			rows, err := m.provider.CorrelationsAfter(m.ctx, scanID, correlationCursor, PageSize)
 			if err != nil {
 				return scanLoadedMsg{scanID: scanID, elapsed: time.Since(started), err: err}
 			}
 			correlations = append(correlations, rows...)
+			if len(rows) > 0 {
+				correlationCursor = rows[len(rows)-1].Key
+			}
 			if len(rows) < PageSize {
 				correlationsDone = true
 			}
 		}
-		complete := findingsDone && credentialsDone && correlationsDone
-		return scanLoadedMsg{scanID: scanID, findings: findings, credentials: credentials, correlations: correlations, complete: complete, elapsed: time.Since(started)}
+		credentials, err = expandCredentialGroups(m.ctx, m.provider, scanID, credentials)
+		if err != nil {
+			return scanLoadedMsg{scanID: scanID, elapsed: time.Since(started), err: err}
+		}
+		return scanLoadedMsg{scanID: scanID, findings: findings, credentials: credentials, correlations: correlations, complete: true, partial: !(findingsDone && credentialsDone && correlationsDone), totals: totals, elapsed: time.Since(started)}
 	}
 }
 
@@ -224,37 +316,51 @@ func (m *model) applyScanLoaded(msg scanLoadedMsg) tea.Cmd {
 	m.loadedFindings = append(m.loadedFindings, msg.findings...)
 	m.loadedCreds = append(m.loadedCreds, msg.credentials...)
 	m.loadedCorrs = append(m.loadedCorrs, msg.correlations...)
-	if len(msg.findings) < PageSize {
+	if len(msg.findings) > 0 {
+		m.findingCursor = msg.findings[len(msg.findings)-1].ID
+	}
+	if len(msg.credentials) > 0 {
+		m.credentialCursor = msg.credentials[len(msg.credentials)-1].ID
+	}
+	if len(msg.correlations) > 0 {
+		m.correlationCursor = msg.correlations[len(msg.correlations)-1].Key
+	}
+	if err := m.profiler.stage(fmt.Sprintf("batch-%06d-preprojection", len(m.loadedFindings)), len(m.loadedFindings), len(m.loadedCreds), len(m.loadedCorrs), false); err != nil {
+		m.loading = false
+		m.loadError = err.Error()
+		m.status = "Profile failed: " + m.loadError
+		m.refresh()
+		return nil
+	}
+	if !msg.partial && len(msg.findings) < PageSize {
 		m.findingsDone = true
-	} else {
-		m.findingOffset += len(msg.findings)
 	}
-	if len(msg.credentials) < PageSize {
+	if !msg.partial && len(msg.credentials) < PageSize {
 		m.credentialsDone = true
-	} else {
-		m.credentialOffset += len(msg.credentials)
 	}
-	if len(msg.correlations) < PageSize {
+	if !msg.partial && len(msg.correlations) < PageSize {
 		m.correlationsDone = true
-	} else {
-		m.correlationOffset += len(msg.correlations)
+	}
+	if !msg.complete {
+		m.categories = nil
+		m.allMaterial = category{}
+		m.findings = nil
+		m.loading = true
+		m.status = fmt.Sprintf("Loading persisted observations: %d findings, %d credentials, %d correlations", len(m.loadedFindings), len(m.loadedCreds), len(m.loadedCorrs))
+		m.refresh()
+		return m.loadScanCmd()
 	}
 	categories, audit := buildCategoriesWithAccounting(m.scans[m.selectedScan].ID, m.loadedCreds, m.loadedFindings, m.loadedCorrs)
-	if msg.complete && msg.categories != nil {
+	if msg.categories != nil {
 		categories, audit = msg.categories, msg.audit
 	}
 	m.categories = categories
 	m.allMaterial = buildAllPersistedMaterial(categories)
-	m.findings = m.loadedFindings
 	m.selected, m.selectedSub, m.selectedDisc = 0, 0, 0
 	m.screen = screenCategories
-	m.status = fmt.Sprintf("Loading persisted observations: %d findings, %d credentials, %d correlations", len(m.loadedFindings), len(m.loadedCreds), len(m.loadedCorrs))
-	if !msg.complete {
-		m.loading = true
-		m.refresh()
-		return m.loadScanCmd()
-	}
 	m.loading = false
+	m.accountingComplete = !msg.partial
+	m.totals = msg.totals
 	if audit.UnaccountedRows != 0 {
 		m.loadError = fmt.Sprintf("findings projection accounting failed: %d unaccounted rows (%s)", audit.UnaccountedRows, strings.Join(audit.UnaccountedRefs, ", "))
 		m.status = "Load failed: " + m.loadError
@@ -264,14 +370,22 @@ func (m *model) applyScanLoaded(msg scanLoadedMsg) tea.Cmd {
 	m.loadError = ""
 	m.filter = ""
 	m.filterMode = false
-	findingCount, correlationCount := len(m.loadedFindings), len(m.loadedCorrs)
+	findingCount, credentialCount, correlationCount := len(m.loadedFindings), len(m.loadedCreds), len(m.loadedCorrs)
 	compactDiscoveries(m.categories)
 	compactDiscoveries([]category{m.allMaterial})
 	m.loadedFindings = nil
 	m.loadedCreds = nil
 	m.loadedCorrs = nil
 	m.findings = nil
-	m.status = fmt.Sprintf("%d categories · %d findings · %d logical credentials · %d correlations · loaded in %s", len(m.categories), findingCount, audit.LogicalDiscoveryCount, correlationCount, msg.elapsed.Round(time.Millisecond))
+	if err := m.profiler.stage("final-postcompaction", findingCount, credentialCount, correlationCount, true); err != nil {
+		m.loadError = err.Error()
+		m.status = "Profile failed: " + m.loadError
+	}
+	if msg.partial {
+		m.status = fmt.Sprintf("Initial page: %d/%d findings · %d/%d credentials · %d/%d correlations · totals/accounting pending · %s", findingCount, msg.totals.Findings, credentialCount, msg.totals.Credentials, correlationCount, msg.totals.Correlations, msg.elapsed.Round(time.Millisecond))
+	} else {
+		m.status = fmt.Sprintf("%d categories · %d findings · %d logical credentials · %d correlations · loaded in %s", len(m.categories), findingCount, audit.LogicalDiscoveryCount, correlationCount, msg.elapsed.Round(time.Millisecond))
+	}
 	m.refresh()
 	return nil
 }
@@ -321,6 +435,77 @@ func readAllCorrelations(ctx context.Context, provider *Provider, scanID string)
 func buildCategories(credentials []Credential, findings []Finding, correlations []Correlation) []category {
 	categories, _ := buildCategoriesWithAccounting("", credentials, findings, correlations)
 	return categories
+}
+
+// expandCredentialGroups adds bounded persisted relationship context before
+// projection. The canonical representative remains the lowest persisted row
+// ID; rows fetched only as context are grouped into that representative and
+// are not retained as a second full projection.
+func expandCredentialGroups(ctx context.Context, provider *Provider, scanID string, credentials []Credential) ([]Credential, error) {
+	if provider == nil || len(credentials) == 0 {
+		return credentials, nil
+	}
+	result := append([]Credential(nil), credentials...)
+	seenRows := make(map[string]struct{}, len(result))
+	seenGroups := make(map[string]struct{}, len(credentials))
+	for _, item := range credentials {
+		rowRef := credentialRowRef(item)
+		seenRows[rowRef] = struct{}{}
+		groupKey := credentialGroupKey(item.Candidate)
+		if _, done := seenGroups[groupKey]; done || groupKey == "\x00\x00\x00\x00" {
+			continue
+		}
+		seenGroups[groupKey] = struct{}{}
+		related, err := provider.RelatedCredentialsAfter(ctx, scanID, item, 0, PageSize)
+		if err != nil {
+			return nil, err
+		}
+		for _, relatedItem := range related {
+			ref := credentialRowRef(relatedItem)
+			if _, exists := seenRows[ref]; exists {
+				continue
+			}
+			seenRows[ref] = struct{}{}
+			result = append(result, relatedItem)
+		}
+	}
+	return result, nil
+}
+
+func credentialGroupKey(candidate credentialanalysis.Candidate) string {
+	logicalType, logicalIdentity, logicalValue := candidate.CredentialType, candidate.Identity, candidate.Value
+	if pair, ok := deriveConnectionPair(candidate); ok {
+		logicalType, logicalIdentity, logicalValue = "password", pair.Username, pair.Password
+	}
+	return strings.Join([]string{logicalType, logicalIdentity, candidate.Domain, logicalValue}, "\x00")
+}
+
+func retainCanonicalCredentialGroups(expanded, page []Credential) []Credential {
+	pageRows := make(map[string]struct{}, len(page))
+	for _, item := range page {
+		pageRows[credentialGroupKey(item.Candidate)] = struct{}{}
+	}
+	minimum := make(map[string]int64, len(expanded))
+	for _, item := range expanded {
+		key := credentialGroupKey(item.Candidate)
+		if current, ok := minimum[key]; !ok || item.ID < current {
+			minimum[key] = item.ID
+		}
+	}
+	canonicalRows := make(map[string]struct{}, len(pageRows))
+	for _, item := range page {
+		key := credentialGroupKey(item.Candidate)
+		if item.ID == minimum[key] {
+			canonicalRows[key] = struct{}{}
+		}
+	}
+	result := make([]Credential, 0, len(expanded))
+	for _, item := range expanded {
+		if _, ok := canonicalRows[credentialGroupKey(item.Candidate)]; ok {
+			result = append(result, item)
+		}
+	}
+	return result
 }
 
 func buildCategoriesWithAccounting(scanID string, credentials []Credential, findings []Finding, correlations []Correlation) ([]category, ProjectionAudit) {
@@ -430,7 +615,7 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 				Verification:   firstNonEmpty(f.TriageClass, f.SignalType, "observed"),
 				Reason:         f.MatchReason,
 				Sources:        []string{sourceLabelFinding(f)}, PersistedRefs: []string{findingRowRef(item)},
-				Finding: &f,
+				FindingRef: findingRowRef(item),
 			})
 			continue
 		}
@@ -449,7 +634,7 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 				Verification:   firstNonEmpty(f.TriageClass, f.SignalType, "observed"),
 				Reason:         f.MatchReason,
 				Sources:        []string{sourceLabelFinding(f)}, PersistedRefs: []string{findingRowRef(item)},
-				Finding: &f,
+				FindingRef: findingRowRef(item),
 			})
 			continue
 		}
@@ -468,7 +653,7 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 				Verification:   firstNonEmpty(f.TriageClass, f.SignalType, "observed"),
 				Reason:         f.MatchReason,
 				Sources:        []string{sourceLabelFinding(f)}, PersistedRefs: []string{findingRowRef(item)},
-				Finding: &f,
+				FindingRef: findingRowRef(item),
 			})
 			continue
 		}
@@ -476,7 +661,7 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 			groups["Original Findings"].Discoveries = append(groups["Original Findings"].Discoveries, discovery{
 				Title: firstNonEmpty(f.RuleName, f.RuleID), Subcategory: "Supporting Findings", MaterialType: "supporting finding",
 				Host: f.Host, Share: f.Share, Path: f.FilePath, Confidence: firstNonEmpty(f.Confidence, "unknown"), Verification: "supporting",
-				Sources: []string{sourceLabelFinding(f)}, PersistedRefs: []string{findingRowRef(item)}, Finding: &f,
+				Sources: []string{sourceLabelFinding(f)}, PersistedRefs: []string{findingRowRef(item)}, FindingRef: findingRowRef(item),
 			})
 			continue
 		}
@@ -495,7 +680,7 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 			Verification:   firstNonEmpty(f.TriageClass, "actionable"),
 			Reason:         f.MatchReason,
 			Sources:        []string{sourceLabelFinding(f)}, PersistedRefs: []string{findingRowRef(item)},
-			Finding: &f,
+			FindingRef: findingRowRef(item),
 		})
 	}
 	for _, item := range correlations {
@@ -855,6 +1040,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.resize()
 		}
 		return m, cmd
+	case browseLoadedMsg:
+		m.applyBrowseLoaded(msg)
+		if m.width > 0 && m.height > 0 {
+			m.resize()
+		}
+		return m, nil
+	case searchPageLoadedMsg:
+		m.applySearchPage(msg)
+		if m.width > 0 && m.height > 0 {
+			m.resize()
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resize()
@@ -881,7 +1078,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pgup":
 			m.page(-1)
 		case "pgdown", "space":
-			m.page(1)
+			return m, m.page(1)
 		case "/":
 			if m.screen == screenDiscoveries {
 				m.filterMode = true
@@ -928,16 +1125,200 @@ func (m *model) move(delta int) {
 	m.refresh()
 }
 
-func (m *model) page(direction int) {
+func (m *model) page(direction int) tea.Cmd {
+	if direction > 0 && m.screen == screenDiscoveries && m.selectedDisc >= len(m.discoveries)-1 && strings.TrimSpace(m.filter) != "" && !m.searchLoading && !m.searchDone {
+		m.searchHistory = append(m.searchHistory, m.searchStart)
+		m.searchStart = searchCursor{finding: m.searchFindingCursor, credential: m.searchCredentialCursor, correlation: m.searchCorrelationCursor}
+		m.searchLoading = true
+		m.status = "Loading next matching page..."
+		m.refresh()
+		return m.loadSearchPageCmd()
+	}
+	if direction < 0 && m.screen == screenDiscoveries && m.selectedDisc == 0 && !m.searchLoading && len(m.searchHistory) > 0 && strings.TrimSpace(m.filter) != "" {
+		last := len(m.searchHistory) - 1
+		m.searchStart = m.searchHistory[last]
+		m.searchHistory = m.searchHistory[:last]
+		m.searchLoading = true
+		m.status = "Loading previous matching page..."
+		m.refresh()
+		return m.loadSearchPageCmd()
+	}
+	if direction > 0 && m.screen == screenDiscoveries && m.selectedDisc >= len(m.discoveries)-1 && !m.browseLoading && !m.findingsDone {
+		m.browseHistory = append(m.browseHistory, m.browseStart)
+		m.browseStart = browseCursor{finding: m.findingCursor, credential: m.credentialCursor, correlation: m.correlationCursor}
+		m.browseLoading = true
+		m.status = "Loading next indexed page..."
+		m.refresh()
+		return m.loadBrowsePageCmd()
+	}
+	if direction < 0 && m.screen == screenDiscoveries && m.selectedDisc == 0 && !m.browseLoading && len(m.browseHistory) > 0 && strings.TrimSpace(m.filter) == "" {
+		last := len(m.browseHistory) - 1
+		m.browseStart = m.browseHistory[last]
+		m.browseHistory = m.browseHistory[:last]
+		m.browseLoading = true
+		m.status = "Loading previous indexed page..."
+		m.refresh()
+		return m.loadBrowsePageCmd()
+	}
 	if m.focus == 1 {
 		if direction < 0 {
 			m.preview.PageUp()
 		} else {
 			m.preview.PageDown()
 		}
-		return
+		return nil
 	}
 	m.move(direction * 8)
+	return nil
+}
+
+func (m *model) loadSearchPageCmd() tea.Cmd {
+	scanID := m.scans[m.selectedScan].ID
+	query := strings.TrimSpace(m.filter)
+	start := m.searchStart
+	findingCursor, credentialCursor := start.finding, start.credential
+	correlationCursor := start.correlation
+	return func() tea.Msg {
+		page, err := m.provider.SearchPageAfter(m.ctx, scanID, query, findingCursor, credentialCursor, correlationCursor, PageSize)
+		return searchPageLoadedMsg{scanID: scanID, query: query, start: start, page: page, err: err}
+	}
+}
+
+func (m *model) applySearchPage(msg searchPageLoadedMsg) {
+	m.searchLoading = false
+	m.searchStart = msg.start
+	if msg.scanID != m.scans[m.selectedScan].ID || msg.query != strings.TrimSpace(m.filter) || msg.query != m.searchQuery {
+		return
+	}
+	if msg.err != nil {
+		m.status = "Search failed: " + msg.err.Error()
+		m.refresh()
+		return
+	}
+	m.searchFindingCursor = msg.page.FindingCursor
+	m.searchCredentialCursor = msg.page.CredentialCursor
+	m.searchCorrelationCursor = msg.page.CorrelationCursor
+	m.searchDone = msg.page.Done
+	if err := m.setSearchDiscoveries(msg.page); err != nil {
+		m.status = "Search relationship expansion failed: " + err.Error()
+	}
+	m.refresh()
+}
+
+func (m *model) setSearchDiscoveries(page SearchPage) error {
+	expandedCredentials, err := expandCredentialGroups(m.ctx, m.provider, m.scans[m.selectedScan].ID, page.Credentials)
+	if err != nil {
+		return err
+	}
+	page.Credentials = expandedCredentials
+	searchCategories, _ := buildCategoriesWithAccounting(m.scans[m.selectedScan].ID, page.Credentials, page.Findings, page.Correlations)
+	items := m.categoryItems()
+	if m.selected < 0 || m.selected >= len(items) || len(m.subs) == 0 {
+		m.discoverySource = nil
+		m.discoveries = nil
+		return nil
+	}
+	wantedCategory := items[m.selected].Name
+	if wantedCategory == "All Persisted Material" {
+		searchCategories = []category{buildAllPersistedMaterial(searchCategories)}
+	}
+	for _, item := range searchCategories {
+		if item.Name == wantedCategory {
+			m.discoverySource = subcategoryDiscoveries(item, m.subs[m.selectedSub])
+			m.discoveries = append([]discovery(nil), m.discoverySource...)
+			m.selectedDisc = 0
+			m.discoveryTotal = page.PersistedRows
+			return nil
+		}
+	}
+	m.discoverySource = nil
+	m.discoveries = nil
+	m.discoveryTotal = page.PersistedRows
+	return nil
+}
+
+func (m *model) loadBrowsePageCmd() tea.Cmd {
+	scanID := m.scans[m.selectedScan].ID
+	start := m.browseStart
+	findingCursor, credentialCursor, correlationCursor := start.finding, start.credential, start.correlation
+	return func() tea.Msg {
+		findings, err := m.provider.FindingsAfter(m.ctx, scanID, findingCursor, PageSize)
+		if err != nil {
+			return browseLoadedMsg{scanID: scanID, start: start, err: err}
+		}
+		credentials, err := m.provider.CredentialsAfter(m.ctx, scanID, credentialCursor, PageSize)
+		if err != nil {
+			return browseLoadedMsg{scanID: scanID, start: start, err: err}
+		}
+		correlations, err := m.provider.CorrelationsAfter(m.ctx, scanID, correlationCursor, PageSize)
+		if err != nil {
+			return browseLoadedMsg{scanID: scanID, start: start, err: err}
+		}
+		pageCredentials := credentials
+		credentials, err = expandCredentialGroups(m.ctx, m.provider, scanID, credentials)
+		if err != nil {
+			return browseLoadedMsg{scanID: scanID, start: start, err: err}
+		}
+		credentials = retainCanonicalCredentialGroups(credentials, pageCredentials)
+		return browseLoadedMsg{scanID: scanID, start: start, findings: findings, credentials: credentials, correlations: correlations,
+			findingCount: len(findings), credentialCount: len(pageCredentials), correlationCount: len(correlations),
+			complete: len(findings) < PageSize && len(pageCredentials) < PageSize && len(correlations) < PageSize}
+	}
+}
+
+func (m *model) applyBrowseLoaded(msg browseLoadedMsg) {
+	if msg.scanID != m.scans[m.selectedScan].ID {
+		return
+	}
+	m.browseLoading = false
+	m.browseStart = msg.start
+	if msg.err != nil {
+		m.status = "Next page failed: " + msg.err.Error()
+		m.refresh()
+		return
+	}
+	if len(msg.findings) > 0 {
+		m.findingCursor = msg.findings[len(msg.findings)-1].ID
+	}
+	if len(msg.credentials) > 0 {
+		m.credentialCursor = msg.credentials[len(msg.credentials)-1].ID
+	}
+	if len(msg.correlations) > 0 {
+		m.correlationCursor = msg.correlations[len(msg.correlations)-1].Key
+	}
+	if msg.findingCount < PageSize {
+		m.findingsDone = true
+	}
+	if msg.credentialCount < PageSize {
+		m.credentialsDone = true
+	}
+	if msg.correlationCount < PageSize {
+		m.correlationsDone = true
+	}
+	pageCategories, _ := buildCategoriesWithAccounting(msg.scanID, msg.credentials, msg.findings, msg.correlations)
+	items := m.categoryItems()
+	if m.selected < 0 || m.selected >= len(items) {
+		return
+	}
+	wanted := items[m.selected].Name
+	if wanted == "All Persisted Material" {
+		pageCategories = []category{buildAllPersistedMaterial(pageCategories)}
+	}
+	for _, item := range pageCategories {
+		if item.Name != wanted {
+			continue
+		}
+		m.discoverySource = subcategoryDiscoveries(item, m.subs[m.selectedSub])
+		m.discoveries = append([]discovery(nil), m.discoverySource...)
+		m.selectedDisc = 0
+		m.status = fmt.Sprintf("Showing indexed page; totals remain %d findings, %d credentials, %d correlations", m.totals.Findings, m.totals.Credentials, m.totals.Correlations)
+		m.refresh()
+		return
+	}
+	m.discoverySource = nil
+	m.discoveries = nil
+	m.status = "No discoveries in the next indexed page for this category."
+	m.refresh()
 }
 
 func (m *model) open() tea.Cmd {
@@ -1049,6 +1430,24 @@ func (m *model) refresh() {
 		m.keepListSelectionVisible(m.selectedSub)
 		m.preview.SetContent(subcategoryPreview(items[m.selected], m.subs, m.selectedSub))
 	case screenDiscoveries:
+		if strings.TrimSpace(m.filter) != "" && m.provider != nil && m.searchQuery != strings.TrimSpace(m.filter) {
+			m.searchQuery = strings.TrimSpace(m.filter)
+			m.searchFindingCursor, m.searchCredentialCursor, m.searchCorrelationCursor = 0, 0, ""
+			m.searchDone = false
+			m.searchStart = searchCursor{}
+			m.searchHistory = nil
+			if page, err := m.provider.SearchPageAfter(m.ctx, m.scans[m.selectedScan].ID, m.searchQuery, 0, 0, "", PageSize); err == nil {
+				m.searchFindingCursor = page.FindingCursor
+				m.searchCredentialCursor = page.CredentialCursor
+				m.searchCorrelationCursor = page.CorrelationCursor
+				m.searchDone = page.Done
+				if err := m.setSearchDiscoveries(page); err != nil {
+					m.status = "Search relationship expansion failed: " + err.Error()
+				}
+			} else {
+				m.status = "Search failed: " + err.Error()
+			}
+		}
 		base := m.discoverySource
 		if len(base) == 0 {
 			if len(m.subs) > 0 {
@@ -1061,35 +1460,7 @@ func (m *model) refresh() {
 		m.discoveryTotal = len(base)
 		m.discoveries = filterDiscoveries(base, m.filter)
 		if strings.TrimSpace(m.filter) != "" && m.provider != nil {
-			if refs, err := m.provider.SearchRefs(m.ctx, m.scans[m.selectedScan].ID, m.filter); err == nil {
-				seen := make(map[string]struct{}, len(m.discoveries))
-				for _, item := range m.discoveries {
-					for _, ref := range item.PersistedRefs {
-						seen[ref] = struct{}{}
-					}
-				}
-				for _, item := range base {
-					match := false
-					for _, ref := range item.PersistedRefs {
-						if _, ok := refs[ref]; ok {
-							match = true
-							break
-						}
-					}
-					if match {
-						duplicate := false
-						for _, ref := range item.PersistedRefs {
-							if _, ok := seen[ref]; ok {
-								duplicate = true
-								break
-							}
-						}
-						if !duplicate {
-							m.discoveries = append(m.discoveries, item)
-						}
-					}
-				}
-			}
+			m.discoveryTotal = len(m.discoveries)
 		}
 		m.selectedDisc = clamp(m.selectedDisc, 0, max(0, len(m.discoveries)-1))
 		if len(m.discoveries) == 0 {
@@ -1100,7 +1471,15 @@ func (m *model) refresh() {
 		m.keepListSelectionVisible(m.selectedDisc)
 		m.preview.GotoTop()
 		m.preview.SetContent(wrapDetails(m.evidenceText(), m.preview.Width))
-		m.status = fmt.Sprintf("Showing %d/%d discoveries", len(m.discoveries), m.discoveryTotal)
+		if strings.TrimSpace(m.filter) != "" && m.provider != nil {
+			if m.searchDone {
+				m.status = fmt.Sprintf("Showing %d discoveries from complete matching pages", len(m.discoveries))
+			} else {
+				m.status = fmt.Sprintf("Showing %d discoveries from bounded search page; PageDown continues matches", len(m.discoveries))
+			}
+		} else {
+			m.status = fmt.Sprintf("Showing %d/%d discoveries", len(m.discoveries), m.discoveryTotal)
+		}
 	}
 }
 
@@ -1296,6 +1675,7 @@ func compactDiscoveries(categories []category) {
 				f.ConfidenceReasons = nil
 				f.MatchedRuleIDs = nil
 				f.MatchedSignalTypes = nil
+				d.Finding = nil
 			}
 		}
 	}

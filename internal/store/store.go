@@ -18,7 +18,7 @@ import (
 	"snablr/internal/scanner"
 )
 
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 const (
 	ScopeExclusionShare  = "share"
@@ -157,8 +157,24 @@ UPDATE metadata SET value='2' WHERE key='schema_version';
 			}
 			return nil
 		}
-		if storedVersion != "2" {
+		if storedVersion == "2" {
+			if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS derived_findings (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, correlation_key TEXT NOT NULL, payload TEXT NOT NULL, UNIQUE(scan_id, correlation_key), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
+CREATE TABLE IF NOT EXISTS correlation_state (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, family TEXT NOT NULL, group_key TEXT NOT NULL, slot TEXT NOT NULL, priority INTEGER NOT NULL, severity_rank INTEGER NOT NULL, file_path TEXT NOT NULL, payload TEXT NOT NULL, FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
+CREATE TABLE IF NOT EXISTS derived_state (scan_id TEXT PRIMARY KEY, status TEXT NOT NULL, started_at TEXT NOT NULL, completed_at TEXT, FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
+CREATE INDEX IF NOT EXISTS derived_findings_scan_id_id_idx ON derived_findings(scan_id, id);
+CREATE INDEX IF NOT EXISTS correlation_state_group_idx ON correlation_state(scan_id, family, group_key, slot, priority DESC, severity_rank DESC, file_path, id);
+UPDATE metadata SET value='3' WHERE key='schema_version';
+`); err != nil {
+				return fmt.Errorf("migrate SQLite derived findings schema: %w", err)
+			}
+			return nil
+		}
+		if storedVersion != "3" {
 			return fmt.Errorf("unsupported SQLite scan database schema version %s", storedVersion)
+		}
+		if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS correlation_state (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, family TEXT NOT NULL, group_key TEXT NOT NULL, slot TEXT NOT NULL, priority INTEGER NOT NULL, severity_rank INTEGER NOT NULL, file_path TEXT NOT NULL, payload TEXT NOT NULL, FOREIGN KEY (scan_id) REFERENCES scans(scan_id)); CREATE TABLE IF NOT EXISTS derived_state (scan_id TEXT PRIMARY KEY, status TEXT NOT NULL, started_at TEXT NOT NULL, completed_at TEXT, FOREIGN KEY (scan_id) REFERENCES scans(scan_id)); CREATE INDEX IF NOT EXISTS correlation_state_group_idx ON correlation_state(scan_id, family, group_key, slot, priority DESC, severity_rank DESC, file_path, id);`); err != nil {
+			return fmt.Errorf("ensure SQLite correlation state schema: %w", err)
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) && !strings.Contains(err.Error(), "no such table") {
 		return err
@@ -175,14 +191,22 @@ CREATE TABLE IF NOT EXISTS members (scan_id TEXT NOT NULL, parent_key TEXT NOT N
 CREATE TABLE IF NOT EXISTS findings (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, fingerprint TEXT NOT NULL, host TEXT, share TEXT, path TEXT, rule_id TEXT, category TEXT, payload TEXT NOT NULL, UNIQUE(scan_id, fingerprint), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS credentials (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, credential_key TEXT NOT NULL, credential_type TEXT, identity TEXT, value TEXT, payload TEXT NOT NULL, UNIQUE(scan_id, credential_key), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS correlations (scan_id TEXT NOT NULL, correlation_key TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY (scan_id, correlation_key), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
+CREATE TABLE IF NOT EXISTS derived_findings (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, correlation_key TEXT NOT NULL, payload TEXT NOT NULL, UNIQUE(scan_id, correlation_key), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
+CREATE TABLE IF NOT EXISTS correlation_state (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, family TEXT NOT NULL, group_key TEXT NOT NULL, slot TEXT NOT NULL, priority INTEGER NOT NULL, severity_rank INTEGER NOT NULL, file_path TEXT NOT NULL, payload TEXT NOT NULL, FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
+CREATE TABLE IF NOT EXISTS derived_state (scan_id TEXT PRIMARY KEY, status TEXT NOT NULL, started_at TEXT NOT NULL, completed_at TEXT, FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS bookmarks (scan_id TEXT NOT NULL, file_key TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (scan_id, file_key), FOREIGN KEY (scan_id, file_key) REFERENCES files(scan_id, file_key));
 CREATE TABLE IF NOT EXISTS scope_exclusions (scan_id TEXT NOT NULL, kind TEXT NOT NULL, host TEXT NOT NULL, share TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (scan_id, kind, host, share, path), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE INDEX IF NOT EXISTS files_status_idx ON files(scan_id, status);
 CREATE INDEX IF NOT EXISTS files_identity_idx ON files(scan_id, host, share, path);
 CREATE INDEX IF NOT EXISTS findings_path_idx ON findings(scan_id, path);
+CREATE INDEX IF NOT EXISTS findings_scan_id_id_idx ON findings(scan_id, id);
+CREATE INDEX IF NOT EXISTS derived_findings_scan_id_id_idx ON derived_findings(scan_id, id);
+CREATE INDEX IF NOT EXISTS correlation_state_group_idx ON correlation_state(scan_id, family, group_key, slot, priority DESC, severity_rank DESC, file_path, id);
+CREATE INDEX IF NOT EXISTS credentials_scan_id_id_idx ON credentials(scan_id, id);
+CREATE INDEX IF NOT EXISTS credentials_group_idx ON credentials(scan_id, credential_type, identity, value, id);
 CREATE INDEX IF NOT EXISTS bookmarks_scan_created_idx ON bookmarks(scan_id, created_at, file_key);
 CREATE INDEX IF NOT EXISTS scope_exclusions_identity_idx ON scope_exclusions(scan_id, kind, host, share, path);
-INSERT INTO metadata(key, value) VALUES ('schema_version', '2') ON CONFLICT(key) DO UPDATE SET value=excluded.value;
+INSERT INTO metadata(key, value) VALUES ('schema_version', '3') ON CONFLICT(key) DO UPDATE SET value=excluded.value;
 `)
 	return err
 }
@@ -506,6 +530,235 @@ func (s *SQLiteStore) RecordFinding(f scanner.Finding) error {
 		return err
 	})
 }
+
+// RecordDerivedFinding persists a synthetic correlation result separately from
+// original observations. The correlation key is the idempotency boundary for
+// replay and resume; re-running a completed family replaces the payload rather
+// than duplicating the derived result.
+func (s *SQLiteStore) RecordDerivedFinding(correlationKey string, f scanner.Finding) error {
+	payload, err := json.Marshal(f)
+	if err != nil {
+		return err
+	}
+	return s.enqueue(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`INSERT INTO derived_findings(scan_id,correlation_key,payload) VALUES(?,?,?) ON CONFLICT(scan_id,correlation_key) DO UPDATE SET payload=excluded.payload`, s.scanID, correlationKey, payload)
+		return err
+	})
+}
+
+// IterateDerivedFindings reads synthetic results in bounded primary-key order.
+func (s *SQLiteStore) IterateDerivedFindings(ctx context.Context, batchSize int, visit func([]scanner.Finding) error) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite state store is closed")
+	}
+	if visit == nil {
+		return errors.New("derived finding iterator callback is nil")
+	}
+	if batchSize <= 0 {
+		batchSize = 256
+	}
+	if err := s.Flush(); err != nil {
+		return err
+	}
+	var after int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rows, err := s.db.QueryContext(ctx, `SELECT id,payload FROM derived_findings WHERE scan_id=? AND id>? ORDER BY id LIMIT ?`, s.scanID, after, batchSize)
+		if err != nil {
+			return err
+		}
+		batch := make([]scanner.Finding, 0, batchSize)
+		var last int64
+		for rows.Next() {
+			var id int64
+			var payload []byte
+			if err := rows.Scan(&id, &payload); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			var finding scanner.Finding
+			if err := json.Unmarshal(payload, &finding); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("decode derived finding %d: %w", id, err)
+			}
+			batch = append(batch, finding)
+			last = id
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		_ = rows.Close()
+		if len(batch) == 0 {
+			return nil
+		}
+		if err := visit(batch); err != nil {
+			return err
+		}
+		after = last
+	}
+}
+
+// ResetCorrelationState starts a fresh replay for the current source
+// observations. Derived rows are removed with the state so obsolete
+// correlations cannot survive a changed or resumed scan.
+func (s *SQLiteStore) ResetCorrelationState() error {
+	return s.enqueue(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`DELETE FROM correlation_state WHERE scan_id=?`, s.scanID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM derived_findings WHERE scan_id=?`, s.scanID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT INTO derived_state(scan_id,status,started_at,completed_at) VALUES(?,?,?,NULL) ON CONFLICT(scan_id) DO UPDATE SET status=excluded.status,started_at=excluded.started_at,completed_at=NULL`, s.scanID, "building", time.Now().UTC().Format(time.RFC3339Nano))
+		return err
+	})
+}
+
+// CompleteCorrelationState publishes the current derived generation. Finder
+// only exposes derived rows after this durable completion marker is committed.
+func (s *SQLiteStore) CompleteCorrelationState() error {
+	return s.enqueue(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE derived_state SET status='complete',completed_at=? WHERE scan_id=?`, time.Now().UTC().Format(time.RFC3339Nano), s.scanID)
+		return err
+	})
+}
+
+// CorrelationStateReady reports whether the current derived generation was
+// durably published. A completed generation is reusable by exporters and
+// Finder; rebuilding it would unnecessarily delete valid derived results.
+func (s *SQLiteStore) CorrelationStateReady(ctx context.Context) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, errors.New("sqlite state store is closed")
+	}
+	var status string
+	err := s.db.QueryRowContext(ctx, `SELECT status FROM derived_state WHERE scan_id=?`, s.scanID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return status == "complete", nil
+}
+
+// RecordCorrelationState spills one candidate anchor to SQLite. It is
+// intentionally append-only for a replay; the indexed group query chooses
+// the preferred candidate without retaining the group in Go memory.
+func (s *SQLiteStore) RecordCorrelationState(family, groupKey, slot string, priority, severityRank int, filePath string, f scanner.Finding) error {
+	payload, err := json.Marshal(f)
+	if err != nil {
+		return err
+	}
+	return s.enqueue(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`INSERT INTO correlation_state(scan_id,family,group_key,slot,priority,severity_rank,file_path,payload) VALUES(?,?,?,?,?,?,?,?)`, s.scanID, family, groupKey, slot, priority, severityRank, filePath, payload)
+		return err
+	})
+}
+
+// ForEachCorrelationGroup walks distinct persisted groups in index order. The
+// callback must not retain group keys; member payloads are fetched separately.
+func (s *SQLiteStore) ForEachCorrelationGroup(ctx context.Context, visit func(family, groupKey string) error) error {
+	if err := s.Flush(); err != nil {
+		return err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT family,group_key FROM correlation_state WHERE scan_id=? GROUP BY family,group_key ORDER BY family,group_key`, s.scanID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var family, groupKey string
+		if err := rows.Scan(&family, &groupKey); err != nil {
+			return err
+		}
+		if err := visit(family, groupKey); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// BestCorrelationState returns one preferred anchor for a family/group/slot.
+// Only one payload is decoded, even for very large relationship groups.
+func (s *SQLiteStore) BestCorrelationState(ctx context.Context, family, groupKey, slot string) (scanner.Finding, bool, error) {
+	var payload []byte
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM correlation_state WHERE scan_id=? AND family=? AND group_key=? AND slot=? ORDER BY priority DESC,severity_rank DESC,file_path,id LIMIT 1`, s.scanID, family, groupKey, slot).Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return scanner.Finding{}, false, nil
+	}
+	if err != nil {
+		return scanner.Finding{}, false, err
+	}
+	var f scanner.Finding
+	if err := json.Unmarshal(payload, &f); err != nil {
+		return scanner.Finding{}, false, err
+	}
+	return f, true, nil
+}
+
+// IterateFindings visits authoritative findings in primary-key order using a
+// bounded keyset window. The callback must not retain the batch after it
+// returns. Flushing first makes the view complete for the current scan while
+// keeping the caller's working set bounded.
+func (s *SQLiteStore) IterateFindings(ctx context.Context, batchSize int, visit func([]scanner.Finding) error) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite state store is closed")
+	}
+	if visit == nil {
+		return errors.New("finding iterator callback is nil")
+	}
+	if batchSize <= 0 {
+		batchSize = 256
+	}
+	if err := s.Flush(); err != nil {
+		return err
+	}
+	var after int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rows, err := s.db.QueryContext(ctx, `SELECT id,payload FROM findings WHERE scan_id=? AND id>? ORDER BY id LIMIT ?`, s.scanID, after, batchSize)
+		if err != nil {
+			return err
+		}
+		batch := make([]scanner.Finding, 0, batchSize)
+		var last int64
+		for rows.Next() {
+			var id int64
+			var payload []byte
+			if err := rows.Scan(&id, &payload); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			var finding scanner.Finding
+			if err := json.Unmarshal(payload, &finding); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("decode persisted finding %d: %w", id, err)
+			}
+			batch = append(batch, finding)
+			last = id
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		_ = rows.Close()
+		if len(batch) == 0 {
+			return nil
+		}
+		if err := visit(batch); err != nil {
+			return err
+		}
+		after = last
+	}
+}
 func (s *SQLiteStore) RecordCredential(c credentialanalysis.Candidate) error {
 	payload, _ := credentialPayload(c)
 	key := fmt.Sprintf("%s|%s|%s|%s", c.CredentialType, c.Identity, c.Path, c.Value)
@@ -515,6 +768,61 @@ func (s *SQLiteStore) RecordCredential(c credentialanalysis.Candidate) error {
 		}
 		return s.recordCredentialCorrelations(tx, c)
 	})
+}
+
+// IterateCredentials streams persisted credential candidates without retaining
+// the scan-wide credential population in the caller.
+func (s *SQLiteStore) IterateCredentials(ctx context.Context, batchSize int, visit func([]credentialanalysis.Candidate) error) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("sqlite state store is closed")
+	}
+	if visit == nil {
+		return fmt.Errorf("credential visitor is nil")
+	}
+	if batchSize <= 0 {
+		batchSize = 256
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT payload,value FROM credentials WHERE scan_id=? ORDER BY id`, s.scanID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	batch := make([]credentialanalysis.Candidate, 0, batchSize)
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		if err := visit(batch); err != nil {
+			return err
+		}
+		batch = batch[:0]
+		return nil
+	}
+	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var payload []byte
+		var value string
+		if err := rows.Scan(&payload, &value); err != nil {
+			return err
+		}
+		var candidate credentialanalysis.Candidate
+		if err := json.Unmarshal(payload, &candidate); err != nil {
+			return err
+		}
+		candidate.Value = value
+		batch = append(batch, candidate)
+		if len(batch) >= batchSize {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return flush()
 }
 
 func (s *SQLiteStore) recordCredentialCorrelations(tx *sql.Tx, candidate credentialanalysis.Candidate) error {

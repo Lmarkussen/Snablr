@@ -2,6 +2,7 @@ package output
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -47,7 +48,9 @@ func (j *JSONWriter) WriteFinding(f scanner.Finding) error {
 	defer j.mu.Unlock()
 
 	j.summary.RecordFinding(f)
-	j.findings = append(j.findings, f)
+	if attachedSQLiteStore(j) == nil {
+		j.findings = append(j.findings, f)
+	}
 	return nil
 }
 
@@ -149,6 +152,18 @@ func (j *JSONWriter) RecordDowngradedFinding(f scanner.Finding) {
 func (j *JSONWriter) Close() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if shadow := attachedSQLiteStore(j); shadow != nil {
+		err := closeJSONSQLiteStreamingWithBaseline(j, shadow, j.baseline)
+		if err != nil && j.closer != nil {
+			_ = j.closer.Close()
+		}
+		return err
+	}
+	findings, err := persistedFindingsForReport(j, j.findings)
+	if err != nil {
+		return fmt.Errorf("load persisted findings for JSON report: %w", err)
+	}
+	j.findings = findings
 
 	enc := json.NewEncoder(j.w)
 	if j.pretty {
@@ -157,7 +172,10 @@ func (j *JSONWriter) Close() error {
 
 	var diffResult *diff.DiffResult
 	var statusByFingerprint map[diff.FindingFingerprint]diff.FindingDelta
-	augmented := augmentFindingsForReporting(j.findings)
+	augmented := dedupeReportFindings(j.findings)
+	if attachedSQLiteStore(j) == nil {
+		augmented = augmentFindingsForReporting(j.findings)
+	}
 	if len(j.baseline) > 0 {
 		result := diff.Compare(j.baseline, augmented)
 		diffResult = &result
@@ -204,6 +222,9 @@ func (j *JSONWriter) Close() error {
 			_ = j.closer.Close()
 		}
 		return err
+	}
+	if atomic, ok := j.closer.(*atomicOutput); ok {
+		atomic.commit = true
 	}
 	if j.closer == nil {
 		return nil

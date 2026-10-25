@@ -35,7 +35,7 @@ func credentialRowRef(item Credential) string {
 	return fmt.Sprintf("row:%d", item.ID)
 }
 
-func findingRowRef(item Finding) string { return fmt.Sprintf("finding:%d", item.ID) }
+func findingRowRef(item Finding) string { return item.StableID() }
 
 func correlationRowRef(item Correlation) string { return "correlation:" + item.Key }
 

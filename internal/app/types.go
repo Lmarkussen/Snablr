@@ -22,6 +22,7 @@ type ScanOptions struct {
 	Domain                     string
 	RulesDirectory             string
 	WorkerCount                *int
+	LowMemory                  bool
 	MaxFileSize                int64
 	NoLDAP                     bool
 	DomainController           string

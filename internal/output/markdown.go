@@ -34,7 +34,9 @@ func (m *MarkdownWriter) WriteFinding(f scanner.Finding) error {
 	defer m.mu.Unlock()
 
 	m.summary.RecordFinding(f)
-	m.findings = append(m.findings, f)
+	if attachedSQLiteStore(m) == nil {
+		m.findings = append(m.findings, f)
+	}
 	return nil
 }
 
@@ -67,8 +69,23 @@ func (m *MarkdownWriter) SetMetricsSnapshot(snapshot metrics.Snapshot) {
 func (m *MarkdownWriter) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if shadow := attachedSQLiteStore(m); shadow != nil {
+		err := closeMarkdownSQLiteStreaming(m, shadow)
+		if err != nil && m.closer != nil {
+			_ = m.closer.Close()
+		}
+		return err
+	}
+	findings, err := persistedFindingsForReport(m, m.findings)
+	if err != nil {
+		return fmt.Errorf("load persisted findings for Markdown report: %w", err)
+	}
+	m.findings = findings
 
-	augmented := augmentFindingsForReporting(m.findings)
+	augmented := dedupeReportFindings(m.findings)
+	if attachedSQLiteStore(m) == nil {
+		augmented = augmentFindingsForReporting(m.findings)
+	}
 	summary := adjustedSummarySnapshot(m.summary.Snapshot(), m.findings, augmented)
 	categorySummaries := buildCategorySummaries(augmented)
 	sort.Slice(augmented, func(i, j int) bool {

@@ -118,6 +118,12 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if opts.WorkerCount != nil {
 		cfg.Scan.WorkerCount = *opts.WorkerCount
 	}
+	if opts.LowMemory {
+		cfg.Scan.LowMemory = true
+		if opts.WorkerCount == nil {
+			cfg.Scan.WorkerCount = 2
+		}
+	}
 	if opts.MaxFileSize > 0 {
 		cfg.Scan.MaxFileSize = opts.MaxFileSize
 	}

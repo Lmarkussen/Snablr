@@ -16,7 +16,10 @@ func augmentFindingsForReporting(findings []scanner.Finding) []scanner.Finding {
 		return nil
 	}
 
-	out := dedupeReportFindings(cloneFindings(findings))
+	// Correlation builders only read base findings. Avoid cloning the complete
+	// evidence payload before deduplication; persisted/report views own any
+	// copies they need later.
+	out := dedupeReportFindings(findings)
 	existing := make(map[string]struct{}, len(out))
 	for _, finding := range out {
 		existing[correlationFindingKey(finding)] = struct{}{}

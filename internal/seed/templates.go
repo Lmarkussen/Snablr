@@ -21,6 +21,7 @@ var (
 const (
 	seedClassConfigOnly               = "config-only"
 	seedClassWeakReview               = "weak-review"
+	seedClassCredential               = "credential"
 	seedClassActionable               = "actionable"
 	seedClassCorrelatedHighConfidence = "correlated-high-confidence"
 

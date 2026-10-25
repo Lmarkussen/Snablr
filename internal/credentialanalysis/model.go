@@ -310,6 +310,24 @@ func SameLogicalCredential(left, right Candidate) bool {
 	return sameLogicalCredential(left, right)
 }
 
+// NormalizeForPersistence exposes the analyzer's canonical normalization for
+// disk-backed merge consumers without changing Analyze's slice API.
+func NormalizeForPersistence(candidate Candidate) Candidate { return normalize(candidate) }
+
+// MergeLogicalCredentials applies the exact evidence/provenance merge policy
+// used by Analyze.
+func MergeLogicalCredentials(existing, incoming Candidate) Candidate {
+	return mergeLogicalCredential(existing, incoming)
+}
+
+// RecordKeyForPersistence returns the stable logical-origin key used by the
+// in-memory analyzer.
+func RecordKeyForPersistence(candidate Candidate) string { return recordKey(candidate) }
+
+// SafeCandidateForPersistence applies the same value-free projection used by
+// Analyze reports without exposing the protected credential value.
+func SafeCandidateForPersistence(candidate Candidate) SafeCandidate { return toSafe(candidate) }
+
 func candidateKey(candidate Candidate) string {
 	return strings.ToLower(candidate.CredentialType) + "\x00" + strings.ToLower(candidate.Domain) + "\x00" + strings.ToLower(candidate.Identity) + "\x00" + candidate.Value
 }

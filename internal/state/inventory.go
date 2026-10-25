@@ -115,6 +115,7 @@ type Inventory struct {
 	mu           sync.RWMutex
 	objects      map[string]ObjectRecord
 	access       map[string]AccessObservation
+	active       map[string]ObjectRecord
 	stats        InventoryStats
 	resumeReader SQLiteResumeReader
 }
@@ -140,31 +141,31 @@ func (i *Inventory) Prepare(observation FileObservation, credentialContextID, se
 	now := time.Now().UTC()
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	if i.resumeReader != nil {
-		if file, found, err := i.resumeReader.LookupFile(identity.Server, identity.Share, identity.Path); err == nil && found {
-			i.objects[key] = ObjectRecord{Key: file.Key, Identity: identity, Size: file.Size, ModifiedAt: file.ModifiedAt, Status: ObjectStatus(file.Status), Semantics: file.Semantics, FirstSeen: file.FirstSeen, LastSeen: file.LastSeen, UpdatedAt: file.UpdatedAt}
-		}
-	}
-
 	i.stats.Discovered++
 	knownAccess := false
 	accessID := accessKey(credentialContextID, key)
-	if prior, ok := i.access[accessID]; ok {
-		knownAccess = true
-		prior.LastSeen = now
-		prior.AccessResult = "accessible"
-		i.access[accessID] = prior
-	} else {
-		i.access[accessID] = AccessObservation{
-			CredentialContextID: credentialContextID,
-			ObjectKey:           key,
-			FirstSeen:           now,
-			LastSeen:            now,
-			AccessResult:        "accessible",
+	if i.resumeReader != nil {
+		if lookup, ok := i.resumeReader.(interface {
+			LookupAccess(string, string) (bool, error)
+		}); ok {
+			knownAccess, _ = lookup.LookupAccess(credentialContextID, key)
+		} else if _, ok := i.access[accessID]; ok {
+			knownAccess = true
 		}
+	} else if _, ok := i.access[accessID]; ok {
+		knownAccess = true
 	}
 
-	prior, exists := i.objects[key]
+	var prior ObjectRecord
+	var exists bool
+	if i.resumeReader != nil {
+		if file, found, err := i.resumeReader.LookupFile(identity.Server, identity.Share, identity.Path); err == nil && found {
+			prior = ObjectRecord{Key: file.Key, Identity: identity, Size: file.Size, ModifiedAt: file.ModifiedAt, Status: ObjectStatus(file.Status), Semantics: file.Semantics, FirstSeen: file.FirstSeen, LastSeen: file.LastSeen, UpdatedAt: file.UpdatedAt}
+			exists = true
+		}
+	} else {
+		prior, exists = i.objects[key]
+	}
 	decision := SkipDecision{Key: key, KnownObject: exists, NewAccessObservation: !knownAccess}
 	if exists && !knownAccess {
 		i.stats.NewAccessibleKnown++
@@ -173,7 +174,11 @@ func (i *Inventory) Prepare(observation FileObservation, credentialContextID, se
 		prior.Status = ObjectSkippedUnchanged
 		prior.LastSeen = now
 		prior.UpdatedAt = now
-		i.objects[key] = prior
+		if i.resumeReader == nil {
+			i.objects[key] = prior
+		} else {
+			i.active[key] = prior
+		}
 		i.stats.SkippedUnchanged++
 		decision.Skip = true
 		decision.Reason = "unchanged completed object"
@@ -202,7 +207,12 @@ func (i *Inventory) Prepare(observation FileObservation, credentialContextID, se
 	prior.Semantics = semantics
 	prior.LastSeen = now
 	prior.UpdatedAt = now
-	i.objects[key] = prior
+	if i.resumeReader != nil {
+		i.active[key] = prior
+	} else {
+		i.objects[key] = prior
+		i.access[accessID] = AccessObservation{CredentialContextID: credentialContextID, ObjectKey: key, FirstSeen: now, LastSeen: now, AccessResult: "accessible"}
+	}
 	return decision, nil
 }
 
@@ -270,12 +280,19 @@ func (i *Inventory) markStatus(key string, status ObjectStatus, countInspection 
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	object, ok := i.objects[key]
+	if i.resumeReader != nil {
+		object, ok = i.active[key]
+	}
 	if !ok {
 		return
 	}
 	object.Status = status
 	object.UpdatedAt = time.Now().UTC()
-	i.objects[key] = object
+	if i.resumeReader != nil {
+		i.active[key] = object
+	} else {
+		i.objects[key] = object
+	}
 	if countInspection {
 		i.stats.Inspected++
 	}
@@ -365,7 +382,7 @@ func (m *InventoryManager) AttachStore(store SQLiteStateStore, scanID string) {
 }
 
 func NewInventoryManagerFromSQLiteReader(reader SQLiteResumeReader, interval time.Duration) *InventoryManager {
-	return &InventoryManager{inventory: &Inventory{objects: make(map[string]ObjectRecord), access: make(map[string]AccessObservation), resumeReader: reader}}
+	return &InventoryManager{inventory: &Inventory{active: make(map[string]ObjectRecord), resumeReader: reader}}
 }
 func NewInMemoryInventory() *Inventory {
 	return &Inventory{objects: make(map[string]ObjectRecord), access: make(map[string]AccessObservation)}
@@ -383,13 +400,14 @@ func (m *InventoryManager) Prepare(observation FileObservation, credentialContex
 	}
 	decision, err := m.inventory.Prepare(observation, credentialContextID, semantics, forceRescan)
 	if err == nil && m.store != nil {
-		m.inventory.mu.RLock()
-		object, ok := m.inventory.objects[decision.Key]
-		m.inventory.mu.RUnlock()
+		object, ok := m.inventory.object(decision.Key)
 		if ok {
 			_ = m.store.RecordFile(object.Key, object.Identity.Server, object.Identity.Share, object.Identity.Path, string(object.Status), object.Semantics, object.Size, object.ModifiedAt, object.FirstSeen, object.LastSeen, object.UpdatedAt)
 		}
 		_ = m.store.RecordAccess(credentialContextID, decision.Key, "accessible", time.Now().UTC(), time.Now().UTC())
+	}
+	if decision.Skip {
+		m.inventory.release(decision.Key)
 	}
 	return decision, err
 }
@@ -423,14 +441,31 @@ func (m *InventoryManager) MarkPartial(key string) {
 }
 
 func (m *InventoryManager) storeFile(key string) {
-	if m.store == nil {
-		return
-	}
-	m.inventory.mu.RLock()
-	object, ok := m.inventory.objects[key]
-	m.inventory.mu.RUnlock()
-	if ok {
+	object, ok := m.inventory.object(key)
+	if ok && m.store != nil {
 		_ = m.store.RecordFile(object.Key, object.Identity.Server, object.Identity.Share, object.Identity.Path, string(object.Status), object.Semantics, object.Size, object.ModifiedAt, object.FirstSeen, object.LastSeen, object.UpdatedAt)
+	}
+	if ok {
+		m.inventory.release(key)
+	}
+}
+
+func (i *Inventory) object(key string) (ObjectRecord, bool) {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	if i.resumeReader != nil {
+		object, ok := i.active[key]
+		return object, ok
+	}
+	object, ok := i.objects[key]
+	return object, ok
+}
+
+func (i *Inventory) release(key string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.resumeReader != nil {
+		delete(i.active, key)
 	}
 }
 

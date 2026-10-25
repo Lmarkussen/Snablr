@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,47 @@ import (
 	"snablr/internal/credentialanalysis"
 	"snablr/internal/scanner"
 )
+
+func TestSQLiteStoreIterateFindingsUsesBoundedKeysetWindows(t *testing.T) {
+	s, _ := openTestStore(t)
+	defer s.Close()
+	for i := 0; i < 11; i++ {
+		if err := s.RecordFinding(scanner.Finding{Host: "host", FilePath: fmt.Sprintf("file-%02d", i), RuleID: "rule"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var got []string
+	batches := 0
+	err := s.IterateFindings(context.Background(), 3, func(batch []scanner.Finding) error {
+		batches++
+		if len(batch) > 3 {
+			t.Fatalf("batch size=%d", len(batch))
+		}
+		for _, finding := range batch {
+			got = append(got, finding.FilePath)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batches != 4 || len(got) != 11 || got[0] != "file-00" || got[10] != "file-10" {
+		t.Fatalf("unexpected iteration batches=%d findings=%v", batches, got)
+	}
+}
+
+func TestSQLiteStoreIterateFindingsHonorsCancellation(t *testing.T) {
+	s, _ := openTestStore(t)
+	defer s.Close()
+	if err := s.RecordFinding(scanner.Finding{Host: "host", FilePath: "file", RuleID: "rule"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := s.IterateFindings(ctx, 1, func([]scanner.Finding) error { return nil }); err != context.Canceled {
+		t.Fatalf("cancellation error=%v", err)
+	}
+}
 
 var storeTestTime = time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
 
@@ -540,5 +582,145 @@ func TestSQLiteSinkFailureAfterEarlierCommittedWriteRemainsObservable(t *testing
 	}
 	if count != 1 {
 		t.Fatalf("earlier committed credential count=%d, want 1", count)
+	}
+}
+
+func TestOpenForResumeRecreatesFinderPaginationIndexes(t *testing.T) {
+	s, path := openTestStore(t)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"findings_scan_id_id_idx", "credentials_scan_id_id_idx"} {
+		if _, err := db.Exec("DROP INDEX IF EXISTS " + name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	resumed, _, err := OpenForResume(path, ResumeOptions{ExpectedSemantics: "semantics-synthetic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resumed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	check, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer check.Close()
+	for _, name := range []string{"findings_scan_id_id_idx", "credentials_scan_id_id_idx"} {
+		var count int
+		if err := check.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?", name).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("index %s was not recreated", name)
+		}
+	}
+}
+
+func TestExistingDatabaseRecreatesFinderPaginationIndexes(t *testing.T) {
+	path := os.Getenv("SNABLR_INDEX_MIGRATION_DB")
+	if path == "" {
+		t.Skip("SNABLR_INDEX_MIGRATION_DB is not set")
+	}
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"findings_scan_id_id_idx", "credentials_scan_id_id_idx"} {
+		var count int
+		if err := db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?", name).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("index %s was not recreated on existing database", name)
+		}
+	}
+}
+
+func TestSQLiteStoreDerivedFindingsAreIdempotentAndSeparate(t *testing.T) {
+	s, _ := openTestStore(t)
+	defer s.Close()
+	finding := scanner.Finding{RuleID: "correlation.synthetic", FilePath: "dir/a"}
+	if err := s.RecordDerivedFinding("correlation-key", finding); err != nil {
+		t.Fatal(err)
+	}
+	finding.Context = "updated"
+	if err := s.RecordDerivedFinding("correlation-key", finding); err != nil {
+		t.Fatal(err)
+	}
+	var got []scanner.Finding
+	if err := s.IterateDerivedFindings(context.Background(), 1, func(batch []scanner.Finding) error { got = append(got, batch...); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Context != "updated" {
+		t.Fatalf("derived upsert lost idempotence or payload: %#v", got)
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	var original, derived int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM findings WHERE scan_id=?`, s.scanID).Scan(&original); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM derived_findings WHERE scan_id=?`, s.scanID).Scan(&derived); err != nil {
+		t.Fatal(err)
+	}
+	if original != 0 || derived != 1 {
+		t.Fatalf("unexpected original=%d derived=%d", original, derived)
+	}
+}
+
+func TestSchemaThreeMigrationAddsDerivedAndCorrelationState(t *testing.T) {
+	s, path := openTestStore(t)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE derived_findings; DROP TABLE correlation_state; UPDATE metadata SET value='2' WHERE key='schema_version'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := Open(path, Options{ScanID: "scan-migrated", SnablrVersion: "test", Semantics: "semantics-synthetic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	check, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer check.Close()
+	for _, table := range []string{"derived_findings", "correlation_state"} {
+		var count int
+		if err := check.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("migration did not create %s", table)
+		}
+	}
+	var version string
+	if err := check.QueryRow(`SELECT value FROM metadata WHERE key='schema_version'`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != "3" {
+		t.Fatalf("schema version=%q, want 3", version)
 	}
 }

@@ -1,7 +1,6 @@
 package findings
 
 import (
-	"strings"
 	"testing"
 
 	"snablr/internal/credentialanalysis"
@@ -33,8 +32,8 @@ func TestApplicationCloudFindingsUseProviderSubcategories(t *testing.T) {
 		if discovery.Subcategory != want[index] {
 			t.Fatalf("cloud finding %d subcategory = %q, want %q", index, discovery.Subcategory, want[index])
 		}
-		if discovery.Finding == nil || !strings.Contains(discovery.Finding.MatchedText, "evidence") {
-			t.Fatalf("cloud finding %d lost raw evidence: %#v", index, discovery)
+		if discovery.Finding != nil || discovery.FindingRef != discovery.PersistedRefs[0] {
+			t.Fatalf("cloud finding %d did not retain its stable evidence reference: %#v", index, discovery)
 		}
 	}
 }

@@ -2,6 +2,7 @@ package output
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -138,6 +139,14 @@ func (s *suppressionWriter) SetBaselineFindings(findings []scanner.Finding) {
 	if aware, ok := s.inner.(BaselineAware); ok {
 		aware.SetBaselineFindings(findings)
 	}
+}
+
+func (s *suppressionWriter) SetBaselinePath(path string) error {
+	aware, ok := s.inner.(BaselinePathAware)
+	if !ok {
+		return fmt.Errorf("output %T does not support streaming baselines", s.inner)
+	}
+	return aware.SetBaselinePath(path)
 }
 
 func (s *suppressionWriter) SetBaselinePerformance(summary *diff.PerformanceSummary) {

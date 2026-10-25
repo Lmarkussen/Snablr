@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -80,13 +79,28 @@ func TestProjectionAccountingIncludesRawFindingsAndCorrelations(t *testing.T) {
 	var rendered discovery
 	for _, group := range categories {
 		for _, item := range group.Discoveries {
-			if item.Finding != nil {
+			if item.FindingRef == "finding:41" {
 				rendered = item
 			}
 		}
 	}
-	if got := strings.Join(discoveryEvidence(rendered), "\n"); !strings.Contains(got, "æ ø å\nsecond line") || !strings.Contains(got, "English and norsk context") {
-		t.Fatalf("raw evidence was not retained: %q", got)
+	if rendered.Finding != nil || rendered.FindingRef != "finding:41" {
+		t.Fatalf("raw finding was retained in the projection instead of its stable reference: %#v", rendered)
+	}
+}
+
+func TestFindingProjectionRetainsStableReferenceWithoutFullPayload(t *testing.T) {
+	findings := []Finding{{ID: 41, Finding: scanner.Finding{
+		RuleID: "review.rule", RuleName: "Review artifact", Category: "configuration", FilePath: "bundle.zip",
+		MatchedText: "evidence", ObservationID: "obs-41",
+	}}}
+	categories, _ := buildCategoriesWithAccounting("scan-runtime", nil, findings, nil)
+	if len(categories) != 1 || len(categories[0].Discoveries) != 1 {
+		t.Fatalf("unexpected finding projection: %#v", categories)
+	}
+	discovery := categories[0].Discoveries[0]
+	if discovery.Finding != nil || discovery.FindingRef != "finding:41" || len(discovery.PersistedRefs) != 1 {
+		t.Fatalf("finding projection retained payload instead of stable reference: %#v", discovery)
 	}
 }
 

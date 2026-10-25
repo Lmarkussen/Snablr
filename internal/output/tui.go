@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -207,9 +208,19 @@ type tuiStyles struct {
 	detailValue      lipgloss.Style
 	detailAccent     lipgloss.Style
 	footer           lipgloss.Style
+	severityHigh     lipgloss.Style
+	severityMedium   lipgloss.Style
+	severityLow      lipgloss.Style
+	fieldLabel       lipgloss.Style
+	usernameValue    lipgloss.Style
+	secretValue      lipgloss.Style
 }
 
 func NewTUIWriter(w io.Writer, closer io.Closer) (*TUIWriter, error) {
+	return newTUIWriter(w, closer, tuiWriterColorEnabled(w))
+}
+
+func newTUIWriter(w io.Writer, closer io.Closer, colorEnabled bool) (*TUIWriter, error) {
 	writer := &TUIWriter{
 		w:              w,
 		closer:         closer,
@@ -221,6 +232,7 @@ func NewTUIWriter(w io.Writer, closer io.Closer) (*TUIWriter, error) {
 	}
 
 	model := newTUIModel(writer)
+	model.styles = tuiStylesForColor(colorEnabled)
 	program := tea.NewProgram(model, tea.WithOutput(w), tea.WithAltScreen())
 
 	go func() {
@@ -231,11 +243,23 @@ func NewTUIWriter(w io.Writer, closer io.Closer) (*TUIWriter, error) {
 	return writer, nil
 }
 
+func tuiWriterColorEnabled(w io.Writer) bool {
+	file, ok := w.(*os.File)
+	if !ok || file == nil {
+		return false
+	}
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0 &&
+		strings.TrimSpace(os.Getenv("TERM")) != "dumb" && os.Getenv("NO_COLOR") == ""
+}
+
 func (t *TUIWriter) WriteFinding(f scanner.Finding) error {
 	shadowFinding(t, f)
 	t.mu.Lock()
 	t.summary.RecordFinding(f)
-	t.findings = append(t.findings, f)
+	if attachedSQLiteStore(t) == nil {
+		t.findings = append(t.findings, f)
+	}
 	t.mu.Unlock()
 	return nil
 }
@@ -400,8 +424,16 @@ func (t *TUIWriter) CancelScan() {
 
 func (t *TUIWriter) Close() error {
 	t.mu.Lock()
-	augmented := augmentFindingsForReporting(t.findings)
-	snapshot := adjustedSummarySnapshot(t.summary.Snapshot(), t.findings, augmented)
+	findings, err := persistedFindingsForReport(t, t.findings)
+	if err != nil {
+		t.mu.Unlock()
+		return fmt.Errorf("load persisted findings for Finder report: %w", err)
+	}
+	augmented := dedupeReportFindings(findings)
+	if attachedSQLiteStore(t) == nil {
+		augmented = augmentFindingsForReporting(findings)
+	}
+	snapshot := adjustedSummarySnapshot(t.summary.Snapshot(), findings, augmented)
 	performance := buildPerformanceSummary(snapshot, augmented)
 	validationMode := t.validationMode.Summary(snapshot)
 	validation, err := buildValidationSummary(t.manifest, augmented)
@@ -1458,7 +1490,7 @@ func (m *tuiModel) refreshDetailContent(resetViewport bool) {
 	offset := m.detailPane.YOffset
 	content := m.placeholderDetails()
 	if m.selected >= 0 && m.selected < len(m.findings) {
-		content = buildTUIDetail(m.findings[m.selected])
+		content = buildTUIDetailWithStyles(m.findings[m.selected], m.styles)
 	}
 	if m.detailPane.Width > 0 {
 		content = clampMultiline(content, m.detailPane.Width)
@@ -1758,11 +1790,16 @@ func newTUIFindingRow(f scanner.Finding) tuiFindingRow {
 }
 
 func renderTUIFindingRow(row tuiFindingRow, width int, selected bool) string {
-	meta := fmt.Sprintf("[%s", row.Severity)
+	return renderTUIFindingRowWithStyles(row, width, selected, defaultTUIStyles())
+}
+
+func renderTUIFindingRowWithStyles(row tuiFindingRow, width int, selected bool, styles tuiStyles) string {
+	severity := renderTUISeverity(row.Severity, styles)
+	meta := severity
 	if row.Score > 0 {
 		meta += fmt.Sprintf(" %d", row.Score)
 	}
-	meta += "]"
+	meta += renderTUISeverityBracket(row.Severity, "]", styles)
 	if row.HasEvidence {
 		meta += " *"
 	}
@@ -1773,14 +1810,46 @@ func renderTUIFindingRow(row tuiFindingRow, width int, selected bool) string {
 		line = truncateDisplayWidth(line, max(1, rowWidth-lipgloss.Width(marker)-1)) + " " + marker
 	}
 	line = padDisplayWidth(truncateDisplayWidth(line, rowWidth), rowWidth)
-	style := defaultTUIStyles().row.Copy()
+	style := styles.row.Copy()
 	if selected {
-		style = defaultTUIStyles().selectedRow.Copy()
+		style = styles.selectedRow.Copy()
 	}
 	return style.Render(line)
 }
 
+func renderTUISeverity(value string, styles tuiStyles) string {
+	label := strings.ToUpper(strings.TrimSpace(value))
+	style := lipgloss.NewStyle()
+	switch label {
+	case "HIGH":
+		style = styles.severityHigh
+	case "MEDIUM":
+		style = styles.severityMedium
+	case "LOW":
+		style = styles.severityLow
+	}
+	return style.Render("[" + label)
+}
+
+func renderTUISeverityBracket(value, bracket string, styles tuiStyles) string {
+	label := strings.ToUpper(strings.TrimSpace(value))
+	style := lipgloss.NewStyle()
+	switch label {
+	case "HIGH":
+		style = styles.severityHigh
+	case "MEDIUM":
+		style = styles.severityMedium
+	case "LOW":
+		style = styles.severityLow
+	}
+	return style.Render(bracket)
+}
+
 func buildTUIDetail(f scanner.Finding) string {
+	return buildTUIDetailWithStyles(f, defaultTUIStyles())
+}
+
+func buildTUIDetailWithStyles(f scanner.Finding, styles tuiStyles) string {
 	lines := []string{
 		fmt.Sprintf("Path: %s", findingDisplayPath(f)),
 		fmt.Sprintf("Host / Share: %s / %s", valueOrDash(f.Host), valueOrDash(f.Share)),
@@ -1794,12 +1863,39 @@ func buildTUIDetail(f scanner.Finding) string {
 			if index > 0 && strings.TrimSpace(line) == "Context:" && strings.TrimSpace(evidence[index-1]) != "" {
 				lines = append(lines, "")
 			}
-			lines = append(lines, line)
+			lines = append(lines, renderTUIStructuredEvidenceLine(line, styles))
 		}
 	} else {
 		lines = append(lines, "", "Evidence:", "No inline evidence captured for this finding.")
 	}
 	return strings.Join(lines, "\n")
+}
+
+func renderTUIStructuredEvidenceLine(line string, styles tuiStyles) string {
+	leading := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+	rest := strings.TrimLeft(line, " \t")
+	colon := strings.IndexByte(rest, ':')
+	if colon <= 0 {
+		return line
+	}
+	field := strings.ToLower(strings.TrimSpace(rest[:colon]))
+	if !isTUIStructuredSecretField(field) {
+		return line
+	}
+	valueStyle := styles.secretValue
+	if field == "username" {
+		valueStyle = styles.usernameValue
+	}
+	return leading + styles.fieldLabel.Render(rest[:colon+1]) + valueStyle.Render(rest[colon+1:])
+}
+
+func isTUIStructuredSecretField(field string) bool {
+	switch field {
+	case "username", "password", "hash", "key", "private-key", "private key", "token", "secret":
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *tuiModel) refreshListContent() {
@@ -1817,7 +1913,7 @@ func (m *tuiModel) refreshListContent() {
 		pathKey := bookmarkPathKey(m.findings[idx].Host, m.findings[idx].Share, m.findings[idx].FilePath)
 		fileKey := m.bookmarkKeysByPath[pathKey]
 		row.Bookmarked = fileKey != "" && m.bookmarkedFileKeys[fileKey]
-		rows = append(rows, renderTUIFindingRow(row, m.listPane.Width, idx == m.selected))
+		rows = append(rows, renderTUIFindingRowWithStyles(row, m.listPane.Width, idx == m.selected, m.styles))
 	}
 	m.listPane.SetContent(strings.Join(rows, "\n"))
 }
@@ -1856,6 +1952,31 @@ func displayTriageClass(value string) string {
 }
 
 func defaultTUIStyles() tuiStyles {
+	return tuiStylesForColor(true)
+}
+
+func tuiStylesForColor(colorEnabled bool) tuiStyles {
+	plain := lipgloss.NewStyle()
+	if !colorEnabled {
+		return tuiStyles{
+			frame:          plain.Padding(0, 1),
+			pane:           plain.Border(lipgloss.RoundedBorder()).Padding(0, 1),
+			paneBorder:     plain,
+			selectedRow:    plain,
+			row:            plain,
+			rowMuted:       plain,
+			detailKey:      plain,
+			detailValue:    plain,
+			detailAccent:   plain,
+			footer:         plain,
+			severityHigh:   plain,
+			severityMedium: plain,
+			severityLow:    plain,
+			fieldLabel:     plain,
+			usernameValue:  plain,
+			secretValue:    plain,
+		}
+	}
 	return tuiStyles{
 		frame:            lipgloss.NewStyle().Padding(0, 1),
 		header:           lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#D9ECFF")),
@@ -1873,6 +1994,12 @@ func defaultTUIStyles() tuiStyles {
 		detailValue:      lipgloss.NewStyle().Foreground(lipgloss.Color("#EDF6FF")),
 		detailAccent:     lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD166")),
 		footer:           lipgloss.NewStyle().Foreground(lipgloss.Color("#8FAECC")),
+		severityHigh:     lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")),
+		severityMedium:   lipgloss.NewStyle().Foreground(lipgloss.Color("#F97316")),
+		severityLow:      lipgloss.NewStyle().Foreground(lipgloss.Color("#22C55E")),
+		fieldLabel:       lipgloss.NewStyle().Foreground(lipgloss.Color("#60A5FA")),
+		usernameValue:    lipgloss.NewStyle().Foreground(lipgloss.Color("#60A5FA")),
+		secretValue:      lipgloss.NewStyle().Foreground(lipgloss.Color("#F97316")),
 	}
 }
 

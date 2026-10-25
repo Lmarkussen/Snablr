@@ -321,7 +321,7 @@ func (m *Manager) recordFileResult(host, share, path string, size int64, modifie
 		return
 	}
 
-	if success {
+	if success && persistFile {
 		m.store.MarkFileComplete(host, share, path, size, modifiedAt)
 	}
 	if persistFile && m.stateStore != nil {

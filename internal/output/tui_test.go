@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"snablr/internal/diff"
 	"snablr/internal/scanner"
@@ -28,6 +29,53 @@ func TestTUIFindingRowDoesNotRenderEvidence(t *testing.T) {
 	}
 	if strings.Contains(row, `\\dc01\SYSVOL\Policies\Groups.xml`) {
 		t.Fatalf("finding row should not repeat full path: %q", row)
+	}
+}
+
+func TestTUISeverityColorOnlyCoversLabelAndBrackets(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(previous)
+
+	row := renderTUIFindingRowWithStyles(tuiFindingRow{
+		Severity: "HIGH", Score: 91, Triage: "confirmed", Category: "credentials", Path: `\\host\share\config.txt`,
+	}, 120, false, tuiStylesForColor(true))
+	if !strings.Contains(row, "38;2;239;68;68m[HIGH") || !strings.Contains(row, "38;2;239;68;68m]") {
+		t.Fatalf("high severity label was not red: %q", row)
+	}
+	if !strings.Contains(row, " 91") || !strings.Contains(row, "credentials") {
+		t.Fatalf("severity row lost unstyled content: %q", row)
+	}
+	if strings.Contains(row, "38;2;239;68;68m[HIGH 91]") {
+		t.Fatalf("severity score was incorrectly included in colored label: %q", row)
+	}
+
+	plain := renderTUIFindingRowWithStyles(tuiFindingRow{Severity: "MEDIUM", Triage: "review", Category: "config", Path: "path"}, 80, false, tuiStylesForColor(false))
+	if strings.Contains(plain, "\x1b[") {
+		t.Fatalf("disabled color emitted ANSI: %q", plain)
+	}
+}
+
+func TestTUIStructuredCredentialFieldsUseSpecificColors(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(previous)
+
+	styles := tuiStylesForColor(true)
+	username := renderTUIStructuredEvidenceLine("  username: test", styles)
+	password := renderTUIStructuredEvidenceLine("  password: s3cretpassword", styles)
+	key := renderTUIStructuredEvidenceLine("  key: first line\nsecond line", styles)
+	if !strings.Contains(username, "38;2;96;165;250musername:") || !strings.Contains(username, "38;2;96;165;250m test") {
+		t.Fatalf("username label/value was not blue: %q", username)
+	}
+	if !strings.Contains(password, "38;2;96;165;250mpassword:") || !strings.Contains(password, "38;2;249;115;22m s3cretpassword") {
+		t.Fatalf("password label/value colors incorrect: %q", password)
+	}
+	if !strings.Contains(key, "first line") || !strings.Contains(key, "second line") {
+		t.Fatalf("multiline key value changed: %q", key)
+	}
+	if plain := renderTUIStructuredEvidenceLine("  password: s3cretpassword", tuiStylesForColor(false)); strings.Contains(plain, "\x1b[") || plain != "  password: s3cretpassword" {
+		t.Fatalf("disabled color changed structured evidence: %q", plain)
 	}
 }
 

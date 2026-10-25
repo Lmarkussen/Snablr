@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+{{ define "report.document-body" }}<!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
@@ -1237,7 +1237,7 @@
 </head>
 <body>
   <main>
-    <section class="hero">
+    {{ template "report.summary-navigation-open" . }}
       <pre class="report-banner" aria-label="Snablr">  ██████  ███▄    █  ▄▄▄       ▄▄▄▄    ██▓     ██▀███
 ▒██    ▒  ██ ▀█   █ ▒████▄    ▓█████▄ ▓██▒    ▓██ ▒ ██▒
 ░ ▓██▄   ▓██  ▀█ ██▒▒██  ▀█▄  ▒██▒ ▄██▒██░    ▓██ ░▄█ ▒
@@ -1359,7 +1359,7 @@
         <div id="filterStatus" class="filter-status">Showing all findings</div>
       </div>
       <div class="print-note">Printable/exportable: collapse sections to focus before printing, or open all to export a fuller review pack.</div>
-    </section>
+    {{ template "report.summary-navigation-close" . }}
 
     <section class="summary-grid">
       {{- if .Interrupted }}
@@ -1410,7 +1410,7 @@
       </article>
     </section>
 
-    <section id="credential-analysis">
+    {{ template "report.credential-analysis-open" . }}
       <div class="section-head">
         <h2>Credential &amp; Secret Material</h2>
         <span class="section-note">Recovered and explicit secret material only. Identity, path and artifact correlations are supporting evidence and are listed below the findings hierarchy; placeholders and templates are suppressed entirely. This sensitive report includes recovered values; protect the HTML file.</span>
@@ -1418,7 +1418,7 @@
       <div class="summary-grid">
         <article class="card">
           <span class="card-label">Confirmed Credentials</span>
-          <span class="card-value">{{ len .CredentialView.Confirmed }}</span>
+          <span class="card-value">{{ .CredentialView.ConfirmedCount }}</span>
           <div class="card-meta">Each row carries a concrete value from an explicit credential context or a recovered credential store.</div>
         </article>
         <article class="card">
@@ -1435,7 +1435,7 @@
         {{- end }}
         <article class="card">
           <span class="card-label">Potential Credential Material — Review</span>
-          <span class="card-value">{{ len .CredentialAnalysis.Review }}</span>
+          <span class="card-value">{{ .CredentialView.ReviewCount }}</span>
           <div class="card-meta">Retained because semantic validation was inconclusive; not confirmed.</div>
         </article>
         <article class="card">
@@ -1444,7 +1444,7 @@
           <div class="card-meta">{{ .CredentialView.SuppressedPlaceholders }} placeholder/template or masked, {{ .CredentialView.SuppressedWeakReview }} evidence-free review candidates excluded from the ledger.</div>
         </article>
       </div>
-      {{- if .CredentialView.Confirmed }}
+      {{- if gt .CredentialView.ConfirmedCount 0 }}
       <div class="table-card">
         <h3>Actionable Credentials</h3>
         <table>
@@ -1483,7 +1483,7 @@
       {{- end }}
       <p class="muted">Supporting credential correlations and low-confidence review material are listed below the findings hierarchy:
         {{- if gt .CredentialView.SupportingCount 0 }} <a href="#credential-correlations">Supporting credential correlations ({{ .CredentialView.SupportingCount }})</a>{{ end -}}
-        {{- if .CredentialView.Review }} <a href="#credential-review">Credential material for review ({{ .CredentialView.ReviewTotal }})</a>{{ end -}}
+        {{- if gt .CredentialView.ReviewCount 0 }} <a href="#credential-review">Credential material for review ({{ .CredentialView.ReviewTotal }})</a>{{ end -}}
       </p>
     </section>
 
@@ -1553,11 +1553,11 @@
         </table>
       </div>
       {{- end }}
-    </section>
+    {{ template "report.credential-analysis-close" . }}
     {{- end }}
 
     {{- if .Validation }}
-    <section id="validation-summary">
+    {{ template "report.validation-open" . }}
       <div class="section-head">
         <h2>Seeded Validation</h2>
         <span class="section-note">Expected seeded outcomes compared to the findings surfaced in this run.</span>
@@ -1652,11 +1652,11 @@
           </div>
         </article>
       </div>
-    </section>
+    {{ template "report.validation-close" . }}
     {{- end }}
 
     {{- if .DiffSummary }}
-    <section id="diff-summary">
+    {{ template "report.diff-open" . }}
       <div class="section-head">
         <h2>Baseline Diff</h2>
         <span class="section-note">Change tracking against the supplied baseline JSON report.</span>
@@ -1683,10 +1683,10 @@
           <div class="card-meta"><span class="badge diff-unchanged">unchanged</span></div>
         </article>
       </div>
-    </section>
+    {{ template "report.diff-close" . }}
     {{- end }}
 
-    {{- if .ChangedFindings }}
+    {{- if gt .ChangedFindingCount 0 }}
     <section id="changed-findings">
       <div class="section-head">
         <h2>Changed Since Baseline</h2>
@@ -1697,7 +1697,7 @@
           <div class="group-top">
             <div class="group-title">
               <h3>Changed Findings</h3>
-              <span class="badge diff-changed">{{ len .ChangedFindings }} changed</span>
+              <span class="badge diff-changed">{{ .ChangedFindingCount }} changed</span>
             </div>
           </div>
         </summary>
@@ -1741,7 +1741,7 @@
     </section>
     {{- end }}
 
-    {{- if .RemovedFindings }}
+    {{- if gt .RemovedFindingCount 0 }}
     <section id="removed-findings">
       <div class="section-head">
         <h2>Removed Since Baseline</h2>
@@ -1752,7 +1752,7 @@
           <div class="group-top">
             <div class="group-title">
               <h3>Removed Findings</h3>
-              <span class="badge diff-removed">{{ len .RemovedFindings }} removed</span>
+              <span class="badge diff-removed">{{ .RemovedFindingCount }} removed</span>
             </div>
           </div>
         </summary>
@@ -1856,6 +1856,29 @@
       </div>
     </section>
 
+    {{- if and .RenderAccessPaths .TopAccessPaths }}
+    <section id="access-path-summary">
+      <div class="section-head">
+        <h2>Top Access Paths</h2>
+        <span class="section-note">Ranked correlated access paths using the same exploitability classifier as the JSON report.</span>
+      </div>
+      <div class="category-grid">
+        {{- range .TopAccessPaths }}
+        <article class="card access-path-card">
+          <span class="card-label">#{{ .Rank }} {{ accessPathLabel . }}</span>
+          <span class="card-value">{{ .Severity }} · {{ .Confidence }}</span>
+          <div class="card-meta">
+            <div>{{ valueOrDash .Host }} / {{ valueOrDash .Share }}</div>
+            <div>{{ .PrimaryPath }}</div>
+            <div>{{ .WhyItMatters }}</div>
+            {{- if .RelatedArtifacts }}<div>Related artifacts: {{ joinList .RelatedArtifacts ", " }}</div>{{- end }}
+          </div>
+        </article>
+        {{- end }}
+      </div>
+    </section>
+    {{- end }}
+
     <section id="host-summary">
       <div class="section-head">
         <h2>Host Summary</h2>
@@ -1945,7 +1968,7 @@
 
       {{- if .CategoryGroups }}
       {{- range .CategoryGroups }}
-	      <details class="group finding-group" id="cat-{{ slug .Summary.Category }}" data-category="{{ .Summary.Category }}" data-total-findings="{{ .Summary.Findings }}" open>
+	      {{ template "report.category-open" . }}
         <summary class="group-summary">
           <div class="group-top">
             <div class="group-title">
@@ -1965,18 +1988,7 @@
 
 	        <div class="finding-list">
 	          {{- range .Findings }}
-	          <article class="finding-card {{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" id="{{ findingAnchor .Finding }}" data-search="{{ .SearchText }}"
-              data-severity="{{ .Finding.Severity }}"
-              data-category="{{ .Finding.Category }}"
-              data-confidence="{{ .Finding.Confidence }}"
-              data-source="{{ normalizedSource .Finding.Source }}"
-              data-host="{{ .Finding.Host }}"
-              data-share="{{ .Finding.Share }}"
-              data-scope="{{ .ScopeText }}"
-              data-signal="{{ primarySignal .Finding }}"
-              data-correlated="{{ if isCorrelated .Finding }}true{{ else }}false{{ end }}"
-              data-actionable="{{ if isActionable .Finding }}true{{ else }}false{{ end }}"
-              data-triage="{{ .Finding.TriageClass }}">
+	          {{ template "report.finding-card-open" . }}
 	            <header class="finding-card-header">
 	              <div class="finding-title">
 	                <div class="badge-row" style="margin-top:0;">
@@ -2021,11 +2033,11 @@
 	              <a class="download-link" href="{{ downloadHref .Finding }}" download title="Open or download the underlying remote file">Download</a>
 	              {{- end }}
 	            </div>
-	            {{- if .Duplicates }}
+	            {{- if gt (duplicateCount .) 0 }}
 	            <details class="duplicate-locations">
-	              <summary>Also found in {{ len .Duplicates }} additional location{{ if ne (len .Duplicates) 1 }}s{{ end }} ({{ .TotalLocations }} total)</summary>
+	              <summary>Also found in {{ duplicateCount . }} additional location{{ if ne (duplicateCount .) 1 }}s{{ end }} ({{ .TotalLocations }} total)</summary>
 	              <ul class="duplicate-location-list">
-	                {{- range .Duplicates }}
+	                {{- range duplicateLocations . }}
 	                <li title="{{ uncPath . }}">{{ uncPath . }}</li>
 	                {{- end }}
 	              </ul>
@@ -2234,7 +2246,7 @@
 	          </article>
 	          {{- end }}
 	        </div>
-	      </details>
+	      {{ template "report.category-close" . }}
       {{- end }}
       {{- else }}
       <div class="empty-state">No primary findings were promoted for this scan. Review the supporting context section below only if you need secondary artifacts for correlation or manual follow-up.</div>
@@ -2255,14 +2267,14 @@
             </div>
             <div class="group-stats">
               <span>{{ .SupportingFindingCount }} total</span>
-              <span>{{ len .SupportingCategoryGroups }} categories</span>
+              <span>{{ .SupportingCategoryCount }} categories</span>
             </div>
           </div>
           <p class="group-guidance">These findings remain available for manual review and correlation, but they did not meet the global threshold for primary/actionable evidence.</p>
         </summary>
 
         {{- range .SupportingCategoryGroups }}
-        <details class="group supporting-group" id="supporting-{{ slug .Summary.Category }}" data-category="{{ .Summary.Category }}" data-total-findings="{{ .Summary.Findings }}">
+        {{ template "report.supporting-category-open" . }}
           <summary class="group-summary">
             <div class="group-top">
               <div class="group-title">
@@ -2281,20 +2293,7 @@
 
           <div class="supporting-list">
             {{- range .Findings }}
-            <article class="supporting-card"
-              data-search="{{ .SearchText }}"
-              data-severity="{{ .Finding.Severity }}"
-              data-category="{{ .Finding.Category }}"
-              data-confidence="{{ .Finding.Confidence }}"
-              data-source="{{ normalizedSource .Finding.Source }}"
-              data-host="{{ .Finding.Host }}"
-              data-share="{{ .Finding.Share }}"
-              data-scope="{{ .ScopeText }}"
-              data-signal="{{ primarySignal .Finding }}"
-              data-correlated="{{ if isCorrelated .Finding }}true{{ else }}false{{ end }}"
-              data-actionable="{{ if isActionable .Finding }}true{{ else }}false{{ end }}"
-              data-triage="{{ .Finding.TriageClass }}"
-              id="{{ findingAnchor .Finding }}">
+	            {{ template "report.supporting-finding-open" . }}
               <div class="supporting-card-top">
                 <span class="badge {{ severityClass .Finding.Severity }}">{{ .Finding.Severity }}</span>
                 {{- if primarySignal .Finding }}<span class="badge {{ signalClass (primarySignal .Finding) }}">signal {{ signalLabel (primarySignal .Finding) }}</span>{{ end -}}
@@ -2307,12 +2306,12 @@
               {{- if .Finding.MatchReason }}
               <div class="supporting-reason">{{ .Finding.MatchReason }}</div>
               {{- end }}
-              {{- if .Duplicates }}
+              {{- if gt (duplicateCount .) 0 }}
               <details class="duplicate-locations">
-                <summary>Also found in {{ len .Duplicates }} additional location{{ if ne (len .Duplicates) 1 }}s{{ end }}</summary>
+                <summary>Also found in {{ duplicateCount . }} additional location{{ if ne (duplicateCount .) 1 }}s{{ end }}</summary>
                 <ul class="duplicate-location-list">
-                  {{- range .Duplicates }}
-                  <li title="{{ uncPath . }}">{{ uncPath . }}</li>
+                  {{- range duplicateLocations . }}
+                  {{ template "report.duplicate-location" . }}
                   {{- end }}
                 </ul>
               </details>
@@ -2320,7 +2319,7 @@
             </article>
             {{- end }}
           </div>
-        </details>
+        {{ template "report.supporting-category-close" . }}
         {{- end }}
       </details>
       {{- else }}
@@ -2412,7 +2411,7 @@
     </section>
     {{- end }}
 
-    {{- if .CredentialView.Review }}
+    {{- if gt .CredentialView.ReviewCount 0 }}
     <section id="credential-review-material">
       <div class="section-head">
         <h2>Credential Material — Needs Review</h2>
@@ -2596,5 +2595,48 @@
       applyFilter();
     }());
   </script>
-</body>
-</html>
+  {{ template "report.footer" . }}{{ end }}
+
+{{ define "report.credential-analysis-open" }}<section id="credential-analysis">{{ end }}
+{{ define "report.credential-analysis-close" }}</section>{{ end }}
+{{ define "report.summary-navigation-open" }}<section class="hero">{{ end }}
+{{ define "report.summary-navigation-close" }}</section>{{ end }}
+{{ define "report.validation-open" }}<section id="validation-summary">{{ end }}
+{{ define "report.validation-close" }}</section>{{ end }}
+{{ define "report.diff-open" }}<section id="diff-summary">{{ end }}
+{{ define "report.diff-close" }}</section>{{ end }}
+{{ define "report.category-open" }}<details class="group finding-group" id="cat-{{ slug .Summary.Category }}" data-category="{{ .Summary.Category }}" data-total-findings="{{ .Summary.Findings }}" open>{{ end }}
+{{ define "report.category-close" }}</details>{{ end }}
+{{ define "report.supporting-category-open" }}<details class="group supporting-group" id="supporting-{{ slug .Summary.Category }}" data-category="{{ .Summary.Category }}" data-total-findings="{{ .Summary.Findings }}">{{ end }}
+{{ define "report.supporting-category-close" }}</details>{{ end }}
+{{ define "report.finding-card-open" }}<article class="finding-card {{ severityClass .Finding.Severity }} status-{{ .DiffStatus }}" id="{{ findingAnchor .Finding }}" data-search="{{ .SearchText }}"
+              data-severity="{{ .Finding.Severity }}"
+              data-category="{{ .Finding.Category }}"
+              data-confidence="{{ .Finding.Confidence }}"
+              data-source="{{ normalizedSource .Finding.Source }}"
+              data-host="{{ .Finding.Host }}"
+              data-share="{{ .Finding.Share }}"
+              data-scope="{{ .ScopeText }}"
+              data-signal="{{ primarySignal .Finding }}"
+              data-correlated="{{ if isCorrelated .Finding }}true{{ else }}false{{ end }}"
+              data-actionable="{{ if isActionable .Finding }}true{{ else }}false{{ end }}"
+              data-triage="{{ .Finding.TriageClass }}">{{ end }}
+{{ define "report.supporting-finding-open" }}<article class="supporting-card"
+              data-search="{{ .SearchText }}"
+              data-severity="{{ .Finding.Severity }}"
+              data-category="{{ .Finding.Category }}"
+              data-confidence="{{ .Finding.Confidence }}"
+              data-source="{{ normalizedSource .Finding.Source }}"
+              data-host="{{ .Finding.Host }}"
+              data-share="{{ .Finding.Share }}"
+              data-scope="{{ .ScopeText }}"
+              data-signal="{{ primarySignal .Finding }}"
+              data-correlated="{{ if isCorrelated .Finding }}true{{ else }}false{{ end }}"
+              data-actionable="{{ if isActionable .Finding }}true{{ else }}false{{ end }}"
+              data-triage="{{ .Finding.TriageClass }}"
+              id="{{ findingAnchor .Finding }}">{{ end }}
+{{ define "report.duplicate-location" }}<li title="{{ uncPath . }}">{{ uncPath . }}</li>{{ end }}
+{{ define "report.footer" }}</body>
+</html>{{ end }}
+{{ define "report.document-shell" }}{{ template "report.document-body" . }}{{ end }}
+{{ template "report.document-shell" . }}

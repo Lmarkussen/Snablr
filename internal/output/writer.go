@@ -39,6 +39,10 @@ type BaselineAware interface {
 	SetBaselineFindings([]scanner.Finding)
 }
 
+type BaselinePathAware interface {
+	SetBaselinePath(string) error
+}
+
 type validationManifestAware interface {
 	SetValidationManifest(string)
 }
@@ -175,7 +179,7 @@ func NewWriter(cfg config.OutputConfig) (scanner.FindingSink, error) {
 
 	switch liveMode {
 	case liveSinkTUI:
-		tuiWriter, err := NewTUIWriter(os.Stdout, nopCloser{})
+		tuiWriter, err := newTUIWriter(os.Stdout, nopCloser{}, !cfg.NoColor && tuiWriterColorEnabled(os.Stdout))
 		if err != nil {
 			return nil, err
 		}
@@ -185,12 +189,12 @@ func NewWriter(cfg config.OutputConfig) (scanner.FindingSink, error) {
 	}
 
 	if selection.JSON {
-		file, err := createOutputFile(cfg.JSONOut)
+		file, commit, err := createAtomicOutputFile(cfg.JSONOut)
 		if err != nil {
 			_ = closeSinks(sinks)
 			return nil, fmt.Errorf("create json output file %s: %w", cfg.JSONOut, err)
 		}
-		jsonWriter := NewJSONWriter(file, file, cfg.Pretty)
+		jsonWriter := NewJSONWriter(file, commit, cfg.Pretty)
 		jsonWriter.SetBackupArtifactInventoryEnabled(cfg.ReportBackupArtifacts)
 		sinks = append(sinks, jsonWriter)
 	}
@@ -236,12 +240,12 @@ func NewWriter(cfg config.OutputConfig) (scanner.FindingSink, error) {
 	}
 
 	if strings.TrimSpace(cfg.MDOut) != "" {
-		mdFile, err := createOutputFile(cfg.MDOut)
+		mdFile, commit, err := createAtomicOutputFile(cfg.MDOut)
 		if err != nil {
 			_ = closeSinks(sinks)
 			return nil, fmt.Errorf("create markdown output file %s: %w", cfg.MDOut, err)
 		}
-		sinks = append(sinks, NewMarkdownWriter(mdFile, mdFile))
+		sinks = append(sinks, NewMarkdownWriter(mdFile, commit))
 	}
 
 	if strings.TrimSpace(cfg.CredsOut) != "" {
@@ -376,6 +380,20 @@ func (m *MultiWriter) broadcastInterruption(fn func(InterruptionAware)) {
 
 func (m *MultiWriter) SetBaselineFindings(findings []scanner.Finding) {
 	m.broadcastBaseline(func(aware BaselineAware) { aware.SetBaselineFindings(findings) })
+}
+
+func (m *MultiWriter) SetBaselinePath(path string) error {
+	for _, sink := range m.sinks {
+		if _, ok := sink.(BaselinePathAware); !ok {
+			return fmt.Errorf("output %T does not support streaming baselines", sink)
+		}
+	}
+	for _, sink := range m.sinks {
+		if err := sink.(BaselinePathAware).SetBaselinePath(path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *MultiWriter) SetBaselinePerformance(summary *diff.PerformanceSummary) {
@@ -789,6 +807,17 @@ func SetBaselineFindings(sink scanner.FindingSink, findings []scanner.Finding) {
 	if aware, ok := sink.(BaselineAware); ok {
 		aware.SetBaselineFindings(findings)
 	}
+}
+
+func SetBaselinePath(sink scanner.FindingSink, path string) error {
+	if sink == nil {
+		return fmt.Errorf("nil output sink")
+	}
+	aware, ok := sink.(BaselinePathAware)
+	if !ok {
+		return fmt.Errorf("output %T does not support streaming baselines", sink)
+	}
+	return aware.SetBaselinePath(path)
 }
 
 func SetBaselineReport(sink scanner.FindingSink, report diff.Report) {

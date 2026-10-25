@@ -134,7 +134,9 @@ func verifyFindings(manifestPath string, findings []scanner.Finding, manifest Ma
 		}
 		manifestByKey[key] = entry
 		if !isExpectedVerificationEntry(entry) {
-			result.FillerItems++
+			if isFillerVerificationEntry(entry) {
+				result.FillerItems++
+			}
 			continue
 		}
 		category := normalizedCategory(entry.Category)
@@ -172,10 +174,14 @@ func verifyFindings(manifestPath string, findings []scanner.Finding, manifest Ma
 	for key, entry := range manifestByKey {
 		matches := findingsByKey[key]
 		if !isExpectedVerificationEntry(entry) {
-			if len(matches) > 0 {
-				result.FillerMatchedItems++
+			if isFillerVerificationEntry(entry) {
+				if len(matches) > 0 {
+					result.FillerMatchedItems++
+				} else {
+					result.FillerMissedItems++
+				}
 			} else {
-				result.FillerMissedItems++
+				result.Unexpected = append(result.Unexpected, matches...)
 			}
 			continue
 		}
@@ -189,6 +195,8 @@ func verifyFindings(manifestPath string, findings []scanner.Finding, manifest Ma
 					summary.Missed++
 				}
 				switch item.Status {
+				case "matched":
+					summary.Matched++
 				case "suppressed":
 					summary.Matched++
 					summary.Suppressed++
@@ -205,7 +213,7 @@ func verifyFindings(manifestPath string, findings []scanner.Finding, manifest Ma
 					summary.Matched++
 					summary.Promoted++
 					switch expectedClass {
-					case seedClassActionable:
+					case seedClassCredential, seedClassActionable:
 						result.PromotedActionable = append(result.PromotedActionable, item)
 					case seedClassCorrelatedHighConfidence:
 						result.PromotedCorrelated = append(result.PromotedCorrelated, item)
@@ -531,8 +539,20 @@ func uniqueNormalizedValues(values []string) []string {
 }
 
 func isExpectedVerificationEntry(entry SeedManifestEntry) bool {
+	if isFillerVerificationEntry(entry) {
+		return false
+	}
+	switch normalizeExpectedClass(entry.ExpectedClass) {
+	case "negative", "review", "unsupported":
+		return false
+	default:
+		return true
+	}
+}
+
+func isFillerVerificationEntry(entry SeedManifestEntry) bool {
 	intendedAs := strings.TrimSpace(strings.ToLower(entry.IntendedAs))
-	return intendedAs == "" || intendedAs != "filler/noise"
+	return intendedAs == "filler/noise"
 }
 
 type observedFinding struct {
@@ -571,6 +591,10 @@ func evaluateExpectedClass(entry SeedManifestEntry, matches []scanner.Finding) C
 	item.Findings = observed.Findings
 
 	switch expectedClass {
+	case seedClassCredential:
+		item.Status = "matched"
+		item.Reason = "credential artifact was observed; promotion is evaluated separately"
+		return item
 	case seedClassConfigOnly:
 		if isLowValueObserved(observed) {
 			item.Status = "downgraded"

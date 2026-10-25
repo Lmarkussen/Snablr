@@ -803,6 +803,7 @@ func TestFindingDetailSeparatesRawAndFinderClassification(t *testing.T) {
 		MatchedText:       "Gjennomgang æøå\nsecond line",
 	}}
 	categories := buildCategories(nil, []Finding{finding}, nil)
+	categories[0].Discoveries[0].Finding = &finding.Finding
 	m := &model{scans: []Scan{{ID: "scan"}}, categories: categories, screen: screenDiscoveries, discoveries: categories[0].Discoveries, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
 	m.resizeTo(120, 40)
 	text := m.evidenceText()
@@ -872,7 +873,7 @@ func TestCompactDiscoveriesDropsEvidenceButKeepsStableMetadata(t *testing.T) {
 	if d.Title != "Private key" || d.Path != "archive.zip!id_rsa" || len(d.PersistedRefs) != 1 {
 		t.Fatalf("stable metadata was lost: %#v", d)
 	}
-	if d.Value != "" || len(d.Evidence) != 0 || d.Finding.MatchedText != "" {
+	if d.Value != "" || len(d.Evidence) != 0 || d.Finding != nil {
 		t.Fatalf("evidence was retained in compact projection: %#v", d)
 	}
 }

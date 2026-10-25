@@ -56,6 +56,14 @@ func weakContentSuppression(ruleID string, category string, matchedText string, 
 		if isBareCredentialNoteKeyword(matchedText) {
 			return true, "credential-note keyword appeared without associated credential content"
 		}
+		if isCredentialPolicyDocumentation(matchedText) {
+			return true, "credential-note match is password policy documentation"
+		}
+		values := extractedSensitiveValues(matchedText)
+		quality := assessExtractedValuesQuality(values)
+		if len(values) > 0 && quality.Weak && !quality.LengthOnly {
+			return true, "credential-note value looks placeholder-like or low quality"
+		}
 		return false, ""
 	case "content.password_assignment_indicators":
 		// An explicit "<password> = <value>" assignment states a credential
@@ -65,6 +73,11 @@ func weakContentSuppression(ruleID string, category string, matchedText string, 
 		// Placeholder-like and low-entropy values are still suppressed, and the
 		// finding itself keeps its low confidence from the same value-quality
 		// assessment.
+		matchedValues := extractedSensitiveValues(matchedText)
+		matchedQuality := assessExtractedValuesQuality(matchedValues)
+		if len(matchedValues) > 0 && matchedQuality.Weak && !matchedQuality.LengthOnly {
+			return true, "sensitive values look placeholder-like or low quality"
+		}
 		values := extractedSensitiveValues(blob)
 		if allNonSecretValueShapes(values) {
 			return true, "assigned value looks like a SQL/config fragment rather than a secret"
@@ -161,6 +174,12 @@ func isBareCredentialNoteKeyword(matched string) bool {
 	default:
 		return false
 	}
+}
+
+func isCredentialPolicyDocumentation(matched string) bool {
+	line := strings.ToLower(strings.TrimSpace(strings.SplitN(matched, "\n", 2)[0]))
+	return strings.Contains(line, "password policy") &&
+		(strings.Contains(line, "choose") || strings.Contains(line, "strong") || strings.Contains(line, "never store"))
 }
 
 func isPlaceholderSecretValue(value string) bool {

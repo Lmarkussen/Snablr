@@ -71,6 +71,13 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	if err := validateScanConfig(cfg); err != nil {
 		return err
 	}
+	profiler, err := newScannerProfilerFromEnv()
+	if err != nil {
+		return err
+	}
+	if profiler != nil {
+		defer profiler.Close()
+	}
 	if err := prepareScanDatabase(cfg, opts); err != nil {
 		return err
 	}
@@ -123,14 +130,14 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		var resumeState store.ResumeState
 		var resumeErr error
 		if cfg.Scan.Resume {
-			shadow, resumeState, resumeErr = store.OpenForResume(sqlitePath, store.ResumeOptions{ExpectedSemantics: semantics, MaterializeFiles: false})
+			shadow, resumeState, resumeErr = store.OpenForResume(sqlitePath, sqliteResumeOptions(cfg, semantics))
 			if resumeErr != nil {
 				return fmt.Errorf("open authoritative SQLite resume state: %w", resumeErr)
 			}
 			sqliteResume = &resumeState
 		} else if !cfg.Scan.ForceRescan {
 			var reused bool
-			shadow, resumeState, reused, resumeErr = store.OpenLatestForReuse(sqlitePath, store.ResumeOptions{ExpectedSemantics: semantics, MaterializeFiles: false})
+			shadow, resumeState, reused, resumeErr = store.OpenLatestForReuse(sqlitePath, sqliteResumeOptions(cfg, semantics))
 			if resumeErr != nil {
 				return fmt.Errorf("open compatible SQLite reuse state: %w", resumeErr)
 			}
@@ -139,13 +146,13 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 				logger.Infof("reusing compatible SQLite scan state %s", resumeState.ScanID)
 			}
 			if !reused {
-				shadow, err = store.Open(sqlitePath, store.Options{ScanDomain: cfg.Scan.Domain, Semantics: semantics, SnablrVersion: version.String()})
+				shadow, err = store.Open(sqlitePath, sqliteOptions(cfg, semantics))
 				if err != nil {
 					return fmt.Errorf("open authoritative SQLite state: %w", err)
 				}
 			}
 		} else {
-			shadow, err = store.Open(sqlitePath, store.Options{ScanDomain: cfg.Scan.Domain, Semantics: semantics, SnablrVersion: version.String()})
+			shadow, err = store.Open(sqlitePath, sqliteOptions(cfg, semantics))
 			if err != nil {
 				return fmt.Errorf("open authoritative SQLite state: %w", err)
 			}
@@ -422,12 +429,16 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	}()
 
 	if strings.TrimSpace(cfg.Scan.Baseline) != "" {
-		baseline, err := diff.LoadJSON(cfg.Scan.Baseline)
-		if err != nil {
-			return fmt.Errorf("load baseline %s: %w", cfg.Scan.Baseline, err)
+		if err := output.SetBaselinePath(sink, cfg.Scan.Baseline); err == nil {
+			logger.Infof("enabled streaming baseline ingestion for diff reporting")
+		} else {
+			baseline, loadErr := diff.LoadJSON(cfg.Scan.Baseline)
+			if loadErr != nil {
+				return fmt.Errorf("load baseline %s: %w", cfg.Scan.Baseline, loadErr)
+			}
+			output.SetBaselineReport(sink, baseline)
+			logger.Infof("loaded %d baseline finding(s) for diff reporting", len(baseline.Findings))
 		}
-		output.SetBaselineReport(sink, baseline)
-		logger.Infof("loaded %d baseline finding(s) for diff reporting", len(baseline.Findings))
 	}
 	if strings.TrimSpace(cfg.Scan.SeedManifest) != "" {
 		output.SetValidationManifest(sink, cfg.Scan.SeedManifest)
@@ -579,6 +590,26 @@ type sqliteResumeReader struct {
 	expectedSemantics string
 }
 
+func sqliteOptions(cfg config.Config, semantics string) store.Options {
+	options := store.Options{ScanDomain: cfg.Scan.Domain, Semantics: semantics, SnablrVersion: version.String()}
+	if cfg.Scan.LowMemory {
+		options.QueueSize = 64
+		options.BatchSize = 32
+		options.FlushEvery = 50 * time.Millisecond
+	}
+	return options
+}
+
+func sqliteResumeOptions(cfg config.Config, semantics string) store.ResumeOptions {
+	options := store.ResumeOptions{ExpectedSemantics: semantics, MaterializeFiles: false}
+	if cfg.Scan.LowMemory {
+		options.QueueSize = 64
+		options.BatchSize = 32
+		options.FlushEvery = 50 * time.Millisecond
+	}
+	return options
+}
+
 func (r sqliteResumeReader) ResumeTargetComplete(host string) (bool, error) {
 	if !r.semanticsMatch {
 		return false, nil
@@ -599,6 +630,10 @@ func (r sqliteResumeReader) LookupFile(host, share, path string) (state.SQLiteFi
 		file.Status = "partial"
 	}
 	return state.SQLiteFileState{Key: file.Key, Host: file.Host, Share: file.Share, Path: file.Path, Status: file.Status, Semantics: file.Semantics, Size: file.Size, ModifiedAt: file.ModifiedAt, FirstSeen: file.FirstSeen, LastSeen: file.LastSeen, UpdatedAt: file.UpdatedAt}, found, err
+}
+
+func (r sqliteResumeReader) LookupAccess(contextID, fileKey string) (bool, error) {
+	return r.shadow.LookupAccess(contextID, fileKey)
 }
 
 func (r sqliteResumeReader) IsScopeExcluded(kind, host, share, path string) (bool, error) {

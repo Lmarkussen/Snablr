@@ -1101,6 +1101,38 @@ func TestEngineSuppressesPlaceholderSecretAssignments(t *testing.T) {
 	}
 }
 
+func TestEngineSuppressesNegativeFixtureCredentialObservations(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..", "configs", "rules", "default")
+	manager, _, err := rules.LoadManager([]string{root}, false, rules.ManagerOptions{})
+	if err != nil {
+		t.Fatalf("LoadManager returned error: %v", err)
+	}
+
+	engine := NewEngine(Options{}, manager, nil, logx.New("error"))
+	cases := []struct {
+		name      string
+		extension string
+		content   string
+	}{
+		{name: "placeholder assignment", extension: ".ini", content: "password=CHANGE_ME\nmasked=********\n"},
+		{name: "policy documentation", extension: ".ps1", content: "Password policy: choose a strong password; never store examples.\n"},
+		{name: "unresolved variable", extension: ".sh", content: "account=reference-only\npassword=${DEPLOY_PASSWORD}\n"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			meta := FileMetadata{FilePath: "negative" + testCase.extension, Name: "negative" + testCase.extension, Extension: testCase.extension, Size: int64(len(testCase.content))}
+			evaluation := engine.Evaluate(meta, []byte(testCase.content))
+			for _, finding := range evaluation.Findings {
+				if finding.Category == "credentials" {
+					t.Fatalf("expected negative fixture content to be suppressed, got %#v", evaluation.Findings)
+				}
+			}
+		})
+	}
+}
+
 func hasTag(tags []string, want string) bool {
 	for _, tag := range tags {
 		if strings.EqualFold(strings.TrimSpace(tag), strings.TrimSpace(want)) {

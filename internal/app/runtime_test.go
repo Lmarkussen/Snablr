@@ -113,6 +113,14 @@ func TestApplyScanOverridesAppliesExplicitAdaptiveWorkerCount(t *testing.T) {
 	}
 }
 
+func TestApplyScanOverridesLowMemoryPresetBoundsDefaults(t *testing.T) {
+	cfg := config.Default()
+	applyScanOverrides(&cfg, ScanOptions{LowMemory: true})
+	if !cfg.Scan.LowMemory || cfg.Scan.WorkerCount != 2 {
+		t.Fatalf("expected low-memory preset to enable and bound default workers, got low_memory=%v workers=%d", cfg.Scan.LowMemory, cfg.Scan.WorkerCount)
+	}
+}
+
 func TestValidateScanConfigRejectsInvalidWIMBounds(t *testing.T) {
 	t.Parallel()
 

@@ -22,6 +22,7 @@ func generateCredentialCorpus(opts GenerateOptions) ([]SeedFile, error) {
 			IntendedAs: "credential-audit", ExpectedClass: "credential", ExpectedTriageClass: "actionable", ExpectedConfidence: "high",
 			ExpectedSeverity: "high", ExpectedUsername: username, ExpectedPassword: password, ExpectedPairing: pairing, ExpectedOrigin: origin,
 			ExpectedPairs: pairs, ExpectedObservations: pairs, ExpectedInspectable: true, ExpectedArchive: archive,
+			ExpectedOwner: "credentials", ExpectedFinderCategory: "credentials", ExpectedProvenance: "archive or source file", ExpectedGrouping: "independent observation", ExpectedCorrelationSemantics: "no correlation expected", SupportStatus: "supported", ExpectedJustification: "explicit credential audit fixture grammar",
 		})
 	}
 	addFile := func(path, format string, content []byte, username, password, pairing, origin string, pairs int, archive bool) {
@@ -30,6 +31,7 @@ func generateCredentialCorpus(opts GenerateOptions) ([]SeedFile, error) {
 			IntendedAs: "credential-audit", ExpectedClass: "credential", ExpectedTriageClass: "actionable", ExpectedConfidence: "high",
 			ExpectedSeverity: "high", ExpectedUsername: username, ExpectedPassword: password, ExpectedPairing: pairing, ExpectedOrigin: origin,
 			ExpectedPairs: pairs, ExpectedObservations: pairs, ExpectedInspectable: true, ExpectedArchive: archive,
+			ExpectedOwner: "credentials", ExpectedFinderCategory: "credentials", ExpectedProvenance: "archive or source file", ExpectedGrouping: "independent observation", ExpectedCorrelationSemantics: "no correlation expected", SupportStatus: "supported", ExpectedJustification: "explicit credential audit fixture grammar",
 		})
 	}
 

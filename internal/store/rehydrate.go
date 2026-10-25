@@ -338,6 +338,20 @@ func (s *SQLiteStore) LookupFile(host, share, path string) (FileState, bool, err
 	return file, true, nil
 }
 
+// LookupAccess checks one persisted access observation without materializing
+// the scan's access inventory.
+func (s *SQLiteStore) LookupAccess(contextID, fileKey string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, fmt.Errorf("sqlite resume store is closed")
+	}
+	var present int
+	err := s.db.QueryRow(`SELECT 1 FROM access_observations WHERE scan_id=? AND context_id=? AND file_key=? LIMIT 1`, s.scanID, contextID, fileKey).Scan(&present)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil && present == 1, err
+}
+
 func (s *SQLiteStore) ResumeTargetComplete(host string) (bool, error) {
 	var status string
 	err := s.db.QueryRow(`SELECT status FROM targets WHERE scan_id=? AND host=?`, s.scanID, host).Scan(&status)

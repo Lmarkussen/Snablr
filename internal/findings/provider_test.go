@@ -3,6 +3,8 @@ package findings
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -92,6 +94,120 @@ func TestProviderListsScansAndFindingsReadOnly(t *testing.T) {
 	}
 	if before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
 		t.Fatal("read-only provider changed the database file")
+	}
+}
+
+func TestProviderIncludesCompletedDerivedFindingsWithStableIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "derived.db")
+	state, err := store.Open(path, store.Options{ScanID: "derived-scan", SnablrVersion: "test", Semantics: "test", BatchSize: 1, FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := scanner.Finding{RuleID: "original.rule", FilePath: "original.txt", MatchedText: "original"}
+	derived := scanner.Finding{RuleID: "correlation.rule", FilePath: "derived.txt", MatchedText: "derived"}
+	if err := state.RecordFinding(original); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ResetCorrelationState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.RecordDerivedFinding("family/group", derived); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.CompleteCorrelationState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	provider, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	counts, err := provider.Counts(context.Background(), "derived-scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts.Findings != 2 {
+		t.Fatalf("finding count=%d, want 2", counts.Findings)
+	}
+	page, err := provider.FindingsAfter(context.Background(), "derived-scan", 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 1 || page[0].Derived {
+		t.Fatalf("unexpected original page: %#v", page)
+	}
+	next, err := provider.FindingsAfter(context.Background(), "derived-scan", page[0].ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(next) != 1 || !next[0].Derived || next[0].Finding.RuleID != derived.RuleID {
+		t.Fatalf("unexpected derived page: %#v", next)
+	}
+	if next[0].ID == page[0].ID || next[0].StableID() == fmt.Sprintf("finding:%d", next[0].ID) {
+		t.Fatalf("derived identity collided: %#v", next[0])
+	}
+	rehydrated, err := provider.Finding(context.Background(), "derived-scan", next[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rehydrated.Finding.MatchedText != derived.MatchedText || !rehydrated.Derived {
+		t.Fatalf("rehydrated derived finding: %#v", rehydrated)
+	}
+	search, err := provider.SearchPage(context.Background(), "derived-scan", "correlation.rule", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(search.Findings) != 1 || !search.Findings[0].Derived {
+		t.Fatalf("derived search result: %#v", search.Findings)
+	}
+}
+
+func TestProviderHidesDerivedFindingsDuringRebuild(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "building.db")
+	state, err := store.Open(path, store.Options{ScanID: "building-scan", SnablrVersion: "test", Semantics: "test", BatchSize: 1, FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ResetCorrelationState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.RecordDerivedFinding("incomplete", scanner.Finding{RuleID: "derived.rule"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	counts, err := provider.Counts(context.Background(), "building-scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts.Findings != 0 {
+		t.Fatalf("incomplete derived rows visible: %#v", counts)
+	}
+	items, err := provider.Findings(context.Background(), "building-scan", 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("incomplete derived page visible: %#v", items)
 	}
 }
 
@@ -322,5 +438,273 @@ func TestProviderPreservesP3CaptureValuesAndTypes(t *testing.T) {
 		if got[index].Candidate.CredentialType != expected.CredentialType || got[index].Candidate.Value != expected.Value || got[index].Candidate.Path != expected.Path {
 			t.Fatalf("credential %d = %#v, want %#v", index, got[index].Candidate, expected)
 		}
+	}
+}
+
+func TestProviderCountsAndBoundedSearchPage(t *testing.T) {
+	path := makeFixtureDB(t, "scan-search")
+	provider, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	counts, err := provider.Counts(context.Background(), "scan-search")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts.Findings != 1 || counts.Credentials != 1 || counts.Correlations != 0 {
+		t.Fatalf("unexpected persisted counts: %#v", counts)
+	}
+	page, err := provider.SearchPage(context.Background(), "scan-search", "synthetic", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Findings) != 1 || len(page.Credentials) != 1 || page.PersistedRows != 2 {
+		t.Fatalf("unexpected bounded search page: %#v", page)
+	}
+	if _, err := provider.SearchPage(context.Background(), "scan-search", "synthetic", PageSize+1); err == nil {
+		t.Fatal("expected bounded search page validation")
+	}
+}
+
+func TestProviderSearchPageAfterTraversesEveryPopulationWithoutDuplicates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "search-pages.db")
+	state, err := store.Open(path, store.Options{ScanID: "scan-pages", SnablrVersion: "test", Semantics: "synthetic", QueueSize: 32, BatchSize: 32, FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const total = PageSize + 17
+	for index := 0; index < total; index++ {
+		if err := state.RecordFinding(scanner.Finding{RuleID: "page.rule", RuleName: "Page Search", MatchedText: fmt.Sprintf("page-token-%04d", index), FilePath: fmt.Sprintf("evidence/%04d.txt", index)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.RecordCredential(credentialanalysis.Candidate{CredentialType: "password", Identity: fmt.Sprintf("page-user-%04d", index), Value: fmt.Sprintf("page-token-%04d", index)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.RecordCorrelation(fmt.Sprintf("page-correlation-%04d", index), map[string]any{"payload": fmt.Sprintf("page-token-%04d", index)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.SetScanStatus(store.StatusCompleted, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	seen := make(map[string]struct{}, total*3)
+	var findingCursor, credentialCursor int64
+	var correlationCursor string
+	for pageNumber := 0; ; pageNumber++ {
+		page, err := provider.SearchPageAfter(context.Background(), "scan-pages", "page-token", findingCursor, credentialCursor, correlationCursor, PageSize)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range page.Findings {
+			ref := findingRowRef(item)
+			if _, exists := seen[ref]; exists {
+				t.Fatalf("duplicate finding reference on page %d: %s", pageNumber, ref)
+			}
+			seen[ref] = struct{}{}
+		}
+		for _, item := range page.Credentials {
+			ref := credentialRowRef(item)
+			if _, exists := seen[ref]; exists {
+				t.Fatalf("duplicate credential reference on page %d: %s", pageNumber, ref)
+			}
+			seen[ref] = struct{}{}
+		}
+		for _, item := range page.Correlations {
+			ref := correlationRowRef(item)
+			if _, exists := seen[ref]; exists {
+				t.Fatalf("duplicate correlation reference on page %d: %s", pageNumber, ref)
+			}
+			seen[ref] = struct{}{}
+		}
+		if len(page.Findings) > 0 {
+			findingCursor = page.FindingCursor
+		}
+		if len(page.Credentials) > 0 {
+			credentialCursor = page.CredentialCursor
+		}
+		if len(page.Correlations) > 0 {
+			correlationCursor = page.CorrelationCursor
+		}
+		if page.Done {
+			break
+		}
+		if page.PersistedRows == 0 {
+			t.Fatal("search continuation made no progress")
+		}
+	}
+	if want := total * 3; len(seen) != want {
+		t.Fatalf("search references = %d, want %d", len(seen), want)
+	}
+}
+
+func TestCredentialGroupExpansionIsIndependentOfPageBoundary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credential-groups.db")
+	state, err := store.Open(path, store.Options{ScanID: "scan-groups", SnablrVersion: "test", Semantics: "synthetic", QueueSize: 32, BatchSize: 32, FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const total = PageSize + 9
+	for index := 0; index < total; index++ {
+		if err := state.RecordCredential(credentialanalysis.Candidate{CredentialType: "password", Identity: "shared-user", Value: "shared-value", Path: fmt.Sprintf("group/%04d.ini", index), Host: "HOST", Share: "Share"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.RecordCredential(credentialanalysis.Candidate{CredentialType: "password", Identity: "unrelated-user", Value: "shared-value", Path: "unrelated.ini"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetScanStatus(store.StatusCompleted, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	first, err := provider.CredentialsAfter(context.Background(), "scan-groups", 0, PageSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := provider.CredentialsAfter(context.Background(), "scan-groups", first[len(first)-1].ID, PageSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expanded, err := expandCredentialGroups(context.Background(), provider, "scan-groups", first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	categories, _ := buildCategoriesWithAccounting("scan-groups", expanded, nil, nil)
+	if len(categories) != 1 || len(categories[0].Discoveries) != 1 || len(categories[0].Discoveries[0].PersistedRefs) != PageSize {
+		t.Fatalf("first page group projection = categories=%d discoveries=%d refs=%d", len(categories), len(categories[0].Discoveries), len(categories[0].Discoveries[0].PersistedRefs))
+	}
+	expandedSecond, err := expandCredentialGroups(context.Background(), provider, "scan-groups", second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalSecond := retainCanonicalCredentialGroups(expandedSecond, second)
+	secondCategories, _ := buildCategoriesWithAccounting("scan-groups", canonicalSecond, nil, nil)
+	if len(secondCategories) != 1 || len(secondCategories[0].Discoveries) != 1 {
+		t.Fatalf("second page should retain only unrelated canonical group: %#v", secondCategories)
+	}
+	if got := len(secondCategories[0].Discoveries[0].PersistedRefs); got != 1 {
+		t.Fatalf("unrelated second-page group refs=%d, want 1", got)
+	}
+	matchedOnly, err := provider.SearchPage(context.Background(), "scan-groups", "group/0508.ini", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matchedOnly.Credentials) != 1 {
+		t.Fatalf("search matched credentials=%d, want 1", len(matchedOnly.Credentials))
+	}
+	matchedExpanded, err := expandCredentialGroups(context.Background(), provider, "scan-groups", matchedOnly.Credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	matchedCategories, _ := buildCategoriesWithAccounting("scan-groups", matchedExpanded, nil, nil)
+	if len(matchedCategories) != 1 || len(matchedCategories[0].Discoveries) != 1 || len(matchedCategories[0].Discoveries[0].PersistedRefs) < PageSize {
+		t.Fatalf("search relationship context lost: categories=%d discoveries=%d refs=%d", len(matchedCategories), len(matchedCategories[0].Discoveries), len(matchedCategories[0].Discoveries[0].PersistedRefs))
+	}
+}
+
+func TestCredentialRelationshipPagesTraverseTenThousandRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "large-credential-group.db")
+	state, err := store.Open(path, store.Options{ScanID: "scan-large-group", SnablrVersion: "test", Semantics: "synthetic", QueueSize: 8, BatchSize: 1, FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	const total = 10000
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < total; index++ {
+		candidate := credentialanalysis.Candidate{CredentialType: "password", Identity: "large-user", Value: "large-value", Path: fmt.Sprintf("large/%05d.ini", index)}
+		payload, err := json.Marshal(candidate)
+		if err != nil {
+			tx.Rollback()
+			t.Fatal(err)
+		}
+		var payloadObject map[string]any
+		if err := json.Unmarshal(payload, &payloadObject); err != nil {
+			tx.Rollback()
+			t.Fatal(err)
+		}
+		payloadObject["value"] = candidate.Value
+		payload, err = json.Marshal(payloadObject)
+		if err != nil {
+			tx.Rollback()
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec("INSERT INTO credentials(scan_id,credential_key,credential_type,identity,value,payload) VALUES(?,?,?,?,?,?)", "scan-large-group", fmt.Sprintf("password|large-user|%s|large-value", candidate.Path), candidate.CredentialType, candidate.Identity, candidate.Value, payload); err != nil {
+			tx.Rollback()
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	seed, err := provider.CredentialsAfter(context.Background(), "scan-large-group", 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seed) != 1 {
+		t.Fatal("missing large-group seed")
+	}
+	if seed[0].Candidate.CredentialType != "password" || seed[0].Candidate.Identity != "large-user" || seed[0].Candidate.Value != "large-value" {
+		t.Fatalf("unexpected seed candidate: %#v", seed[0].Candidate)
+	}
+	seen := map[string]struct{}{}
+	after := int64(0)
+	for {
+		page, err := provider.RelatedCredentialsAfter(context.Background(), "scan-large-group", seed[0], after, PageSize)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range page {
+			ref := credentialRowRef(item)
+			if _, duplicate := seen[ref]; duplicate {
+				t.Fatalf("duplicate related reference %s", ref)
+			}
+			seen[ref] = struct{}{}
+			after = item.ID
+		}
+		if len(page) < PageSize {
+			break
+		}
+	}
+	if len(seen) != total {
+		t.Fatalf("related references=%d, want %d", len(seen), total)
 	}
 }

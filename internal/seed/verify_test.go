@@ -1,6 +1,8 @@
 package seed
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -99,6 +101,20 @@ func TestVerifyReportsFoundMissedUnexpectedAndCoverage(t *testing.T) {
 	}
 	if foundBySignal["filename"] != 1 {
 		t.Fatalf("expected filename signal coverage to record one found item, got %+v", report.SignalCoverage)
+	}
+}
+
+func TestVerifyDoesNotMissZeroObservationNegativeEntries(t *testing.T) {
+	manifest := Manifest{SeedPrefix: "SyntheticSeed", Entries: []SeedManifestEntry{
+		{Host: "fileserver01", Share: "Docs", Path: "SyntheticSeed/Docs/policy.txt", Category: "noise", ExpectedClass: "negative", NegativeReason: "policy text"},
+		{Host: "fileserver01", Share: "Docs", Path: "SyntheticSeed/Docs/ambiguous.txt", Category: "review", ExpectedClass: "review", NegativeReason: "ambiguous relationship"},
+		{Host: "fileserver01", Share: "Docs", Path: "SyntheticSeed/Docs/unsupported.csv", Category: "documents", ExpectedClass: "unsupported", SupportStatus: "unsupported"},
+	}}
+	report := verifyFindings("manifest.json", []scanner.Finding{{
+		Host: "fileserver01", Share: "Docs", FilePath: "SyntheticSeed/Docs/policy.txt", RuleID: "content.credential_note_indicators",
+	}}, manifest)
+	if report.MissedItems != 0 || report.ExpectedItems != 0 || report.UnexpectedFindings != 1 {
+		t.Fatalf("zero-observation entries were treated as expected findings: %+v", report)
 	}
 }
 
@@ -328,6 +344,28 @@ func TestVerifyMatchesArchiveFindingPaths(t *testing.T) {
 	}
 }
 
+func TestVerifyTreatsCredentialGroundTruthAsActionable(t *testing.T) {
+	t.Parallel()
+
+	manifest := Manifest{
+		SeedPrefix: "SyntheticSeed",
+		Entries: []SeedManifestEntry{{
+			Host: "fileserver01", Share: "Docs", Path: "SyntheticSeed/Docs/credentials.txt",
+			Category: "credentials-v2", ExpectedClass: seedClassCredential,
+			ExpectedConfidence: "medium",
+		}},
+	}
+	report := verifyFindings("manifest.json", []scanner.Finding{{
+		Host: "fileserver01", Share: "Docs", FilePath: "SyntheticSeed/Docs/credentials.txt",
+		Category: "credentials", TriageClass: "actionable", Actionable: true,
+		Confidence: "high", Severity: "high",
+	}}, manifest)
+
+	if report.MissedItems != 0 || len(report.ClassMismatches) != 0 || report.ClassCoverage[0].Matched != 1 {
+		t.Fatalf("credential ground truth should verify as actionable: %+v", report)
+	}
+}
+
 func TestVerifyFindingsMatchesInMemoryResults(t *testing.T) {
 	t.Parallel()
 
@@ -376,5 +414,91 @@ func TestVerifyFindingsMatchesInMemoryResults(t *testing.T) {
 	}
 	if report.ExpectedItems != 2 || report.FoundItems != 1 || report.MissedItems != 1 {
 		t.Fatalf("unexpected verification summary: %+v", report)
+	}
+}
+
+func TestVerifyFindingIteratorSummaryMatchesLegacyCounts(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "manifest.json")
+	manifest := Manifest{Entries: []SeedManifestEntry{
+		{Host: "host", Share: "share", Path: "root/positive.txt", Category: "credentials", ExpectedClass: seedClassCredential, ExpectedSignalTypes: []string{"content"}},
+		{Host: "host", Share: "share", Path: "root/missing.txt", Category: "credentials", ExpectedClass: seedClassActionable},
+	}}
+	if err := manifest.Write(manifestPath); err != nil {
+		t.Fatal(err)
+	}
+	findings := []scanner.Finding{
+		{Host: "host", Share: "share", FilePath: "root/positive.txt", RuleID: "one", Category: "credentials", Severity: "high", Confidence: "high", TriageClass: "actionable", Actionable: true, SignalType: "content"},
+		{Host: "host", Share: "share", FilePath: "root/positive.txt", RuleID: "two", Category: "credentials", Severity: "medium", Confidence: "medium", TriageClass: "actionable", Actionable: true, SignalType: "content"},
+		{Host: "host", Share: "share", FilePath: "root/unexpected.txt", RuleID: "unexpected", Category: "credentials", Severity: "low"},
+	}
+	legacy, err := VerifyFindings(manifestPath, findings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamed, err := VerifyFindingIteratorSummary(manifestPath, func(visit func(scanner.Finding) error) error {
+		for _, finding := range findings {
+			if err := visit(finding); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if streamed.ExpectedItems != legacy.ExpectedItems || streamed.FoundItems != legacy.FoundItems || streamed.MissedItems != legacy.MissedItems || streamed.UnexpectedFindings != legacy.UnexpectedFindings {
+		t.Fatalf("streamed summary differs: legacy=%+v streamed=%+v", legacy, streamed)
+	}
+	if len(streamed.ClassCoverage) != len(legacy.ClassCoverage) || streamed.ClassCoverage[0] != legacy.ClassCoverage[0] {
+		t.Fatalf("streamed class coverage differs: legacy=%+v streamed=%+v", legacy.ClassCoverage, streamed.ClassCoverage)
+	}
+}
+
+func TestVerifyFindingIteratorPropagatesCancellationError(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "manifest.json")
+	if err := (Manifest{Entries: []SeedManifestEntry{{Host: "host", Share: "share", Path: "item.txt", Category: "x", ExpectedClass: seedClassCredential}}}).Write(manifestPath); err != nil {
+		t.Fatal(err)
+	}
+	want := os.ErrClosed
+	_, err := VerifyFindingIteratorSummary(manifestPath, func(visit func(scanner.Finding) error) error {
+		return want
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("iterator error=%v, want %v", err, want)
+	}
+}
+
+func BenchmarkVerifyFindingIteratorSummary(b *testing.B) {
+	for _, size := range []int{1000, 10000} {
+		b.Run(fmt.Sprintf("findings-%d", size), func(b *testing.B) {
+			dir := b.TempDir()
+			manifestPath := filepath.Join(dir, "manifest.json")
+			manifest := Manifest{Entries: []SeedManifestEntry{{Host: "host", Share: "share", Path: "root/positive.txt", Category: "credentials", ExpectedClass: seedClassCredential}}}
+			if err := manifest.Write(manifestPath); err != nil {
+				b.Fatal(err)
+			}
+			findings := make([]scanner.Finding, size)
+			for i := range findings {
+				findings[i] = scanner.Finding{Host: "host", Share: "share", FilePath: "root/positive.txt", RuleID: fmt.Sprintf("rule-%d", i), Category: "credentials", Severity: "medium", Confidence: "medium", TriageClass: "actionable", Actionable: true, SignalType: "content"}
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, err := VerifyFindingIteratorSummary(manifestPath, func(visit func(scanner.Finding) error) error {
+					for _, finding := range findings {
+						if err := visit(finding); err != nil {
+							return err
+						}
+					}
+					return nil
+				}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

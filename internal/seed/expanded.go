@@ -28,11 +28,16 @@ func generateExpanded(opts GenerateOptions) ([]SeedFile, error) {
 			return true
 		}
 		seen[full] = struct{}{}
-		files = append(files, SeedFile{
-			Category: category, Format: format, RelativePath: relative,
-			Filename: filename, Content: []byte(content), IntendedAs: category,
-			ExpectedSeverity: expandedSeverity(category),
-		})
+		groundTruth := expandedGroundTruth(category, format, filename, content, false)
+		groundTruth.Category = category
+		groundTruth.Format = format
+		groundTruth.RelativePath = relative
+		groundTruth.Filename = filename
+		groundTruth.Content = []byte(content)
+		groundTruth.FixtureID = fmt.Sprintf("expanded-%d-%04d", opts.RandomSeed, len(files)+1)
+		groundTruth.SeedVariant = fmt.Sprintf("expanded-seed-%d", opts.RandomSeed)
+		groundTruth.ExpectedSeverity = expandedSeverity(category)
+		files = append(files, groundTruth)
 		return true
 	}
 
@@ -57,12 +62,17 @@ func generateExpanded(opts GenerateOptions) ([]SeedFile, error) {
 		if fixture.expectedMember != "" {
 			expectedPath += "!" + fixture.expectedMember
 		}
-		files = append(files, SeedFile{
-			Category: fixture.category, Format: fixture.format, RelativePath: relative,
-			Filename: fixture.filename, Content: fixture.binary, IntendedAs: fixture.category,
-			ExpectedPath:     expectedPath,
-			ExpectedSeverity: expandedSeverity(fixture.category),
-		})
+		groundTruth := expandedGroundTruth(fixture.category, fixture.format, fixture.filename, "", fixture.expectedMember != "")
+		groundTruth.Category = fixture.category
+		groundTruth.Format = fixture.format
+		groundTruth.RelativePath = relative
+		groundTruth.Filename = fixture.filename
+		groundTruth.Content = fixture.binary
+		groundTruth.ExpectedPath = expectedPath
+		groundTruth.FixtureID = fmt.Sprintf("expanded-%d-%04d", opts.RandomSeed, len(files)+1)
+		groundTruth.SeedVariant = fmt.Sprintf("expanded-seed-%d", opts.RandomSeed)
+		groundTruth.ExpectedSeverity = expandedSeverity(fixture.category)
+		files = append(files, groundTruth)
 	}
 	for _, fixture := range expandedSkipFixtures(prefix) {
 		if !add(fixture.category, fixture.directory, fixture.filename, fixture.format, fixture.content) {

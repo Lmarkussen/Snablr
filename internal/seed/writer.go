@@ -140,6 +140,11 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
+	if opts.RequireGroundTruth {
+		if err := ValidateGroundTruthFiles(files); err != nil {
+			return Manifest{}, err
+		}
+	}
 
 	destinations, err := discoverDestinations(ctx, opts)
 	if err != nil {
@@ -190,33 +195,40 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 			manifestPath = file.ExpectedPath
 		}
 		entry := SeedManifestEntry{
-			Host:                 target.Host,
-			Share:                target.Share,
-			Path:                 manifestPath,
-			Category:             file.Category,
-			Format:               formatLabel(file),
-			IntendedAs:           file.IntendedAs,
-			ExpectedClass:        file.ExpectedClass,
-			ExpectedTriageClass:  file.ExpectedTriageClass,
-			ExpectedConfidence:   file.ExpectedConfidence,
-			ExpectedCorrelated:   file.ExpectedCorrelated,
-			ExpectedSignalTypes:  append([]string{}, file.ExpectedSignalTypes...),
-			ExpectedTags:         append([]string{}, file.ExpectedTags...),
-			ExpectedRuleThemes:   append([]string{}, file.ExpectedRuleThemes...),
-			ExpectedSeverity:     file.ExpectedSeverity,
-			ExpectedUsername:     file.ExpectedUsername,
-			ExpectedPassword:     file.ExpectedPassword,
-			ExpectedPairing:      file.ExpectedPairing,
-			ExpectedOrigin:       file.ExpectedOrigin,
-			ExpectedPairs:        file.ExpectedPairs,
-			ExpectedObservations: file.ExpectedObservations,
-			ExpectedInspectable:  file.ExpectedInspectable,
-			ExpectedArchive:      file.ExpectedArchive,
-			FixtureID:            file.FixtureID,
-			Subset:               file.Subset,
-			SeedVariant:          file.SeedVariant,
-			ExpectedPairsDetail:  append([]ExpectedCredentialPair{}, file.ExpectedPairsDetail...),
-			NegativeReason:       file.NegativeReason,
+			Host:                         target.Host,
+			Share:                        target.Share,
+			Path:                         manifestPath,
+			Category:                     file.Category,
+			Format:                       formatLabel(file),
+			IntendedAs:                   file.IntendedAs,
+			ExpectedClass:                file.ExpectedClass,
+			ExpectedTriageClass:          file.ExpectedTriageClass,
+			ExpectedConfidence:           file.ExpectedConfidence,
+			ExpectedCorrelated:           file.ExpectedCorrelated,
+			ExpectedSignalTypes:          append([]string{}, file.ExpectedSignalTypes...),
+			ExpectedTags:                 append([]string{}, file.ExpectedTags...),
+			ExpectedRuleThemes:           append([]string{}, file.ExpectedRuleThemes...),
+			ExpectedSeverity:             file.ExpectedSeverity,
+			ExpectedUsername:             file.ExpectedUsername,
+			ExpectedPassword:             file.ExpectedPassword,
+			ExpectedPairing:              file.ExpectedPairing,
+			ExpectedOrigin:               file.ExpectedOrigin,
+			ExpectedPairs:                file.ExpectedPairs,
+			ExpectedObservations:         file.ExpectedObservations,
+			ExpectedInspectable:          file.ExpectedInspectable,
+			ExpectedArchive:              file.ExpectedArchive,
+			FixtureID:                    file.FixtureID,
+			Subset:                       file.Subset,
+			SeedVariant:                  file.SeedVariant,
+			ExpectedPairsDetail:          append([]ExpectedCredentialPair{}, file.ExpectedPairsDetail...),
+			NegativeReason:               file.NegativeReason,
+			ExpectedOwner:                file.ExpectedOwner,
+			ExpectedFinderCategory:       file.ExpectedFinderCategory,
+			ExpectedProvenance:           file.ExpectedProvenance,
+			ExpectedGrouping:             file.ExpectedGrouping,
+			ExpectedCorrelationSemantics: file.ExpectedCorrelationSemantics,
+			SupportStatus:                file.SupportStatus,
+			ExpectedJustification:        file.ExpectedJustification,
 		}
 
 		if opts.DryRun {

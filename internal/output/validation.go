@@ -68,6 +68,21 @@ func buildValidationSummary(manifestPath string, findings []scanner.Finding) (*v
 	if err != nil {
 		return nil, err
 	}
+	return validationSummaryFromReport(report), nil
+}
+
+func buildValidationSummaryIterator(manifestPath string, iterator seed.FindingIterator) (*validationSummary, error) {
+	if strings.TrimSpace(manifestPath) == "" {
+		return nil, nil
+	}
+	report, err := seed.VerifyFindingIteratorSummary(manifestPath, iterator)
+	if err != nil {
+		return nil, err
+	}
+	return validationSummaryFromReport(report), nil
+}
+
+func validationSummaryFromReport(report seed.VerificationReport) *validationSummary {
 
 	summary := &validationSummary{
 		ExpectedItems:        report.ExpectedItems,
@@ -133,7 +148,7 @@ func buildValidationSummary(manifestPath string, findings []scanner.Finding) (*v
 	}
 	summary.OverPromoted = overPromoted
 
-	return summary, nil
+	return summary
 }
 
 func expectedClassLabel(value string) string {

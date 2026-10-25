@@ -49,6 +49,7 @@ type ScanConfig struct {
 	ExcludePath                []string `yaml:"exclude_path"`
 	MaxDepth                   int      `yaml:"max_depth"`
 	WorkerCount                int      `yaml:"worker_count"`
+	LowMemory                  bool     `yaml:"low_memory"`
 	MaxFileSize                int64    `yaml:"max_file_size"`
 	NoLDAP                     bool     `yaml:"no_ldap"`
 	Domain                     string   `yaml:"domain"`

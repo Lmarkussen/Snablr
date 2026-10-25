@@ -803,6 +803,7 @@ func TestFindingDetailSeparatesRawAndFinderClassification(t *testing.T) {
 		MatchedText:       "Gjennomgang æøå\nsecond line",
 	}}
 	categories := buildCategories(nil, []Finding{finding}, nil)
+	categories[0].Discoveries[0].Finding = &finding.Finding
 	m := &model{scans: []Scan{{ID: "scan"}}, categories: categories, screen: screenDiscoveries, discoveries: categories[0].Discoveries, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
 	m.resizeTo(120, 40)
 	text := m.evidenceText()
@@ -819,5 +820,74 @@ func TestFindingDetailSeparatesRawAndFinderClassification(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("finding detail missing %q: %q", want, text)
 		}
+	}
+}
+
+func TestLoadingStateRendersBeforeProjectionCompletes(t *testing.T) {
+	m := &model{
+		scans:   []Scan{{ID: "scan", DisplayID: "scan"}},
+		loading: true,
+		screen:  screenCategories,
+		list:    viewport.New(40, 4),
+		preview: viewport.New(40, 8),
+	}
+	m.refresh()
+	if !strings.Contains(m.list.View(), "Loading persisted observations") {
+		t.Fatalf("loading list did not expose progress: %q", m.list.View())
+	}
+	if !strings.Contains(m.preview.View(), "bounded startup") {
+		t.Fatalf("loading preview did not explain deferred work: %q", m.preview.View())
+	}
+}
+
+func TestApplyScanLoadedRejectsUnaccountedProjection(t *testing.T) {
+	m := &model{scans: []Scan{{ID: "scan"}}, loading: true, list: viewport.New(40, 4), preview: viewport.New(40, 8)}
+	m.applyScanLoaded(scanLoadedMsg{scanID: "scan", complete: true, categories: []category{}, audit: ProjectionAudit{UnaccountedRows: 1, UnaccountedRefs: []string{"finding:9"}}})
+	if m.loading || !strings.Contains(m.status, "Load failed") || !strings.Contains(m.loadError, "finding:9") {
+		t.Fatalf("accounting failure was not surfaced: loading=%t status=%q error=%q", m.loading, m.status, m.loadError)
+	}
+}
+
+func TestApplyScanLoadedPreservesCompleteProjection(t *testing.T) {
+	categories := []category{{Name: "Review", Discoveries: []discovery{{Title: "evidence", PersistedRefs: []string{"finding:1"}}}}}
+	m := &model{scans: []Scan{{ID: "scan"}}, loading: true, list: viewport.New(40, 4), preview: viewport.New(40, 8)}
+	m.applyScanLoaded(scanLoadedMsg{scanID: "scan", complete: true, findings: []Finding{{ID: 1}}, categories: categories, audit: ProjectionAudit{LogicalDiscoveryCount: 1}})
+	if m.loading || len(m.categories) != 1 || m.categories[0].Discoveries[0].PersistedRefs[0] != "finding:1" {
+		t.Fatalf("complete projection was not installed: %#v", m.categories)
+	}
+	if !strings.Contains(m.status, "loaded in") {
+		t.Fatalf("load duration was not reported: %q", m.status)
+	}
+}
+
+func TestCompactDiscoveriesDropsEvidenceButKeepsStableMetadata(t *testing.T) {
+	categories := []category{{
+		Name: "Original Findings",
+		Discoveries: []discovery{{
+			Title: "Private key", Path: "archive.zip!id_rsa", PersistedRefs: []string{"finding:7"}, Value: "secret", Evidence: []string{"multiline\næøå"},
+			Finding: &scanner.Finding{RuleID: "keyinspect.content.private_key_header", FilePath: "archive.zip!id_rsa", MatchedText: "private evidence"},
+		}},
+	}}
+	compactDiscoveries(categories)
+	d := categories[0].Discoveries[0]
+	if d.Title != "Private key" || d.Path != "archive.zip!id_rsa" || len(d.PersistedRefs) != 1 {
+		t.Fatalf("stable metadata was lost: %#v", d)
+	}
+	if d.Value != "" || len(d.Evidence) != 0 || d.Finding != nil {
+		t.Fatalf("evidence was retained in compact projection: %#v", d)
+	}
+}
+
+func TestEvidenceCacheIsBounded(t *testing.T) {
+	m := &model{evidenceCache: make(map[string]evidenceCacheItem)}
+	for i := 0; i < evidenceCacheLimit+8; i++ {
+		key := fmt.Sprintf("finding:%d", i)
+		m.cacheEvidence(evidenceCacheItem{key: key, correlation: key})
+	}
+	if len(m.evidenceCache) != evidenceCacheLimit || len(m.evidenceOrder) != evidenceCacheLimit {
+		t.Fatalf("evidence cache is unbounded: cache=%d order=%d", len(m.evidenceCache), len(m.evidenceOrder))
+	}
+	if _, ok := m.cachedEvidence("finding:0"); ok {
+		t.Fatal("oldest evidence cache entry was not evicted")
 	}
 }

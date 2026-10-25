@@ -9,6 +9,7 @@ import (
 	"snablr/internal/diff"
 	"snablr/internal/metrics"
 	"snablr/internal/scanner"
+	"snablr/internal/store"
 )
 
 type ConsoleWriter struct {
@@ -17,12 +18,13 @@ type ConsoleWriter struct {
 	mu                  sync.Mutex
 	metrics             metrics.Snapshot
 	summary             *summaryCollector
-	findings            []scanner.Finding
+	findings            map[string]scanner.Finding
 	profile             string
 	manifest            string
 	suppression         *suppressionSummary
 	baselinePerformance *diff.PerformanceSummary
 	validationMode      *validationModeCollector
+	sqlite              *store.SQLiteStore
 }
 
 func NewConsoleWriter(w io.Writer, closer io.Closer) *ConsoleWriter {
@@ -31,6 +33,7 @@ func NewConsoleWriter(w io.Writer, closer io.Closer) *ConsoleWriter {
 		closer:         closer,
 		summary:        newSummaryCollector(),
 		validationMode: newValidationModeCollector(),
+		findings:       make(map[string]scanner.Finding),
 	}
 }
 
@@ -40,11 +43,26 @@ func (c *ConsoleWriter) WriteFinding(f scanner.Finding) error {
 	defer c.mu.Unlock()
 
 	c.summary.RecordFinding(f)
-	c.findings = append(c.findings, f)
+	if c.sqlite == nil {
+		key := reportFindingDedupKey(f)
+		if existing, ok := c.findings[key]; ok {
+			c.findings[key] = betterReportFinding(existing, f)
+		} else {
+			c.findings[key] = f
+		}
+	}
 	if !isPrimaryLiveFinding(f) {
 		return nil
 	}
 	return c.writeFindingLocked(f)
+}
+
+func (c *ConsoleWriter) AttachSQLiteStore(shadow *store.SQLiteStore) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sqlite = shadow
+	// Findings already received before attachment remain available through the
+	// fallback map; later persisted findings are read from SQLite at close.
 }
 
 func (c *ConsoleWriter) writeFindingLocked(f scanner.Finding) error {
@@ -276,9 +294,32 @@ func (c *ConsoleWriter) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	augmented := augmentFindingsForReporting(c.findings)
-	existing := make(map[string]struct{}, len(c.findings))
-	for _, finding := range c.findings {
+	findingsByKey := c.findings
+	if c.sqlite != nil {
+		persisted, err := persistedFindingsForReport(c, nil)
+		if err != nil {
+			return fmt.Errorf("iterate persisted findings for console report: %w", err)
+		}
+		findingsByKey = make(map[string]scanner.Finding)
+		for _, finding := range persisted {
+			key := reportFindingDedupKey(finding)
+			if existing, ok := findingsByKey[key]; ok {
+				findingsByKey[key] = betterReportFinding(existing, finding)
+			} else {
+				findingsByKey[key] = finding
+			}
+		}
+	}
+	findings := make([]scanner.Finding, 0, len(findingsByKey))
+	for _, finding := range findingsByKey {
+		findings = append(findings, finding)
+	}
+	augmented := dedupeReportFindings(findings)
+	if c.sqlite == nil {
+		augmented = augmentFindingsForReporting(findings)
+	}
+	existing := make(map[string]struct{}, len(findings))
+	for _, finding := range findings {
 		existing[correlationFindingKey(finding)] = struct{}{}
 	}
 	for _, finding := range augmented {
@@ -291,7 +332,7 @@ func (c *ConsoleWriter) Close() error {
 		}
 	}
 
-	snapshot := adjustedSummarySnapshot(c.summary.Snapshot(), c.findings, augmented)
+	snapshot := adjustedSummarySnapshot(c.summary.Snapshot(), findings, augmented)
 	if _, err := fmt.Fprintf(c.w, "Summary: hosts=%d shares=%d files=%d matches=%d skipped=%d read_errors=%d started=%s ended=%s\n",
 		snapshot.HostsScanned,
 		snapshot.SharesScanned,

@@ -158,27 +158,61 @@ func Generate(opts GenerateOptions) ([]SeedFile, error) {
 				variant = demoteSuffixedSeedVariant(variant)
 			}
 
+			groundTruth := templateGroundTruth(spec.Category, variant, expectedSeedPath(relativePath, filename, variant.ExpectedInnerPath))
 			out = append(out, SeedFile{
-				Category:            spec.Category,
-				Format:              variant.Format,
-				RelativePath:        relativePath,
-				Filename:            filename,
-				ExpectedPath:        expectedSeedPath(relativePath, filename, variant.ExpectedInnerPath),
-				Content:             content,
-				IntendedAs:          variant.IntendedAs,
-				ExpectedClass:       variant.ExpectedClass,
-				ExpectedTriageClass: variant.ExpectedTriageClass,
-				ExpectedConfidence:  variant.ExpectedConfidence,
-				ExpectedCorrelated:  variant.ExpectedCorrelated,
-				ExpectedSignalTypes: append([]string{}, variant.ExpectedSignalTypes...),
-				ExpectedTags:        append([]string{}, variant.ExpectedTags...),
-				ExpectedRuleThemes:  append([]string{}, variant.ExpectedRuleThemes...),
-				ExpectedSeverity:    variant.ExpectedSeverity,
+				Category:                     spec.Category,
+				Format:                       variant.Format,
+				RelativePath:                 relativePath,
+				Filename:                     filename,
+				ExpectedPath:                 expectedSeedPath(relativePath, filename, variant.ExpectedInnerPath),
+				Content:                      content,
+				FixtureID:                    fmt.Sprintf("template-%04d", len(out)+1),
+				IntendedAs:                   variant.IntendedAs,
+				ExpectedClass:                variant.ExpectedClass,
+				ExpectedTriageClass:          variant.ExpectedTriageClass,
+				ExpectedConfidence:           variant.ExpectedConfidence,
+				ExpectedCorrelated:           variant.ExpectedCorrelated,
+				ExpectedSignalTypes:          append([]string{}, variant.ExpectedSignalTypes...),
+				ExpectedTags:                 append([]string{}, variant.ExpectedTags...),
+				ExpectedRuleThemes:           append([]string{}, variant.ExpectedRuleThemes...),
+				ExpectedSeverity:             variant.ExpectedSeverity,
+				ExpectedOwner:                groundTruth.owner,
+				ExpectedFinderCategory:       groundTruth.finderCategory,
+				ExpectedProvenance:           groundTruth.provenance,
+				ExpectedGrouping:             groundTruth.grouping,
+				ExpectedCorrelationSemantics: groundTruth.correlation,
+				SupportStatus:                groundTruth.support,
+				ExpectedJustification:        groundTruth.justification,
 			})
 		}
 	}
 
 	return out, nil
+}
+
+type templateGroundTruthMetadata struct {
+	owner, finderCategory, provenance, grouping, correlation, support, justification string
+}
+
+func templateGroundTruth(category string, variant templateVariant, expectedPath string) templateGroundTruthMetadata {
+	class := strings.ToLower(strings.TrimSpace(variant.ExpectedClass))
+	support := "supported"
+	if class == "unsupported" || class == "" {
+		support = "unsupported"
+	} else if class == "review" || class == "weak-review" || class == "config-only" {
+		support = "ambiguous"
+	}
+	provenance := "source file"
+	if strings.Contains(expectedPath, "!") || strings.Contains(expectedPath, "::") {
+		provenance = "archive or structured member"
+	}
+	return templateGroundTruthMetadata{
+		owner: category, finderCategory: category, provenance: provenance,
+		grouping:      "independent observation",
+		correlation:   "correlation only when explicitly marked by the fixture template",
+		support:       support,
+		justification: "deterministic template semantics and declared rule themes; independent of scanner output",
+	}
 }
 
 func isExactArtifactSeedVariant(variant templateVariant) bool {

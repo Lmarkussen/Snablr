@@ -147,6 +147,98 @@ func TestInspectorFixtures(t *testing.T) {
 	}
 }
 
+func TestINISectionsRequireDatabaseContextForAccessFindings(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		content   string
+		expectIDs []string
+	}{
+		{
+			name:    "generic password only",
+			content: "[defaults]\npassword=ikke-en-database-passord\n",
+		},
+		{
+			name:    "generic username and password",
+			content: "[service]\nusername=bruker\npassword=hemmelig\n",
+		},
+		{
+			name:      "valid database INI credentials",
+			content:   "[database]\nserver=db.example\ndatabase=app\nusername=bruker\npassword=hemmelig\n",
+			expectIDs: []string{"dbinspect.access.dsn"},
+		},
+		{
+			name:      "database reference without credentials",
+			content:   "[database]\nserver=db.example\ndatabase=app\n",
+			expectIDs: []string{"dbinspect.infrastructure.dsn"},
+		},
+		{
+			name:      "Norwegian database credentials",
+			content:   "[database]\nserver=db.example\ndatabase=app\nbrukernavn=bruker\npassord=hemmelig\n",
+			expectIDs: []string{"dbinspect.access.dsn"},
+		},
+	}
+
+	inspector := New()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matches := inspector.InspectContent(Candidate{FilePath: "settings.ini", Name: "settings.ini"}, []byte(tt.content))
+			got := make(map[string]struct{}, len(matches))
+			for _, match := range matches {
+				got[match.ID] = struct{}{}
+			}
+			for _, id := range tt.expectIDs {
+				if _, ok := got[id]; !ok {
+					t.Fatalf("expected %s in %#v", id, matches)
+				}
+			}
+			if len(got) != len(tt.expectIDs) {
+				t.Fatalf("expected IDs %v, got %#v", tt.expectIDs, matches)
+			}
+		})
+	}
+}
+
+func TestDatabaseURLsRequireAnAssociatedIdentityForAccessFindings(t *testing.T) {
+	t.Parallel()
+
+	inspector := New()
+	tests := []struct {
+		name      string
+		content   string
+		expectIDs []string
+	}{
+		{
+			name:      "missing URL username is not an access credential",
+			content:   "postgresql://:missing-user@db.example/app\n",
+			expectIDs: []string{"dbinspect.infrastructure.connection_string"},
+		},
+		{
+			name:      "supported URL credentials remain access material",
+			content:   "postgresql://bruker:hemmelig@db.example/app\n",
+			expectIDs: []string{"dbinspect.access.connection_string"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matches := inspector.InspectContent(Candidate{FilePath: "connection.txt", Name: "connection.txt"}, []byte(tt.content))
+			got := make(map[string]struct{}, len(matches))
+			for _, match := range matches {
+				got[match.ID] = struct{}{}
+			}
+			for _, id := range tt.expectIDs {
+				if _, ok := got[id]; !ok {
+					t.Fatalf("expected %s in %#v", id, matches)
+				}
+			}
+			if len(got) != len(tt.expectIDs) {
+				t.Fatalf("expected IDs %v, got %#v", tt.expectIDs, matches)
+			}
+		})
+	}
+}
+
 func loadFixtureCandidate(t *testing.T, name string) (Candidate, []byte) {
 	t.Helper()
 

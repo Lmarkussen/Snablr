@@ -129,6 +129,7 @@ func runFind(args []string) error {
 	fs.Usage = func() { printFindUsage() }
 	dbPath := fs.String("db", "", "Path to an existing Snablr SQLite database")
 	dbName := fs.String("dbname", "", "Alias for --db")
+	profileDir := fs.String("profile-dir", "", "Opt-in Finder CPU, heap, and allocation profiles")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -155,7 +156,7 @@ func runFind(args []string) error {
 		fmt.Fprintf(os.Stdout, "No usable scan records found in %s.\n", provider.Path())
 		return nil
 	}
-	return findings.Run(context.Background(), provider, scans, os.Stdout)
+	return findings.RunWithOptions(context.Background(), provider, scans, os.Stdout, findings.RunOptions{ProfileDir: *profileDir})
 }
 
 func reconcileFinderDatabasePaths(dbPath, dbName string) (string, error) {
@@ -219,6 +220,7 @@ func runScan(args []string) error {
 	rulesDir := fs.String("rules-directory", "", "Directory containing YAML rules")
 	var workerCount optionalIntFlag
 	fs.Var(&workerCount, "worker-count", "Number of file scan workers (default 15 for SMB/file-server safety; higher values may increase load; 0 uses adaptive scaling)")
+	lowMemory := fs.Bool("low-memory", false, "Use the reduced-memory scanner preset with bounded persistence queues and batches")
 	maxFileSize := fs.Int64("max-file-size", 0, "Maximum file size in bytes to scan")
 	noLDAP := fs.Bool("no-ldap", false, "Disable LDAP discovery when no explicit targets are supplied")
 	dc := fs.String("dc", "", "Domain controller to use for LDAP discovery")
@@ -333,6 +335,7 @@ func runScan(args []string) error {
 		Domain:                     *domain,
 		RulesDirectory:             *rulesDir,
 		WorkerCount:                workerCount.ptr(),
+		LowMemory:                  *lowMemory,
 		MaxFileSize:                *maxFileSize,
 		NoLDAP:                     *noLDAP,
 		DomainController:           *dc,
@@ -732,6 +735,7 @@ func printFindUsage() {
 	printHelpParagraph("Browse persisted Snablr findings and evidence without contacting SMB targets.")
 	printHelpLine("--db PATH", "Open an existing SQLite database instead of the default snablr.db", 30)
 	printHelpLine("--dbname PATH", "Alias for --db; cannot conflict with --db", 30)
+	printHelpLine("--profile-dir PATH", "Write opt-in Finder CPU, heap, allocation, and stage profiles", 30)
 	fmt.Println()
 	printHelpParagraph("If both database flags are supplied they must name the same file. If omitted, Snablr checks the same default database path used by scan.")
 }
@@ -762,7 +766,7 @@ func scanHelpGroups(advanced bool) []scanHelpGroup {
 	groups := []scanHelpGroup{
 		{Title: "Target and scope", Flags: []string{"targets", "targets-file", "share", "path", "exclude-share", "exclude-path"}},
 		{Title: "Authentication", Flags: []string{"username", "password", "user", "pass", "auth", "smb-auth", "domain", "dc", "no-ldap", "list-shares"}},
-		{Title: "Persistence and execution", Flags: []string{"resume", "force-rescan", "sqlite-state-file", "dbname", "flushdb", "worker-count", "max-scan-time"}},
+		{Title: "Persistence and execution", Flags: []string{"resume", "force-rescan", "sqlite-state-file", "dbname", "flushdb", "worker-count", "low-memory", "max-scan-time"}},
 		{Title: "Output", Flags: []string{"output-format", "json-out", "html-out", "csv-out", "md-out", "creds-out", "scanned-targets-out", "no-tui", "no-color"}},
 	}
 	if !advanced {

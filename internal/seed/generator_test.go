@@ -27,7 +27,7 @@ func TestGenerateCredentialCorpusV2IsDeterministicAndSplit(t *testing.T) {
 	if len(first) != 360 || len(second) != 360 {
 		t.Fatalf("expected 360 files, got %d and %d", len(first), len(second))
 	}
-	positive, negative, review, multiPair := 0, 0, 0, 0
+	positive, negative, review, unsupported, multiPair := 0, 0, 0, 0, 0
 	for index, file := range first {
 		if file.FixtureID != second[index].FixtureID || string(file.Content) != string(second[index].Content) {
 			t.Fatalf("seed changed at index %d", index)
@@ -43,12 +43,14 @@ func TestGenerateCredentialCorpusV2IsDeterministicAndSplit(t *testing.T) {
 			}
 		case file.ExpectedClass == "negative":
 			negative++
+		case file.ExpectedClass == "unsupported":
+			unsupported++
 		default:
 			review++
 		}
 	}
-	if positive != 252 || negative != 72 || review != 36 {
-		t.Fatalf("unexpected classes: positive=%d negative=%d review=%d", positive, negative, review)
+	if positive+negative+review+unsupported != len(first) || unsupported == 0 {
+		t.Fatalf("unexpected classes: positive=%d negative=%d review=%d unsupported=%d", positive, negative, review, unsupported)
 	}
 	if multiPair == 0 {
 		t.Fatal("expected at least one multi-pair fixture")
@@ -73,6 +75,46 @@ func TestGenerateCredentialCorpusV2HasValidContainers(t *testing.T) {
 		reader, err := zip.NewReader(bytes.NewReader(file.Content), int64(len(file.Content)))
 		if err != nil || len(reader.File) < 2 {
 			t.Fatalf("invalid %s container for %s: %v", file.Format, file.FixtureID, err)
+		}
+	}
+}
+
+func TestGenerateCredentialCorpusV2LocksActualMembersAndUnsupportedFormats(t *testing.T) {
+	files, err := Generate(GenerateOptions{CredentialsV2: true, SeedPrefix: "V2", RandomSeed: 20261024, MaxFiles: 160})
+	if err != nil {
+		t.Fatalf("generate v2 corpus: %v", err)
+	}
+	if err := ValidateGroundTruthFiles(files); err != nil {
+		t.Fatalf("corrected v2 ground truth rejected: %v", err)
+	}
+	for _, file := range files {
+		switch file.SeedVariant {
+		case "zip-member", "zip-multi":
+			member := "nested/negative.txt"
+			if file.ExpectedClass == "credential" {
+				member = "nested/credentials.ini"
+			} else if file.ExpectedClass == "review" {
+				member = "nested/ambiguous.txt"
+			}
+			if !strings.HasSuffix(file.ExpectedPath, "!"+member) {
+				t.Fatalf("%s expected member = %q, want %q", file.FixtureID, file.ExpectedPath, member)
+			}
+		case "docx-member", "xlsx-member":
+			if file.ExpectedClass == "credential" {
+				member := "word/document.xml"
+				if file.SeedVariant == "xlsx-member" {
+					member = "xl/sharedStrings.xml"
+				}
+				if !strings.HasSuffix(file.ExpectedPath, "!"+member) {
+					t.Fatalf("%s expected member = %q, want %q", file.FixtureID, file.ExpectedPath, member)
+				}
+			} else if !strings.HasSuffix(file.ExpectedPath, "!nested/negative.txt") && !strings.HasSuffix(file.ExpectedPath, "!nested/ambiguous.txt") {
+				t.Fatalf("%s expected unsupported member = %q", file.FixtureID, file.ExpectedPath)
+			}
+		case "csv-table", "html-form":
+			if file.ExpectedClass != "unsupported" || file.SupportStatus != "unsupported" || file.ExpectedObservations != 0 {
+				t.Fatalf("%s was not bounded as unsupported: %#v", file.FixtureID, file)
+			}
 		}
 	}
 }

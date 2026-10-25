@@ -536,6 +536,9 @@ func inspectINISection(section string, values map[string]string) (stringObservat
 	if driver == "" && endpoint == "" && database == "" && user == "" && password == "" {
 		return stringObservation{}, false
 	}
+	if driver == "" && endpoint == "" && database == "" {
+		return stringObservation{}, false
+	}
 
 	ecosystem := detectEcosystem(values)
 	if ecosystem == "" {
@@ -553,7 +556,7 @@ func inspectINISection(section string, values map[string]string) (stringObservat
 	tags := []string{"database", "db:source:config", "db:ecosystem:" + ecosystem}
 	// Only an actual password makes this a credential; a user with no password
 	// (or integrated security) is a configuration/infrastructure artifact.
-	if password != "" {
+	if password != "" && user != "" {
 		return stringObservation{
 			category:    "database-access",
 			severity:    "high",
@@ -617,7 +620,7 @@ func inspectKVFragment(fragment string, lineNumber int) (stringObservation, bool
 	// actual non-placeholder, non-masked password. An account name with an empty
 	// or absent password (for example the ubiquitous Access/Jet
 	// "User ID=Admin;Password=\"\"") is a configuration artifact, not a secret.
-	if auth.password != "" {
+	if auth.password != "" && auth.user != "" {
 		return stringObservation{
 			category:    "database-access",
 			severity:    "high",

@@ -3,34 +3,41 @@ package seed
 import "time"
 
 type SeedFile struct {
-	Category             string
-	Format               string
-	RelativePath         string
-	Filename             string
-	ExpectedPath         string
-	Content              []byte
-	IntendedAs           string
-	ExpectedClass        string
-	ExpectedTriageClass  string
-	ExpectedConfidence   string
-	ExpectedCorrelated   bool
-	ExpectedSignalTypes  []string
-	ExpectedTags         []string
-	ExpectedRuleThemes   []string
-	ExpectedSeverity     string
-	ExpectedUsername     string
-	ExpectedPassword     string
-	ExpectedPairing      string
-	ExpectedOrigin       string
-	ExpectedPairs        int
-	ExpectedObservations int
-	ExpectedInspectable  bool
-	ExpectedArchive      bool
-	FixtureID            string
-	Subset               string
-	SeedVariant          string
-	ExpectedPairsDetail  []ExpectedCredentialPair `json:"-"`
-	NegativeReason       string
+	Category                     string
+	Format                       string
+	RelativePath                 string
+	Filename                     string
+	ExpectedPath                 string
+	Content                      []byte
+	IntendedAs                   string
+	ExpectedClass                string
+	ExpectedTriageClass          string
+	ExpectedConfidence           string
+	ExpectedCorrelated           bool
+	ExpectedSignalTypes          []string
+	ExpectedTags                 []string
+	ExpectedRuleThemes           []string
+	ExpectedSeverity             string
+	ExpectedUsername             string
+	ExpectedPassword             string
+	ExpectedPairing              string
+	ExpectedOrigin               string
+	ExpectedPairs                int
+	ExpectedObservations         int
+	ExpectedInspectable          bool
+	ExpectedArchive              bool
+	FixtureID                    string
+	Subset                       string
+	SeedVariant                  string
+	ExpectedPairsDetail          []ExpectedCredentialPair `json:"-"`
+	NegativeReason               string
+	ExpectedOwner                string
+	ExpectedFinderCategory       string
+	ExpectedProvenance           string
+	ExpectedGrouping             string
+	ExpectedCorrelationSemantics string
+	SupportStatus                string
+	ExpectedJustification        string
 }
 
 // ExpectedCredentialPair is synthetic ground truth for the credential audit
@@ -46,34 +53,41 @@ type ExpectedCredentialPair struct {
 }
 
 type SeedManifestEntry struct {
-	Host                 string                   `json:"host"`
-	Share                string                   `json:"share"`
-	Path                 string                   `json:"path"`
-	Category             string                   `json:"category"`
-	Format               string                   `json:"format"`
-	IntendedAs           string                   `json:"intended_as,omitempty"`
-	ExpectedClass        string                   `json:"expected_class,omitempty"`
-	ExpectedTriageClass  string                   `json:"expected_triage_class,omitempty"`
-	ExpectedConfidence   string                   `json:"expected_confidence,omitempty"`
-	ExpectedCorrelated   bool                     `json:"expected_correlated,omitempty"`
-	ExpectedSignalTypes  []string                 `json:"expected_signal_types,omitempty"`
-	ExpectedTags         []string                 `json:"expected_tags,omitempty"`
-	ExpectedRuleThemes   []string                 `json:"expected_rule_themes,omitempty"`
-	ExpectedSeverity     string                   `json:"expected_severity,omitempty"`
-	ExpectedUsername     string                   `json:"expected_username,omitempty"`
-	ExpectedPassword     string                   `json:"expected_password,omitempty"`
-	ExpectedPairing      string                   `json:"expected_pairing,omitempty"`
-	ExpectedOrigin       string                   `json:"expected_origin,omitempty"`
-	ExpectedPairs        int                      `json:"expected_pairs"`
-	ExpectedObservations int                      `json:"expected_observations"`
-	ExpectedInspectable  bool                     `json:"expected_inspectable,omitempty"`
-	ExpectedArchive      bool                     `json:"expected_archive_provenance,omitempty"`
-	Status               string                   `json:"status,omitempty"`
-	FixtureID            string                   `json:"fixture_id,omitempty"`
-	Subset               string                   `json:"subset,omitempty"`
-	SeedVariant          string                   `json:"seed_variant,omitempty"`
-	ExpectedPairsDetail  []ExpectedCredentialPair `json:"expected_pairs_detail,omitempty"`
-	NegativeReason       string                   `json:"negative_reason,omitempty"`
+	Host                         string                   `json:"host"`
+	Share                        string                   `json:"share"`
+	Path                         string                   `json:"path"`
+	Category                     string                   `json:"category"`
+	Format                       string                   `json:"format"`
+	IntendedAs                   string                   `json:"intended_as,omitempty"`
+	ExpectedClass                string                   `json:"expected_class,omitempty"`
+	ExpectedTriageClass          string                   `json:"expected_triage_class,omitempty"`
+	ExpectedConfidence           string                   `json:"expected_confidence,omitempty"`
+	ExpectedCorrelated           bool                     `json:"expected_correlated,omitempty"`
+	ExpectedSignalTypes          []string                 `json:"expected_signal_types,omitempty"`
+	ExpectedTags                 []string                 `json:"expected_tags,omitempty"`
+	ExpectedRuleThemes           []string                 `json:"expected_rule_themes,omitempty"`
+	ExpectedSeverity             string                   `json:"expected_severity,omitempty"`
+	ExpectedUsername             string                   `json:"expected_username,omitempty"`
+	ExpectedPassword             string                   `json:"expected_password,omitempty"`
+	ExpectedPairing              string                   `json:"expected_pairing,omitempty"`
+	ExpectedOrigin               string                   `json:"expected_origin,omitempty"`
+	ExpectedPairs                int                      `json:"expected_pairs"`
+	ExpectedObservations         int                      `json:"expected_observations"`
+	ExpectedInspectable          bool                     `json:"expected_inspectable,omitempty"`
+	ExpectedArchive              bool                     `json:"expected_archive_provenance,omitempty"`
+	Status                       string                   `json:"status,omitempty"`
+	FixtureID                    string                   `json:"fixture_id,omitempty"`
+	Subset                       string                   `json:"subset,omitempty"`
+	SeedVariant                  string                   `json:"seed_variant,omitempty"`
+	ExpectedPairsDetail          []ExpectedCredentialPair `json:"expected_pairs_detail,omitempty"`
+	NegativeReason               string                   `json:"negative_reason,omitempty"`
+	ExpectedOwner                string                   `json:"expected_owner,omitempty"`
+	ExpectedFinderCategory       string                   `json:"expected_finder_category,omitempty"`
+	ExpectedProvenance           string                   `json:"expected_provenance,omitempty"`
+	ExpectedGrouping             string                   `json:"expected_grouping,omitempty"`
+	ExpectedCorrelationSemantics string                   `json:"expected_correlation_semantics,omitempty"`
+	SupportStatus                string                   `json:"support_status,omitempty"`
+	ExpectedJustification        string                   `json:"expected_justification,omitempty"`
 }
 
 type Manifest struct {
@@ -125,6 +139,7 @@ type WriteOptions struct {
 	Expanded            bool
 	Credentials         bool
 	CredentialsV2       bool
+	RequireGroundTruth  bool
 }
 
 type ShareTarget struct {

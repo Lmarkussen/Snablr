@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,70 @@ import (
 
 	"snablr/internal/scanner"
 )
+
+// StreamJSONFindings decodes the findings array incrementally. It preserves
+// LoadJSON's validation and conversion rules without retaining the array.
+func StreamJSONFindings(ctx context.Context, path string, visit func(scanner.Finding) error) error {
+	if visit == nil {
+		return fmt.Errorf("baseline visitor is nil")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(file)
+	token, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
+		return fmt.Errorf("parse %s: expected JSON object", path)
+	}
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return fmt.Errorf("parse %s: expected object key", path)
+		}
+		if key != "findings" {
+			var ignored json.RawMessage
+			if err := decoder.Decode(&ignored); err != nil {
+				return fmt.Errorf("parse %s: %w", path, err)
+			}
+			continue
+		}
+		arrayToken, err := decoder.Token()
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+		if delimiter, ok := arrayToken.(json.Delim); !ok || delimiter != '[' {
+			return fmt.Errorf("parse %s: findings must be an array", path)
+		}
+		for decoder.More() {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			var raw scanResultFinding
+			if err := decoder.Decode(&raw); err != nil {
+				return fmt.Errorf("parse %s: %w", path, err)
+			}
+			if err := visit(scannerFindingFromJSON(raw)); err != nil {
+				return err
+			}
+		}
+		if _, err := decoder.Token(); err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	return nil
+}
 
 type scanResultFile struct {
 	Summary     scanResultSummary   `json:"summary"`
@@ -87,53 +152,7 @@ func LoadJSON(path string) (Report, error) {
 		Findings: make([]scanner.Finding, 0, len(parsed.Findings)),
 	}
 	for _, finding := range parsed.Findings {
-		report.Findings = append(report.Findings, scanner.Finding{
-			Host:                finding.Host,
-			Share:               finding.Share,
-			ShareDescription:    finding.ShareDescription,
-			ShareType:           finding.ShareType,
-			FilePath:            finding.FilePath,
-			Source:              finding.Source,
-			ArchivePath:         finding.ArchivePath,
-			ArchiveMemberPath:   finding.ArchiveMemberPath,
-			ArchiveLocalInspect: finding.ArchiveLocalInspect,
-			DatabaseFilePath:    finding.DatabaseFilePath,
-			DatabaseTable:       finding.DatabaseTable,
-			DatabaseColumn:      finding.DatabaseColumn,
-			DatabaseRowContext:  finding.DatabaseRowContext,
-			DFSNamespacePath:    finding.DFSNamespacePath,
-			DFSLinkPath:         finding.DFSLinkPath,
-			RuleID:              finding.RuleID,
-			RuleName:            finding.RuleName,
-			Severity:            finding.Severity,
-			Confidence:          finding.Confidence,
-			RuleConfidence:      finding.RuleConfidence,
-			ConfidenceScore:     finding.ConfidenceScore,
-			ConfidenceReasons:   append([]string{}, finding.ConfidenceReasons...),
-			Category:            finding.Category,
-			TriageClass:         finding.TriageClass,
-			Actionable:          finding.Actionable,
-			Correlated:          finding.Correlated,
-			ConfidenceBreakdown: finding.ConfidenceBreakdown,
-			SignalType:          finding.SignalType,
-			MatchedText:         finding.MatchedText,
-			MatchedTextRedacted: finding.MatchedTextRedacted,
-			Context:             finding.Context,
-			ContextRedacted:     finding.ContextRedacted,
-			PotentialAccount:    finding.PotentialAccount,
-			LineNumber:          finding.LineNumber,
-			MatchedRuleIDs:      append([]string{}, finding.MatchedRuleIDs...),
-			MatchedSignalTypes:  append([]string{}, finding.MatchedSignalTypes...),
-			SupportingSignals:   append([]scanner.SupportingSignal{}, finding.SupportingSignals...),
-			FromSYSVOL:          finding.FromSYSVOL,
-			FromNETLOGON:        finding.FromNETLOGON,
-			Tags:                append([]string{}, finding.Tags...),
-			Match:               finding.Match,
-			Snippet:             finding.MatchSnippet,
-			MatchReason:         finding.MatchReason,
-			RuleExplanation:     finding.RuleExplanation,
-			RuleRemediation:     finding.RuleRemediation,
-		})
+		report.Findings = append(report.Findings, scannerFindingFromJSON(finding))
 	}
 	if parsed.Performance != nil {
 		perf := *parsed.Performance
@@ -144,6 +163,25 @@ func LoadJSON(path string) (Report, error) {
 	}
 
 	return report, nil
+}
+
+func scannerFindingFromJSON(finding scanResultFinding) scanner.Finding {
+	return scanner.Finding{
+		Host: finding.Host, Share: finding.Share, ShareDescription: finding.ShareDescription, ShareType: finding.ShareType,
+		FilePath: finding.FilePath, Source: finding.Source, ArchivePath: finding.ArchivePath, ArchiveMemberPath: finding.ArchiveMemberPath,
+		ArchiveLocalInspect: finding.ArchiveLocalInspect, DatabaseFilePath: finding.DatabaseFilePath, DatabaseTable: finding.DatabaseTable,
+		DatabaseColumn: finding.DatabaseColumn, DatabaseRowContext: finding.DatabaseRowContext, DFSNamespacePath: finding.DFSNamespacePath,
+		DFSLinkPath: finding.DFSLinkPath, RuleID: finding.RuleID, RuleName: finding.RuleName, Severity: finding.Severity,
+		Confidence: finding.Confidence, RuleConfidence: finding.RuleConfidence, ConfidenceScore: finding.ConfidenceScore,
+		ConfidenceReasons: append([]string{}, finding.ConfidenceReasons...), Category: finding.Category, TriageClass: finding.TriageClass,
+		Actionable: finding.Actionable, Correlated: finding.Correlated, ConfidenceBreakdown: finding.ConfidenceBreakdown,
+		SignalType: finding.SignalType, MatchedText: finding.MatchedText, MatchedTextRedacted: finding.MatchedTextRedacted,
+		Context: finding.Context, ContextRedacted: finding.ContextRedacted, PotentialAccount: finding.PotentialAccount, LineNumber: finding.LineNumber,
+		MatchedRuleIDs: append([]string{}, finding.MatchedRuleIDs...), MatchedSignalTypes: append([]string{}, finding.MatchedSignalTypes...),
+		SupportingSignals: append([]scanner.SupportingSignal{}, finding.SupportingSignals...), FromSYSVOL: finding.FromSYSVOL, FromNETLOGON: finding.FromNETLOGON,
+		Tags: append([]string{}, finding.Tags...), Match: finding.Match, Snippet: finding.MatchSnippet, MatchReason: finding.MatchReason,
+		RuleExplanation: finding.RuleExplanation, RuleRemediation: finding.RuleRemediation,
+	}
 }
 
 func derivePerformanceSummary(summary scanResultSummary, findings []scanner.Finding) *PerformanceSummary {

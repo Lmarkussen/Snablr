@@ -26,6 +26,7 @@ type HTMLWriter struct {
 	findings        []scanner.Finding
 	candidates      []credentialanalysis.Candidate
 	baseline        []scanner.Finding
+	baselinePath    string
 	mu              sync.Mutex
 	metrics         metrics.Snapshot
 	summary         *summaryCollector
@@ -46,13 +47,46 @@ type htmlCategoryGroup struct {
 }
 
 type htmlFinding struct {
-	Finding        scanner.Finding
-	DiffStatus     string
-	ChangedFields  []string
-	SearchText     string
-	ScopeText      string
-	Duplicates     []scanner.Finding
-	TotalLocations int
+	Finding         scanner.Finding
+	DiffStatus      string
+	ChangedFields   []string
+	SearchText      string
+	ScopeText       string
+	Duplicates      []scanner.Finding
+	DuplicateStream any
+	DuplicateCount  int
+	TotalLocations  int
+}
+
+type htmlReportData struct {
+	Version                     string
+	Profile                     string
+	Summary                     summarySnapshot
+	Metrics                     metrics.Snapshot
+	SeveritySummaries           []severitySummary
+	CategorySummaries           []categorySummary
+	SupportingCategorySummaries []categorySummary
+	BackupArtifactInventory     *backupArtifactInventory
+	AccessPaths                 []accessPathSummary
+	TopAccessPaths              []accessPathSummary
+	RenderAccessPaths           bool
+	Suppression                 *suppressionSummary
+	HostSummaries               []hostSummary
+	DiffSummary                 *diff.Summary
+	ChangedFindings             any
+	RemovedFindings             any
+	ChangedFindingCount         int
+	RemovedFindingCount         int
+	CategoryGroups              any
+	SupportingCategoryGroups    any
+	SupportingCategoryCount     int
+	SupportingFindingCount      int
+	FilterOptions               reportFilterOptions
+	Validation                  *validationSummary
+	CredentialAnalysis          credentialanalysis.Report
+	CredentialView              credentialReportView
+	Interrupted                 bool
+	InterruptionReason          string
 }
 
 type hostSummary struct {
@@ -113,6 +147,13 @@ func NewHTMLWriter(w io.Writer, closer io.Closer) (*HTMLWriter, error) {
 		"slug":                   slug,
 		"accessPathLabel":        accessPathSummaryLabel,
 		"findingAnchor":          findingAnchor,
+		"duplicateCount":         func(f htmlFinding) int { return f.DuplicateCount },
+		"duplicateLocations": func(f htmlFinding) any {
+			if f.DuplicateStream != nil {
+				return f.DuplicateStream
+			}
+			return f.Duplicates
+		},
 	}).ParseFS(reportTemplates, "templates/report.html.tmpl")
 	if err != nil {
 		return nil, err
@@ -147,7 +188,9 @@ func (h *HTMLWriter) WriteFinding(f scanner.Finding) error {
 	defer h.mu.Unlock()
 
 	h.summary.RecordFinding(f)
-	h.findings = append(h.findings, f)
+	if attachedSQLiteStore(h) == nil {
+		h.findings = append(h.findings, f)
+	}
 	return nil
 }
 
@@ -155,7 +198,9 @@ func (h *HTMLWriter) RecordCredentialCandidate(candidate credentialanalysis.Cand
 	shadowCredential(h, candidate)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.candidates = append(h.candidates, candidate)
+	if attachedSQLiteStore(h) == nil {
+		h.candidates = append(h.candidates, candidate)
+	}
 	return nil
 }
 
@@ -196,6 +241,15 @@ func (h *HTMLWriter) SetBaselineFindings(findings []scanner.Finding) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.baseline = cloneFindings(findings)
+	h.baselinePath = ""
+}
+
+func (h *HTMLWriter) SetBaselinePath(path string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.baselinePath = strings.TrimSpace(path)
+	h.baseline = nil
+	return nil
 }
 
 func (h *HTMLWriter) SetValidationManifest(path string) {
@@ -219,6 +273,14 @@ func (h *HTMLWriter) SetScanProfile(profile string) {
 func (h *HTMLWriter) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if shadow := attachedSQLiteStore(h); shadow != nil {
+		return h.closeAttachedSQLite(shadow)
+	}
+	findings, err := persistedFindingsForReport(h, h.findings)
+	if err != nil {
+		return fmt.Errorf("load persisted findings for HTML report: %w", err)
+	}
+	h.findings = findings
 	if !h.writeOnClose && !h.interrupted {
 		if h.closer != nil {
 			return h.closer.Close()
@@ -229,7 +291,10 @@ func (h *HTMLWriter) Close() error {
 		atomic.commit = true
 	}
 
-	augmented := augmentFindingsForReporting(h.findings)
+	augmented := dedupeReportFindings(h.findings)
+	if attachedSQLiteStore(h) == nil {
+		augmented = augmentFindingsForReporting(h.findings)
+	}
 	groupedFindings := groupDuplicateReportFindings(augmented)
 	groupedCanonical := groupedFindingsToCanonical(groupedFindings)
 	primaryFindings, supportingFindings := splitGroupedFindingsByActionable(groupedFindings)
@@ -258,32 +323,7 @@ func (h *HTMLWriter) Close() error {
 	}
 	credentialAnalysis := analyzeCandidates(h.findings, h.candidates)
 
-	data := struct {
-		Version                     string
-		Profile                     string
-		Summary                     summarySnapshot
-		Metrics                     metrics.Snapshot
-		SeveritySummaries           []severitySummary
-		CategorySummaries           []categorySummary
-		SupportingCategorySummaries []categorySummary
-		BackupArtifactInventory     *backupArtifactInventory
-		AccessPaths                 []accessPathSummary
-		TopAccessPaths              []accessPathSummary
-		Suppression                 *suppressionSummary
-		HostSummaries               []hostSummary
-		DiffSummary                 *diff.Summary
-		ChangedFindings             []diff.ChangedFinding
-		RemovedFindings             []scanner.Finding
-		CategoryGroups              []htmlCategoryGroup
-		SupportingCategoryGroups    []htmlCategoryGroup
-		SupportingFindingCount      int
-		FilterOptions               reportFilterOptions
-		Validation                  *validationSummary
-		CredentialAnalysis          credentialanalysis.Report
-		CredentialView              credentialReportView
-		Interrupted                 bool
-		InterruptionReason          string
-	}{
+	data := htmlReportData{
 		Version:                     version.Short(),
 		Profile:                     h.profile,
 		Summary:                     summary,
@@ -298,8 +338,11 @@ func (h *HTMLWriter) Close() error {
 		DiffSummary:                 diffSummary(diffResult),
 		ChangedFindings:             changedFindings(diffResult),
 		RemovedFindings:             removedFindings(diffResult),
+		ChangedFindingCount:         len(changedFindings(diffResult)),
+		RemovedFindingCount:         len(removedFindings(diffResult)),
 		CategoryGroups:              categoryGroups,
 		SupportingCategoryGroups:    supportingCategoryGroups,
+		SupportingCategoryCount:     len(supportingCategoryGroups),
 		SupportingFindingCount:      len(supportingFindings),
 		FilterOptions:               filterOptions,
 		Validation:                  validation,
@@ -310,7 +353,7 @@ func (h *HTMLWriter) Close() error {
 	}
 	data.TopAccessPaths = topAccessPaths(data.AccessPaths, 8)
 
-	if err := h.template.ExecuteTemplate(h.w, "report.html.tmpl", data); err != nil {
+	if err := h.template.ExecuteTemplate(h.w, "report.document-shell", data); err != nil {
 		if h.closer != nil {
 			_ = h.closer.Close()
 		}

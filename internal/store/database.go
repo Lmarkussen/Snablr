@@ -149,10 +149,14 @@ func validateExistingSchema(db *sql.DB) error {
 		}
 		return fmt.Errorf("read schema metadata: %w", err)
 	}
-	if version != "1" && version != "2" {
+	if version != "1" && version != "2" && version != "3" {
 		return fmt.Errorf("unsupported schema version %s", version)
 	}
-	for _, table := range []string{"metadata", "scans", "targets", "shares", "files", "access_observations", "members", "findings", "credentials", "correlations"} {
+	requiredTables := []string{"metadata", "scans", "targets", "shares", "files", "access_observations", "members", "findings", "credentials", "correlations"}
+	if version == "3" {
+		requiredTables = append(requiredTables, "derived_findings", "correlation_state", "derived_state")
+	}
+	for _, table := range requiredTables {
 		var count int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil {
 			return fmt.Errorf("inspect table %s: %w", table, err)

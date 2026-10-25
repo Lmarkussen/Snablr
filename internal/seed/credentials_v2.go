@@ -48,21 +48,27 @@ func generateCredentialCorpusV2(opts GenerateOptions) ([]SeedFile, error) {
 			username, password = "multi-password-user", fmt.Sprintf("V2-Password-%03d!", index)
 		}
 		file := SeedFile{
-			Category:            "credentials-v2",
-			Format:              variant.format,
-			RelativePath:        joinSeedPath(prefix, subset, variant.family),
-			Filename:            fmt.Sprintf("%s-%03d.%s", variant.name, index+1, variant.extension),
-			IntendedAs:          "credential-v2-blind-acceptance",
-			ExpectedClass:       "credential",
-			ExpectedTriageClass: "review",
-			ExpectedConfidence:  "medium",
-			ExpectedSeverity:    "medium",
-			ExpectedInspectable: true,
-			FixtureID:           fixtureID,
-			Subset:              subset,
-			SeedVariant:         variant.name,
+			Category:                     "credentials-v2",
+			Format:                       variant.format,
+			RelativePath:                 joinSeedPath(prefix, subset, variant.family),
+			Filename:                     fmt.Sprintf("%s-%03d.%s", variant.name, index+1, variant.extension),
+			IntendedAs:                   "credential-v2-blind-acceptance",
+			ExpectedClass:                "credential",
+			ExpectedTriageClass:          "review",
+			ExpectedConfidence:           "medium",
+			ExpectedSeverity:             "medium",
+			ExpectedInspectable:          true,
+			ExpectedOwner:                "credentials-v2",
+			ExpectedFinderCategory:       "credentials",
+			ExpectedProvenance:           "source file",
+			ExpectedGrouping:             "independent observation",
+			ExpectedCorrelationSemantics: "correlation only when explicitly seeded across source files",
+			SupportStatus:                "supported",
+			ExpectedJustification:        "deterministic credential grammar selected independently of scanner output",
+			FixtureID:                    fixtureID,
+			Subset:                       subset,
+			SeedVariant:                  variant.name,
 		}
-
 		switch {
 		case kind < 7:
 			file.ExpectedTriageClass = "actionable"
@@ -125,6 +131,44 @@ func generateCredentialCorpusV2(opts GenerateOptions) ([]SeedFile, error) {
 			if variant.archive {
 				file.Content = v2Archive([]zipEntry{{"nested/ambiguous.txt", string(file.Content)}, {"nested/readme.txt", "Relationship intentionally requires review.\n"}})
 			}
+		}
+		if variant.archive {
+			member := "nested/negative.txt"
+			switch {
+			case file.ExpectedClass == "credential":
+				member = "nested/credentials.ini"
+			case file.ExpectedClass == "review":
+				member = "nested/ambiguous.txt"
+			case variant.name == "docx-member":
+				member = "nested/negative.txt"
+			case variant.name == "xlsx-member":
+				member = "nested/negative.txt"
+			}
+			if file.ExpectedClass == "credential" && variant.name == "docx-member" {
+				member = "word/document.xml"
+			}
+			if file.ExpectedClass == "credential" && variant.name == "xlsx-member" {
+				member = "xl/sharedStrings.xml"
+			}
+			file.ExpectedArchive = true
+			file.ExpectedPath = joinSeedPath(file.RelativePath, file.Filename) + "!" + member
+		}
+		if variant.name == "csv-table" || variant.name == "html-form" {
+			file.ExpectedClass = "unsupported"
+			file.ExpectedTriageClass = "supporting"
+			file.ExpectedConfidence = "none"
+			file.ExpectedSeverity = "informational"
+			file.ExpectedPairs = 0
+			file.ExpectedObservations = 0
+			file.ExpectedUsername = ""
+			file.ExpectedPassword = ""
+			file.ExpectedPairing = ""
+			file.ExpectedOrigin = ""
+			file.ExpectedPairsDetail = nil
+			file.ExpectedInspectable = false
+			file.SupportStatus = "unsupported"
+			file.ExpectedJustification = "credential-bearing CSV/HTML structures are outside the supported parser contract"
+			file.ExpectedPath = joinSeedPath(file.RelativePath, file.Filename)
 		}
 		files = append(files, file)
 	}

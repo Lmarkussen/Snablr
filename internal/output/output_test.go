@@ -2,6 +2,7 @@ package output
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
@@ -11,12 +12,14 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"snablr/internal/config"
 	"snablr/internal/credentialanalysis"
 	"snablr/internal/diff"
 	"snablr/internal/scanner"
 	"snablr/internal/seed"
+	"snablr/internal/store"
 )
 
 func sampleFinding() scanner.Finding {
@@ -82,6 +85,254 @@ func sampleFinding() scanner.Finding {
 			{SignalType: "planner_priority", Weight: 12, Reason: "planner marked this file path as high-priority review material"},
 		},
 		Tags: []string{"credentials", "source:dfs", "ad-share:sysvol"},
+	}
+}
+
+func TestAttachedReportSinkRehydratesFromAuthoritativeSQLite(t *testing.T) {
+	state, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Options{ScanID: "report-rehydrate", BatchSize: 2, QueueSize: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	var output bytes.Buffer
+	writer := NewConsoleWriter(&output, nil)
+	AttachSQLiteStore(writer, state)
+	finding := sampleFinding()
+	if err := writer.WriteFinding(finding); err != nil {
+		t.Fatal(err)
+	}
+	if len(writer.findings) != 0 {
+		t.Fatalf("attached writer retained live finding payloads: %d", len(writer.findings))
+	}
+	findings, err := persistedFindingsForReport(writer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].RuleID != finding.RuleID || findings[0].Match != finding.Match {
+		t.Fatalf("persisted finding was not rehydrated: %#v", findings)
+	}
+}
+
+func TestAttachedJSONWriterStreamsCompletedDerivedFindings(t *testing.T) {
+	state, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Options{ScanID: "json-stream", BatchSize: 1, QueueSize: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	original := sampleFinding()
+	original.MatchedText = "unicode-✓\nline-two"
+	derived := original
+	derived.RuleID = "correlation.synthetic"
+	derived.FilePath = "derived.txt"
+	if err := state.RecordFinding(original); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ResetCorrelationState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.RecordDerivedFinding("json-stream-derived", derived); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.CompleteCorrelationState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	writer := NewJSONWriter(&output, nil, false)
+	AttachSQLiteStore(writer, state)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		Findings []jsonFinding `json:"findings"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Findings) != 2 {
+		t.Fatalf("streamed finding count=%d, want 2", len(report.Findings))
+	}
+	if report.Findings[0].MatchedText != original.MatchedText || report.Findings[1].MatchedText != derived.MatchedText {
+		t.Fatalf("streamed evidence mismatch: %#v", report.Findings)
+	}
+}
+
+func TestAttachedJSONWriterStreamsBaselineDiff(t *testing.T) {
+	state, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Options{ScanID: "json-baseline-stream", BatchSize: 1, QueueSize: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	current := sampleFinding()
+	if err := state.RecordFinding(current); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	writer := NewJSONWriter(&output, nil, false)
+	baseline := current
+	baseline.Severity = "medium"
+	writer.SetBaselineFindings([]scanner.Finding{baseline})
+	AttachSQLiteStore(writer, state)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		DiffSummary *jsonDiffSummary `json:"diff_summary"`
+		Findings    []jsonFinding    `json:"findings"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.DiffSummary == nil || report.DiffSummary.Changed != 1 || report.DiffSummary.Removed != 0 {
+		t.Fatalf("unexpected streamed baseline diff: %#v", report.DiffSummary)
+	}
+	if len(report.Findings) != 1 || report.Findings[0].DiffStatus != string(diff.StatusChanged) {
+		t.Fatalf("unexpected streamed finding status: %#v", report.Findings)
+	}
+}
+
+func TestAttachedMarkdownWriterStreamsCompletedDerivedFindings(t *testing.T) {
+	state, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Options{ScanID: "markdown-stream", BatchSize: 1, QueueSize: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	original := sampleFinding()
+	original.MatchedText = "markdown-✓\nline-two"
+	derived := original
+	derived.RuleID = "correlation.synthetic"
+	derived.FilePath = "derived.txt"
+	if err := state.RecordFinding(original); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ResetCorrelationState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.RecordDerivedFinding("markdown-stream-derived", derived); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.CompleteCorrelationState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, nil)
+	AttachSQLiteStore(writer, state)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "Policies/Groups.xml") || !strings.Contains(text, "derived.txt") || !strings.Contains(text, "user = alice password = ReplaceMe123!") {
+		t.Fatalf("streamed Markdown omitted findings/evidence: %s", text)
+	}
+}
+
+func TestStreamingCorrelationsPersistEveryFamilyAndReplayIdempotently(t *testing.T) {
+	state, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Options{ScanID: "stream-correlations", BatchSize: 4, QueueSize: 32})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	fixtures := []scanner.Finding{
+		sampleNTDSFinding(), sampleSystemHiveFinding(), samplePrivateKeyFinding(), sampleClientAuthFinding(), samplePFXFinding(), sampleCertificatePasswordFinding(),
+		sampleAWSCredentialsFinding(), sampleAWSConfigFinding(), sampleFirefoxLoginsFinding(), sampleFirefoxKey4Finding(), sampleWindowsProtectFinding(), sampleWindowsCredentialsFinding(),
+		sampleBackupPathFinding(), sampleBackupNTDSFinding(), sampleBackupSystemFinding(), sampleSQLiteFinding(), sampleSQLiteSupportFinding(),
+	}
+	for _, finding := range fixtures {
+		if err := state.RecordFinding(finding); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := persistStreamingCorrelations(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	first := map[string]int{}
+	if err := state.IterateDerivedFindings(context.Background(), 2, func(batch []scanner.Finding) error {
+		for _, finding := range batch {
+			first[finding.RuleID]++
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistStreamingCorrelations(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]int{}
+	if err := state.IterateDerivedFindings(context.Background(), 2, func(batch []scanner.Finding) error {
+		for _, finding := range batch {
+			seen[finding.RuleID]++
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, ruleID := range []string{
+		adCorrelationRuleID, awsProfileCorrelationRuleID, privateKeyCorrelationRuleID, certificateBundleCorrelationRuleID,
+		browserCredCorrelationRuleID, windowsCredCorrelationRuleID, backupCorrelationRuleID, sqliteCorrelationRuleID,
+	} {
+		if seen[ruleID] != first[ruleID] || seen[ruleID] == 0 {
+			t.Fatalf("streaming family %s was not idempotent: first=%d second=%d all=%v", ruleID, first[ruleID], seen[ruleID], seen)
+		}
+	}
+	legacy := map[string]int{}
+	for _, finding := range augmentFindingsForReporting(fixtures) {
+		if strings.HasPrefix(finding.RuleID, "correlation.") {
+			legacy[finding.RuleID]++
+		}
+	}
+	for ruleID, count := range legacy {
+		if seen[ruleID] != count {
+			t.Fatalf("streaming family %s differs from legacy: streaming=%d legacy=%d", ruleID, seen[ruleID], count)
+		}
+	}
+}
+
+func TestDiskBackedCorrelationsMatchLegacyFamilies(t *testing.T) {
+	state, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Options{ScanID: "disk-correlations", BatchSize: 4, QueueSize: 32})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	fixtures := []scanner.Finding{sampleNTDSFinding(), sampleSystemHiveFinding(), samplePrivateKeyFinding(), sampleClientAuthFinding(), samplePFXFinding(), sampleCertificatePasswordFinding(), sampleAWSCredentialsFinding(), sampleAWSConfigFinding(), sampleFirefoxLoginsFinding(), sampleFirefoxKey4Finding(), sampleWindowsProtectFinding(), sampleWindowsCredentialsFinding(), sampleBackupPathFinding(), sampleBackupNTDSFinding(), sampleBackupSystemFinding(), sampleSQLiteFinding(), sampleSQLiteSupportFinding()}
+	for _, finding := range fixtures {
+		if err := state.RecordFinding(finding); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := persistDiskBackedCorrelations(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	if err := state.IterateDerivedFindings(context.Background(), 2, func(batch []scanner.Finding) error {
+		for _, finding := range batch {
+			got[finding.RuleID]++
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int{}
+	for _, finding := range augmentFindingsForReporting(fixtures) {
+		if strings.HasPrefix(finding.RuleID, "correlation.") {
+			want[finding.RuleID]++
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("disk-backed families differ: got=%v want=%v", got, want)
 	}
 }
 
@@ -1924,6 +2175,37 @@ func TestJSONWriterIncludesValidationSummaryWhenManifestIsSet(t *testing.T) {
 	}
 }
 
+func TestAttachedJSONWriterUsesStreamingValidationVerifier(t *testing.T) {
+	state, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Options{ScanID: "json-validation-stream", BatchSize: 1, QueueSize: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	if err := state.RecordFinding(sampleFinding()); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.RecordFinding(sampleConfigOnlyFinding()); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	writer := NewJSONWriter(&output, nil, false)
+	writer.SetValidationManifest(writeValidationManifest(t))
+	AttachSQLiteStore(writer, state)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var report jsonReport
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Validation == nil || report.Validation.ExpectedItems != 4 || report.Validation.FoundItems != 2 || report.Validation.MissedItems != 2 {
+		t.Fatalf("unexpected streaming validation summary: %#v", report.Validation)
+	}
+}
+
 func TestJSONWriterIncludesValidationModeSummaryWhenEnabled(t *testing.T) {
 	t.Parallel()
 
@@ -2389,6 +2671,54 @@ func TestHTMLWriterShowsDiffSummaryAndHighlights(t *testing.T) {
 	for _, want := range []string{"Baseline Diff", "Changed Since Baseline", "badge diff-changed", "status-changed"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected html output to contain %q", want)
+		}
+	}
+}
+
+func TestHTMLTemplateDecompositionPreservesRenderingContract(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writer, err := NewHTMLWriter(&buf, nil)
+	if err != nil {
+		t.Fatalf("NewHTMLWriter returned error: %v", err)
+	}
+	for _, name := range []string{
+		"report.document-body",
+		"report.document-shell",
+		"report.summary-navigation-open",
+		"report.summary-navigation-close",
+		"report.credential-analysis-open",
+		"report.validation-open",
+		"report.diff-open",
+		"report.category-open",
+		"report.supporting-category-open",
+		"report.finding-card-open",
+		"report.supporting-finding-open",
+		"report.duplicate-location",
+		"report.footer",
+	} {
+		if writer.template.Lookup(name) == nil {
+			t.Fatalf("expected named HTML section template %q", name)
+		}
+	}
+	if err := writer.WriteFinding(sampleFinding()); err != nil {
+		t.Fatalf("WriteFinding returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{
+		"id=\"findings\"",
+		"id=\"credential-analysis\"",
+		"id=\"cat-",
+		"finding-card",
+		sampleFinding().FilePath,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected decomposed HTML output to contain %q", want)
 		}
 	}
 }
@@ -2916,6 +3246,167 @@ func TestHTMLWriterRendersSQLiteMetadata(t *testing.T) {
 	}
 }
 
+func TestHTMLWriterAttachedSQLiteUsesDiskBackedGroups(t *testing.T) {
+	t.Parallel()
+
+	state, err := store.Open(filepath.Join(t.TempDir(), "html-state.db"), store.Options{ScanID: "html-attached", BatchSize: 1, QueueSize: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	first := sampleFinding()
+	second := first
+	second.FilePath = "Policies/Backup/Groups.xml"
+	second.Host = "fs02"
+	second.Share = "Backups"
+	derived := first
+	derived.RuleID = "correlation.synthetic_html"
+	derived.FilePath = "correlation/derived.txt"
+	access := sampleAWSCredentialsFinding()
+	access.RuleID = awsProfileCorrelationRuleID
+	access.Correlated = true
+	if err := state.RecordFinding(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.RecordFinding(second); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.RecordFinding(access); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ResetCorrelationState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.RecordDerivedFinding("html-derived", derived); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.CompleteCorrelationState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	writer, err := NewHTMLWriter(&output, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	AttachSQLiteStore(writer, state)
+	if err := writer.WriteFinding(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteFinding(access); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, want := range []string{"Policies/Groups.xml", uncPath(second), "correlation/derived.txt", "Also found in 1 additional location", "Host Summary", "fileserver01", "Top Access Paths", "AWS credential profile"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("attached SQLite HTML omitted %q", want)
+		}
+	}
+}
+
+func TestHTMLWriterAttachedSQLiteCredentialCategoriesDoNotDeadlock(t *testing.T) {
+	t.Parallel()
+
+	state, err := store.Open(filepath.Join(t.TempDir(), "html-credential-order.db"), store.Options{ScanID: "html-credential-order", BatchSize: 1, QueueSize: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	for _, candidate := range []credentialanalysis.Candidate{
+		{CredentialType: "password", Identity: "review-user", Value: "review-secret", Path: "review.ini", Verification: credentialanalysis.Review},
+		{CredentialType: "password", Identity: "confirmed-user", Value: "confirmed-secret", Path: "confirmed.ini", Verification: credentialanalysis.Confirmed},
+	} {
+		if err := state.RecordCredential(candidate); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	writer, err := NewHTMLWriter(&output, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	AttachSQLiteStore(writer, state)
+	done := make(chan error, 1)
+	go func() { done <- writer.Close() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Close returned error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close deadlocked while rendering credential categories")
+	}
+	for _, want := range []string{"review-user", "confirmed-user"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("HTML output missing %q", want)
+		}
+	}
+}
+
+func TestHTMLWriterAttachedSQLiteRendersBaselineDiffFromDisk(t *testing.T) {
+	t.Parallel()
+	state, err := store.Open(filepath.Join(t.TempDir(), "html-diff-state.db"), store.Options{ScanID: "html-diff", BatchSize: 1, QueueSize: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	unchanged := sampleFinding()
+	changed := unchanged
+	changed.FilePath = "changed.txt"
+	changed.Severity = "high"
+	baselineChanged := changed
+	baselineChanged.Severity = "medium"
+	removed := unchanged
+	removed.FilePath = "removed.txt"
+	removed.Match = "baseline-only-secret"
+	newFinding := unchanged
+	newFinding.FilePath = "new.txt"
+	newFinding.Match = "new-secret"
+	for _, finding := range []scanner.Finding{unchanged, changed, newFinding} {
+		if err := state.RecordFinding(finding); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	writer, err := NewHTMLWriter(&output, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer.SetBaselineFindings([]scanner.Finding{
+		unchanged,
+		baselineChanged,
+		removed,
+	})
+	AttachSQLiteStore(writer, state)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, want := range []string{
+		"New Findings", "Changed Findings", "Removed Findings", "Unchanged Findings",
+		"Changed Since Baseline", "Removed Since Baseline", "baseline-only-secret",
+		"changed.txt", "new.txt", "removed.txt", "severity",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("attached SQLite diff omitted %q", want)
+		}
+	}
+}
+
 func TestCSVWriterEmitsHeaderAndFindingRow(t *testing.T) {
 	t.Parallel()
 
@@ -2982,5 +3473,29 @@ func TestCreateOutputFileTightensExistingFilePermissions(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("output permissions = %o, want 600", got)
+	}
+}
+
+func TestConsoleWriterCanonicalizesDuplicateFindingOwnership(t *testing.T) {
+	var buf bytes.Buffer
+	writer := NewConsoleWriter(&buf, nil)
+	first := sampleFinding()
+	second := first
+	second.ConfidenceScore = first.ConfidenceScore + 10
+	second.Context = strings.Repeat("stronger context ", 4)
+	if err := writer.WriteFinding(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteFinding(second); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(writer.findings); got != 1 {
+		t.Fatalf("canonical finding owners=%d, want 1", got)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), second.Context) {
+		t.Fatal("report did not retain the better duplicate evidence")
 	}
 }

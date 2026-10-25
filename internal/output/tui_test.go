@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	charmansi "github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
 	"snablr/internal/diff"
@@ -76,6 +77,130 @@ func TestTUIStructuredCredentialFieldsUseSpecificColors(t *testing.T) {
 	}
 	if plain := renderTUIStructuredEvidenceLine("  password: s3cretpassword", tuiStylesForColor(false)); strings.Contains(plain, "\x1b[") || plain != "  password: s3cretpassword" {
 		t.Fatalf("disabled color changed structured evidence: %q", plain)
+	}
+}
+
+func TestTUIStructuredCredentialFieldsSupportNorwegianAndSameLinePairs(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(previous)
+
+	styles := tuiStylesForColor(true)
+	for _, line := range []string{
+		"Brukernavn : example",
+		"BRUKERNAVN: æøå",
+	} {
+		rendered := renderTUIStructuredEvidenceLine(line, styles)
+		if !strings.Contains(rendered, "38;2;96;165;250m") {
+			t.Fatalf("Norwegian credential fields were not styled: %q", rendered)
+		}
+	}
+	password := renderTUIStructuredEvidenceLine("PASSORD: synthetic-secret", styles)
+	if !strings.Contains(password, "38;2;96;165;250m") || !strings.Contains(password, "38;2;249;115;22m") {
+		t.Fatalf("Norwegian password field was not styled: %q", password)
+	}
+
+	sameLine := renderTUIStructuredEvidenceLine("Brukernavn: æøå Passord: synthetic-secret", styles)
+	if strings.Contains(sameLine, "38;2;249;115;22m example") {
+		t.Fatalf("username value was styled as secret: %q", sameLine)
+	}
+	if !strings.Contains(sameLine, "38;2;249;115;22m synthetic-secret") {
+		t.Fatalf("same-line secret value was not orange: %q", sameLine)
+	}
+	if !strings.Contains(sameLine, "æøå") {
+		t.Fatalf("Unicode evidence was lost: %q", sameLine)
+	}
+}
+
+func TestTUISelectedFindingRowFillsWidth(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(previous)
+
+	rendered := renderTUIFindingRowWithStyles(tuiFindingRow{Severity: "MEDIUM", Score: 45, Triage: "actionable", Category: "credentials"}, 72, true, tuiStylesForColor(true))
+	if lipgloss.Width(rendered) != 72 {
+		t.Fatalf("selected row width mismatch: got %d", lipgloss.Width(rendered))
+	}
+	if !strings.Contains(rendered, "48;2;29;78;216m") {
+		t.Fatalf("selected row did not render its blue background: %q", rendered)
+	}
+}
+
+func TestTUIInterruptedScanDoesNotRenderDone(t *testing.T) {
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"}
+	writer.SetScanInterrupted("operator interruption")
+	model := newTUIModel(writer)
+	model.width = 120
+	model.height = 24
+	header := charmansi.Strip(model.renderHeader())
+	if strings.Contains(header, "[DONE]") || !strings.Contains(header, "[INTERRUPTED: OPERATOR INTERRUPTION]") {
+		t.Fatalf("interrupted header state was inaccurate: %q", header)
+	}
+}
+
+func TestTUIHeaderStylesValuesAndNavigationHint(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(previous)
+
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"}
+	model := newTUIModel(writer)
+	model.width = 160
+	model.height = 24
+	model.live.Profile = "default"
+	model.live.TargetsProcessed = 0
+	model.live.TargetsTotal = 1
+	model.live.CurrentHost = "synthetic-host"
+	model.live.Summary.SharesScanned = 2
+	model.live.Summary.FilesScanned = 3
+	model.live.Summary.MatchesFound = 4
+	model.live.Summary.ReadErrors = 0
+	model.live.ShareQueue = ShareQueueSnapshot{CurrentHost: "synthetic-host", CurrentShare: "Share", CurrentDirectory: "folder", DeferredCount: 5}
+	header := charmansi.Strip(model.renderHeader())
+	for _, text := range []string{"RUNNING", "Profile:", "Targets: 0/1", "Read errors: 0", "Current share:", "Current folder:", "Navigate: Use arrow keys to navigate."} {
+		if !strings.Contains(header, text) {
+			t.Fatalf("header missing %q: %q", text, header)
+		}
+	}
+	if strings.Contains(header, "Use up/down or j/k") || strings.Contains(header, "[DONE]") {
+		t.Fatalf("header retained old navigation or false completion: %q", header)
+	}
+	if strings.Contains(model.renderFooter(), "38;2;143;174;204m") {
+		t.Fatalf("footer retained the old blue-gray style: %q", model.renderFooter())
+	}
+}
+
+func TestTUIHeaderSkippedSharesWrapAndFocusMarkersUseOrange(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(previous)
+
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"}
+	model := newTUIModel(writer)
+	model.width = 80
+	model.height = 24
+	model.live.CurrentHost = "synthetic-host"
+	model.live.ShareQueue = ShareQueueSnapshot{SkippedShares: []string{"C$", "ADMIN$", "SomeShare$", "A-very-long-share-name"}}
+	header := model.renderHeader()
+	for _, line := range strings.Split(header, "\n") {
+		if lipgloss.Width(line) > model.width {
+			t.Fatalf("header line exceeded width: %d > %d: %q", lipgloss.Width(line), model.width, line)
+		}
+	}
+	plainHeader := charmansi.Strip(header)
+	for _, share := range []string{"Skipped:", "C$", "ADMIN$", "SomeShare$", "A-very-long-share-name"} {
+		if !strings.Contains(plainHeader, share) {
+			t.Fatalf("skipped share list missing %q: %q", share, plainHeader)
+		}
+	}
+	if !strings.Contains(header, "38;2;251;146;60m") {
+		t.Fatalf("skipped share/deferred value did not use orange: %q", header)
+	}
+	for _, title := range []string{"Findings  [FOCUS]", "Evidence  [FOCUS]"} {
+		rendered := model.renderPaneTitle(title, 32)
+		if !strings.Contains(rendered, "38;2;251;146;60m") {
+			t.Fatalf("focus marker was not orange for %q: %q", title, rendered)
+		}
 	}
 }
 
@@ -360,15 +485,55 @@ func TestTUISyncLiveStateKeepsBoundedTail(t *testing.T) {
 		writer.findings = append(writer.findings, finding)
 	}
 
-	state := writer.liveState()
-	if len(state.Findings) != tuiMaxVisibleRows {
-		t.Fatalf("unexpected live finding count: got %d want %d", len(state.Findings), tuiMaxVisibleRows)
+	liveState := writer.liveState()
+	if len(liveState.Findings) != tuiMaxVisibleRows {
+		t.Fatalf("unexpected live finding count: got %d want %d", len(liveState.Findings), tuiMaxVisibleRows)
 	}
 
 	model := newTUIModel(writer)
-	model.syncLiveState(state)
+	model.syncLiveState(liveState)
 	if len(model.findings) != tuiMaxVisibleRows {
 		t.Fatalf("model did not keep bounded findings tail: got %d want %d", len(model.findings), tuiMaxVisibleRows)
+	}
+}
+
+func TestTUIWriteFindingWithSQLiteShadowFeedsLiveModelAfterSupportingTraffic(t *testing.T) {
+	state, err := store.Open(filepath.Join(t.TempDir(), "live-events.db"), store.Options{ScanID: "live-events", BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running", searchStore: state}
+	AttachSQLiteStore(writer, state)
+	for i := 0; i < tuiMaxVisibleRows+25; i++ {
+		supporting := sampleConfigOnlyFinding()
+		supporting.FilePath = fmt.Sprintf("supporting-%04d.txt", i)
+		if err := writer.WriteFinding(supporting); err != nil {
+			t.Fatal(err)
+		}
+	}
+	primary := sampleFinding()
+	primary.FilePath = "primary-after-supporting.txt"
+	if err := writer.WriteFinding(primary); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	liveState := writer.liveState()
+	if len(liveState.Findings) != 1 || liveState.Findings[0].FilePath != primary.FilePath {
+		t.Fatalf("SQLite-backed live state lost primary finding: got %d %#v", len(liveState.Findings), liveState.Findings)
+	}
+	model := newTUIModel(writer)
+	updated, _ := model.Update(tuiTickMsg{})
+	model = updated.(tuiModel)
+	if len(model.findings) != 1 || model.findings[0].FilePath != primary.FilePath {
+		t.Fatalf("event refresh did not deliver primary finding: got %d %#v", len(model.findings), model.findings)
+	}
+	model.windowLoaded, model.width, model.height = true, 120, 24
+	model.layout()
+	if strings.Contains(model.renderListPane(model.width/2, 10), "No primary findings yet") {
+		t.Fatal("live model rendered no primary findings after SQLite-backed delivery")
 	}
 }
 
@@ -597,12 +762,12 @@ func TestTUILiveStateFiltersSupportingFindings(t *testing.T) {
 		},
 	}
 
-	state := writer.liveState()
-	if len(state.Findings) != 1 {
-		t.Fatalf("expected only primary live findings, got %#v", state.Findings)
+	liveState := writer.liveState()
+	if len(liveState.Findings) != 1 {
+		t.Fatalf("expected only primary live findings, got %#v", liveState.Findings)
 	}
-	if state.Findings[0].RuleID != sampleFinding().RuleID {
-		t.Fatalf("expected actionable finding to remain visible, got %#v", state.Findings)
+	if liveState.Findings[0].RuleID != sampleFinding().RuleID {
+		t.Fatalf("expected actionable finding to remain visible, got %#v", liveState.Findings)
 	}
 }
 
@@ -1321,11 +1486,14 @@ func TestTUIMainHeaderAndFooterKeepOnlyUsefulLiveControls(t *testing.T) {
 	}
 
 	header := model.renderHeader()
-	if strings.Contains(header, "Primary:") || strings.Contains(header, "Skipped:") {
-		t.Fatalf("removed counters still rendered: %q", header)
+	if strings.Contains(header, "Primary:") {
+		t.Fatalf("removed counter still rendered: %q", header)
 	}
-	if !strings.Contains(header, "Current share:") || !strings.Contains(header, "Deferred: 1") {
-		t.Fatalf("current share/deferred status missing: %q", header)
+	if !strings.Contains(header, "Host: -  Elapsed: 0s  Deferred: 1  Skipped: None") {
+		t.Fatalf("host header fields missing or out of order: %q", header)
+	}
+	if !strings.Contains(header, "Current share:") || strings.Contains(header, `Current share: \\synthetic-host\SyntheticShare  Deferred:`) {
+		t.Fatalf("current share/deferred placement incorrect: %q", header)
 	}
 	if !strings.Contains(header, `Current folder: \\synthetic-host\SyntheticShare\SkipFolder-Test/1/2/3`) {
 		t.Fatalf("current folder missing: %q", header)

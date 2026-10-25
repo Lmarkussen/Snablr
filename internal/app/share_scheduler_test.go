@@ -180,6 +180,28 @@ func TestShareSchedulerSkipShareIsPersistentQueueState(t *testing.T) {
 	}
 }
 
+func TestShareSchedulerSkippedSharesDeduplicateAndPersist(t *testing.T) {
+	scheduler := newShareScheduler(syntheticSharePlans()[:1])
+	scheduler.recordSkippedShare("ADMIN$")
+	scheduler.recordSkippedShare("admin$")
+	scheduler.recordSkippedShare("SomeShare$")
+	_, _ = scheduler.next()
+	scheduler.setSkipHandlers(func(planner.PlannedTarget) error { return nil }, nil)
+	if got := scheduler.requestSkipShare(); got != `Skipped share \\host-a\A` {
+		t.Fatalf("skip message = %q", got)
+	}
+	got := scheduler.snapshot().SkippedShares
+	want := []string{"ADMIN$", "SomeShare$", "A"}
+	if len(got) != len(want) {
+		t.Fatalf("skipped shares = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("skipped shares = %#v, want %#v", got, want)
+		}
+	}
+}
+
 func TestShareSchedulerSkipFolderUsesCurrentTraversalDirectory(t *testing.T) {
 	scheduler := newShareScheduler(syntheticSharePlans()[:1])
 	_, _ = scheduler.next()

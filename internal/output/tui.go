@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -125,6 +126,7 @@ type ShareQueueSnapshot struct {
 	CurrentShare     string
 	CurrentDirectory string
 	DeferredCount    int
+	SkippedShares    []string
 	Items            []ShareQueueItem
 }
 
@@ -192,28 +194,34 @@ type tuiModel struct {
 }
 
 type tuiStyles struct {
-	frame            lipgloss.Style
-	header           lipgloss.Style
-	headerStatusDone lipgloss.Style
-	headerMuted      lipgloss.Style
-	headerHint       lipgloss.Style
-	pane             lipgloss.Style
-	paneBorder       lipgloss.Style
-	paneTitle        lipgloss.Style
-	paneFocus        lipgloss.Style
-	selectedRow      lipgloss.Style
-	row              lipgloss.Style
-	rowMuted         lipgloss.Style
-	detailKey        lipgloss.Style
-	detailValue      lipgloss.Style
-	detailAccent     lipgloss.Style
-	footer           lipgloss.Style
-	severityHigh     lipgloss.Style
-	severityMedium   lipgloss.Style
-	severityLow      lipgloss.Style
-	fieldLabel       lipgloss.Style
-	usernameValue    lipgloss.Style
-	secretValue      lipgloss.Style
+	frame               lipgloss.Style
+	header              lipgloss.Style
+	headerStatusDone    lipgloss.Style
+	headerStatusRunning lipgloss.Style
+	headerMuted         lipgloss.Style
+	headerHint          lipgloss.Style
+	headerNavigation    lipgloss.Style
+	headerValueGreen    lipgloss.Style
+	headerValueRed      lipgloss.Style
+	headerValueWhite    lipgloss.Style
+	headerValueOrange   lipgloss.Style
+	pane                lipgloss.Style
+	paneBorder          lipgloss.Style
+	paneTitle           lipgloss.Style
+	paneFocus           lipgloss.Style
+	selectedRow         lipgloss.Style
+	row                 lipgloss.Style
+	rowMuted            lipgloss.Style
+	detailKey           lipgloss.Style
+	detailValue         lipgloss.Style
+	detailAccent        lipgloss.Style
+	footer              lipgloss.Style
+	severityHigh        lipgloss.Style
+	severityMedium      lipgloss.Style
+	severityLow         lipgloss.Style
+	fieldLabel          lipgloss.Style
+	usernameValue       lipgloss.Style
+	secretValue         lipgloss.Style
 }
 
 func NewTUIWriter(w io.Writer, closer io.Closer) (*TUIWriter, error) {
@@ -257,8 +265,11 @@ func (t *TUIWriter) WriteFinding(f scanner.Finding) error {
 	shadowFinding(t, f)
 	t.mu.Lock()
 	t.summary.RecordFinding(f)
-	if attachedSQLiteStore(t) == nil {
+	if isPrimaryLiveFinding(f) {
 		t.findings = append(t.findings, f)
+		if len(t.findings) > tuiMaxVisibleRows {
+			t.findings = t.findings[len(t.findings)-tuiMaxVisibleRows:]
+		}
 	}
 	t.mu.Unlock()
 	return nil
@@ -389,6 +400,16 @@ func (t *TUIWriter) SetStatus(status string) {
 	t.status = strings.TrimSpace(status)
 }
 
+func (t *TUIWriter) SetScanInterrupted(reason string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if strings.TrimSpace(reason) == "" {
+		t.status = "interrupted"
+		return
+	}
+	t.status = "interrupted: " + strings.TrimSpace(reason)
+}
+
 func (t *TUIWriter) SetCancelFunc(cancel context.CancelFunc) {
 	if t == nil || cancel == nil {
 		return
@@ -452,7 +473,9 @@ func (t *TUIWriter) Close() error {
 		Profile:        strings.TrimSpace(t.profile),
 	}
 	searchStore := t.searchStore
-	t.status = "done"
+	if strings.EqualFold(strings.TrimSpace(t.status), "running") {
+		t.status = "done"
+	}
 	t.mu.Unlock()
 	if searchStore != nil {
 		if err := searchStore.Flush(); err != nil {
@@ -1540,29 +1563,40 @@ func (m tuiModel) listHeight() int {
 func (m tuiModel) renderHeader() string {
 	status := firstNonEmpty(m.live.Status, "running")
 	elapsed := time.Since(m.live.Summary.StartedAt).Round(time.Second)
-	statusText := fmt.Sprintf("Snablr Live Scan  [%s]", strings.ToUpper(status))
-	if strings.EqualFold(status, "done") || strings.EqualFold(status, "complete") {
-		statusText = "Snablr Live Scan  [" + m.styles.headerStatusDone.Render("DONE") + "]"
+	statusLine := m.styles.header.Render("Snablr Live Scan  [")
+	switch {
+	case strings.EqualFold(status, "running"):
+		statusLine += m.styles.headerStatusRunning.Render("RUNNING")
+	case strings.EqualFold(status, "done") || strings.EqualFold(status, "complete"):
+		statusLine += m.styles.headerStatusDone.Render("DONE")
+	default:
+		statusLine += m.styles.header.Render(strings.ToUpper(status))
 	}
-	statusLine := m.styles.header.Render(statusText)
+	statusLine += m.styles.header.Render("]")
+	headerField := func(label, value string, style lipgloss.Style) string {
+		return m.styles.headerMuted.Render(label+" ") + style.Render(value)
+	}
+	separator := m.styles.headerMuted.Render("  ")
 	lines := []string{
 		statusLine,
-		m.styles.headerMuted.Render(fmt.Sprintf("Profile: %s  Targets: %d/%d  Shares: %d  Files: %d  Matches: %d  Read errors: %d",
-			valueOrDash(m.live.Profile),
-			m.live.TargetsProcessed,
-			m.live.TargetsTotal,
-			m.live.Summary.SharesScanned,
-			m.live.Summary.FilesScanned,
-			m.live.Summary.MatchesFound,
-			m.live.Summary.ReadErrors,
-		)),
-		m.styles.headerMuted.Render(fmt.Sprintf("Host: %s  Elapsed: %s", valueOrDash(m.live.CurrentHost), elapsed)),
+		headerField("Profile:", valueOrDash(m.live.Profile), m.styles.headerValueGreen) + separator +
+			headerField("Targets:", fmt.Sprintf("%d/%d", m.live.TargetsProcessed, m.live.TargetsTotal), m.styles.headerValueGreen) + separator +
+			headerField("Shares:", fmt.Sprintf("%d", m.live.Summary.SharesScanned), m.styles.headerValueGreen) + separator +
+			headerField("Files:", fmt.Sprintf("%d", m.live.Summary.FilesScanned), m.styles.headerValueGreen) + separator +
+			headerField("Matches:", fmt.Sprintf("%d", m.live.Summary.MatchesFound), m.styles.headerValueGreen) + separator +
+			headerField("Read errors:", fmt.Sprintf("%d", m.live.Summary.ReadErrors), m.styles.headerValueRed),
+		headerField("Host:", valueOrDash(m.live.CurrentHost), m.styles.headerValueWhite) + separator +
+			headerField("Elapsed:", elapsed.String(), m.styles.headerValueWhite) + separator +
+			headerField("Deferred:", fmt.Sprintf("%d", m.live.ShareQueue.DeferredCount), m.styles.headerValueOrange) + separator +
+			headerField("Skipped:", renderSkippedShares(m.live.ShareQueue.SkippedShares), m.styles.headerValueOrange),
 	}
 	if current := strings.TrimSpace(m.live.ShareQueue.CurrentShare); current != "" {
-		lines = append(lines, m.styles.headerMuted.Render(fmt.Sprintf("Current share: \\\\%s\\%s  Deferred: %d", m.live.ShareQueue.CurrentHost, current, m.live.ShareQueue.DeferredCount)))
+		share := fmt.Sprintf("\\\\%s\\%s", m.live.ShareQueue.CurrentHost, current)
+		lines = append(lines, headerField("Current share:", share, m.styles.headerValueWhite))
 	}
 	if directory := strings.TrimSpace(m.live.ShareQueue.CurrentDirectory); directory != "" {
-		lines = append(lines, m.styles.headerMuted.Render(fmt.Sprintf("Current folder: \\\\%s\\%s\\%s", m.live.ShareQueue.CurrentHost, m.live.ShareQueue.CurrentShare, directory)))
+		folder := fmt.Sprintf("\\\\%s\\%s\\%s", m.live.ShareQueue.CurrentHost, m.live.ShareQueue.CurrentShare, directory)
+		lines = append(lines, headerField("Current folder:", folder, m.styles.headerValueWhite))
 	}
 	if m.completed && m.final != nil {
 		lines = append(lines, m.styles.headerMuted.Render(fmt.Sprintf("Completed. Access paths: %d  Performance: %.2f files/s",
@@ -1573,9 +1607,16 @@ func (m tuiModel) renderHeader() string {
 			lines = append(lines, m.styles.headerHint.Render(hint))
 		}
 	} else {
-		lines = append(lines, m.styles.headerMuted.Render("Use up/down or j/k to select findings. Evidence is shown only in the right pane."))
+		lines = append(lines, m.styles.headerNavigation.Render("Navigate: Use arrow keys to navigate."))
 	}
 	return clampMultiline(strings.Join(lines, "\n"), m.width)
+}
+
+func renderSkippedShares(shares []string) string {
+	if len(shares) == 0 {
+		return "None"
+	}
+	return strings.Join(shares, ", ")
 }
 
 func (m tuiModel) renderFooter() string {
@@ -1794,12 +1835,19 @@ func renderTUIFindingRow(row tuiFindingRow, width int, selected bool) string {
 }
 
 func renderTUIFindingRowWithStyles(row tuiFindingRow, width int, selected bool, styles tuiStyles) string {
-	severity := renderTUISeverity(row.Severity, styles)
+	rowStyles := styles
+	if selected {
+		plain := lipgloss.NewStyle()
+		rowStyles.severityHigh = plain
+		rowStyles.severityMedium = plain
+		rowStyles.severityLow = plain
+	}
+	severity := renderTUISeverity(row.Severity, rowStyles)
 	meta := severity
 	if row.Score > 0 {
 		meta += fmt.Sprintf(" %d", row.Score)
 	}
-	meta += renderTUISeverityBracket(row.Severity, "]", styles)
+	meta += renderTUISeverityBracket(row.Severity, "]", rowStyles)
 	if row.HasEvidence {
 		meta += " *"
 	}
@@ -1813,6 +1861,9 @@ func renderTUIFindingRowWithStyles(row tuiFindingRow, width int, selected bool, 
 	style := styles.row.Copy()
 	if selected {
 		style = styles.selectedRow.Copy()
+	}
+	if selected {
+		style = style.Width(rowWidth)
 	}
 	return style.Render(line)
 }
@@ -1871,22 +1922,34 @@ func buildTUIDetailWithStyles(f scanner.Finding, styles tuiStyles) string {
 	return strings.Join(lines, "\n")
 }
 
+var tuiStructuredFieldPattern = regexp.MustCompile(`(?i)(username|brukernavn|password|passord|hash|key|private[- ]key|token|secret)[ \t]*:`)
+
 func renderTUIStructuredEvidenceLine(line string, styles tuiStyles) string {
-	leading := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
-	rest := strings.TrimLeft(line, " \t")
-	colon := strings.IndexByte(rest, ':')
-	if colon <= 0 {
+	matches := tuiStructuredFieldPattern.FindAllStringIndex(line, -1)
+	if len(matches) == 0 {
 		return line
 	}
-	field := strings.ToLower(strings.TrimSpace(rest[:colon]))
-	if !isTUIStructuredSecretField(field) {
-		return line
+	var builder strings.Builder
+	cursor := 0
+	for index, match := range matches {
+		labelStart, labelEnd := match[0], match[1]
+		builder.WriteString(line[cursor:labelStart])
+		field := strings.ToLower(strings.TrimSpace(strings.TrimSuffix(line[labelStart:labelEnd], ":")))
+		field = strings.Join(strings.Fields(strings.ReplaceAll(field, "-", " ")), " ")
+		valueEnd := len(line)
+		if index+1 < len(matches) {
+			valueEnd = matches[index+1][0]
+		}
+		valueStyle := styles.secretValue
+		if field == "username" || field == "brukernavn" {
+			valueStyle = styles.usernameValue
+		}
+		builder.WriteString(styles.fieldLabel.Render(line[labelStart:labelEnd]))
+		builder.WriteString(valueStyle.Render(line[labelEnd:valueEnd]))
+		cursor = valueEnd
 	}
-	valueStyle := styles.secretValue
-	if field == "username" {
-		valueStyle = styles.usernameValue
-	}
-	return leading + styles.fieldLabel.Render(rest[:colon+1]) + valueStyle.Render(rest[colon+1:])
+	builder.WriteString(line[cursor:])
+	return builder.String()
 }
 
 func isTUIStructuredSecretField(field string) bool {
@@ -1959,47 +2022,63 @@ func tuiStylesForColor(colorEnabled bool) tuiStyles {
 	plain := lipgloss.NewStyle()
 	if !colorEnabled {
 		return tuiStyles{
-			frame:          plain.Padding(0, 1),
-			pane:           plain.Border(lipgloss.RoundedBorder()).Padding(0, 1),
-			paneBorder:     plain,
-			selectedRow:    plain,
-			row:            plain,
-			rowMuted:       plain,
-			detailKey:      plain,
-			detailValue:    plain,
-			detailAccent:   plain,
-			footer:         plain,
-			severityHigh:   plain,
-			severityMedium: plain,
-			severityLow:    plain,
-			fieldLabel:     plain,
-			usernameValue:  plain,
-			secretValue:    plain,
+			frame:               plain.Padding(0, 1),
+			pane:                plain.Border(lipgloss.RoundedBorder()).Padding(0, 1),
+			paneBorder:          plain,
+			selectedRow:         plain,
+			row:                 plain,
+			rowMuted:            plain,
+			detailKey:           plain,
+			detailValue:         plain,
+			detailAccent:        plain,
+			footer:              plain,
+			header:              plain,
+			headerStatusDone:    plain,
+			headerStatusRunning: plain,
+			headerMuted:         plain,
+			headerHint:          plain,
+			headerNavigation:    plain,
+			headerValueGreen:    plain,
+			headerValueRed:      plain,
+			headerValueWhite:    plain,
+			headerValueOrange:   plain,
+			severityHigh:        plain,
+			severityMedium:      plain,
+			severityLow:         plain,
+			fieldLabel:          plain,
+			usernameValue:       plain,
+			secretValue:         plain,
 		}
 	}
 	return tuiStyles{
-		frame:            lipgloss.NewStyle().Padding(0, 1),
-		header:           lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#D9ECFF")),
-		headerStatusDone: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#5BE49B")),
-		headerMuted:      lipgloss.NewStyle().Foreground(lipgloss.Color("#88AECB")),
-		headerHint:       lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FB923C")),
-		pane:             lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#3B82F6")).Padding(0, 1),
-		paneBorder:       lipgloss.NewStyle().Foreground(lipgloss.Color("#3B82F6")),
-		paneTitle:        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7CC4FF")),
-		paneFocus:        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD166")),
-		selectedRow:      lipgloss.NewStyle().Foreground(lipgloss.Color("#F8FBFF")).Background(lipgloss.Color("#1D4ED8")).Bold(true),
-		row:              lipgloss.NewStyle().Foreground(lipgloss.Color("#D7EAFE")),
-		rowMuted:         lipgloss.NewStyle().Foreground(lipgloss.Color("#7A9BB7")),
-		detailKey:        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#8CCBFF")),
-		detailValue:      lipgloss.NewStyle().Foreground(lipgloss.Color("#EDF6FF")),
-		detailAccent:     lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD166")),
-		footer:           lipgloss.NewStyle().Foreground(lipgloss.Color("#8FAECC")),
-		severityHigh:     lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")),
-		severityMedium:   lipgloss.NewStyle().Foreground(lipgloss.Color("#F97316")),
-		severityLow:      lipgloss.NewStyle().Foreground(lipgloss.Color("#22C55E")),
-		fieldLabel:       lipgloss.NewStyle().Foreground(lipgloss.Color("#60A5FA")),
-		usernameValue:    lipgloss.NewStyle().Foreground(lipgloss.Color("#60A5FA")),
-		secretValue:      lipgloss.NewStyle().Foreground(lipgloss.Color("#F97316")),
+		frame:               lipgloss.NewStyle().Padding(0, 1),
+		header:              lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#D9ECFF")),
+		headerStatusDone:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#5BE49B")),
+		headerStatusRunning: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#C084FC")),
+		headerMuted:         lipgloss.NewStyle().Foreground(lipgloss.Color("#A3A3A3")),
+		headerHint:          lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FB923C")),
+		headerNavigation:    lipgloss.NewStyle().Foreground(lipgloss.Color("#A3A3A3")),
+		headerValueGreen:    lipgloss.NewStyle().Foreground(lipgloss.Color("#5BE49B")),
+		headerValueRed:      lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171")),
+		headerValueWhite:    lipgloss.NewStyle().Foreground(lipgloss.Color("#F8FAFC")),
+		headerValueOrange:   lipgloss.NewStyle().Foreground(lipgloss.Color("#FB923C")),
+		pane:                lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#3B82F6")).Padding(0, 1),
+		paneBorder:          lipgloss.NewStyle().Foreground(lipgloss.Color("#3B82F6")),
+		paneTitle:           lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7CC4FF")),
+		paneFocus:           lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FB923C")),
+		selectedRow:         lipgloss.NewStyle().Foreground(lipgloss.Color("#F8FBFF")).Background(lipgloss.Color("#1D4ED8")).Bold(true),
+		row:                 lipgloss.NewStyle().Foreground(lipgloss.Color("#D7EAFE")),
+		rowMuted:            lipgloss.NewStyle().Foreground(lipgloss.Color("#7A9BB7")),
+		detailKey:           lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#8CCBFF")),
+		detailValue:         lipgloss.NewStyle().Foreground(lipgloss.Color("#EDF6FF")),
+		detailAccent:        lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD166")),
+		footer:              lipgloss.NewStyle().Foreground(lipgloss.Color("#A3A3A3")),
+		severityHigh:        lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")),
+		severityMedium:      lipgloss.NewStyle().Foreground(lipgloss.Color("#F97316")),
+		severityLow:         lipgloss.NewStyle().Foreground(lipgloss.Color("#22C55E")),
+		fieldLabel:          lipgloss.NewStyle().Foreground(lipgloss.Color("#60A5FA")),
+		usernameValue:       lipgloss.NewStyle().Foreground(lipgloss.Color("#60A5FA")),
+		secretValue:         lipgloss.NewStyle().Foreground(lipgloss.Color("#F97316")),
 	}
 }
 

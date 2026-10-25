@@ -732,13 +732,16 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 	}
 
 	shareInputs := make([]planner.ShareInput, 0, len(shares))
+	configuredSkippedShares := make([]string, 0)
 	for _, shareInfo := range shares {
 		share := shareInfo.Name
 		if !scanShareAllowed(share, cfg.Scan) {
+			configuredSkippedShares = append(configuredSkippedShares, share)
 			logger.Debugf("skipping share %s/%s due to share filters", host, share)
 			continue
 		}
 		if cfg.Scan.OnlyADShares && !smb.IsADShare(share) {
+			configuredSkippedShares = append(configuredSkippedShares, share)
 			continue
 		}
 		shareSource := source
@@ -757,6 +760,9 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		return fmt.Errorf("%s: none of the explicitly requested shares are accessible", host)
 	}
 	shareScheduler := newShareScheduler(plannedShares)
+	for _, share := range configuredSkippedShares {
+		shareScheduler.recordSkippedShare(share)
+	}
 	if stateManager != nil {
 		shareScheduler.setSkipHandlers(
 			func(plan planner.PlannedTarget) error { return stateManager.SkipShare(plan.Host, plan.Share) },
@@ -795,6 +801,7 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		}
 		if !forceRescan && stateManager != nil && stateManager.ShouldSkipShare(host, sharePlan.Share) {
 			if stateManager.IsScopeExcluded("share", host, sharePlan.Share, "") {
+				shareScheduler.recordSkippedShare(sharePlan.Share)
 				logger.Infof("resume: skipping excluded share %s/%s", host, sharePlan.Share)
 			} else {
 				logger.Infof("resume: skipping completed share %s/%s", host, sharePlan.Share)

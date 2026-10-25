@@ -12,14 +12,16 @@ import (
 var errShareDeferred = fmt.Errorf("share deferred by operator")
 
 type shareScheduler struct {
-	mu         sync.Mutex
-	entries    map[string]*shareScheduleEntry
-	order      []string
-	current    string
-	deferNext  bool
-	skipShare  func(planner.PlannedTarget) error
-	skipFolder func(planner.PlannedTarget, string) error
-	currentDir string
+	mu               sync.Mutex
+	entries          map[string]*shareScheduleEntry
+	order            []string
+	current          string
+	deferNext        bool
+	skippedShares    []string
+	skippedShareKeys map[string]struct{}
+	skipShare        func(planner.PlannedTarget) error
+	skipFolder       func(planner.PlannedTarget, string) error
+	currentDir       string
 }
 
 type shareScheduleEntry struct {
@@ -30,7 +32,7 @@ type shareScheduleEntry struct {
 }
 
 func newShareScheduler(plans []planner.PlannedTarget) *shareScheduler {
-	scheduler := &shareScheduler{entries: make(map[string]*shareScheduleEntry, len(plans))}
+	scheduler := &shareScheduler{entries: make(map[string]*shareScheduleEntry, len(plans)), skippedShareKeys: make(map[string]struct{})}
 	for _, plan := range plans {
 		key := shareScheduleKey(plan.Host, plan.Share)
 		if _, exists := scheduler.entries[key]; exists {
@@ -40,6 +42,21 @@ func newShareScheduler(plans []planner.PlannedTarget) *shareScheduler {
 		scheduler.order = append(scheduler.order, key)
 	}
 	return scheduler
+}
+
+func (s *shareScheduler) recordSkippedShare(name string) {
+	name = strings.TrimSpace(name)
+	key := strings.ToLower(name)
+	if name == "" || key == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.skippedShareKeys[key]; exists {
+		return
+	}
+	s.skippedShareKeys[key] = struct{}{}
+	s.skippedShares = append(s.skippedShares, name)
 }
 
 func shareScheduleKey(host, share string) string {
@@ -127,6 +144,7 @@ func (s *shareScheduler) requestSkipShare() string {
 	if err := handler(plan); err != nil {
 		return fmt.Sprintf("Could not skip \\\\%s\\%s: %v", plan.Host, plan.Share, err)
 	}
+	s.recordSkippedShare(plan.Share)
 	s.mu.Lock()
 	if entry := s.entries[key]; entry != nil {
 		entry.skipped = true
@@ -212,7 +230,7 @@ func (s *shareScheduler) consumeDefer(plan planner.PlannedTarget) bool {
 func (s *shareScheduler) snapshot() output.ShareQueueSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	snapshot := output.ShareQueueSnapshot{DeferredCount: 0, Items: make([]output.ShareQueueItem, 0, len(s.order))}
+	snapshot := output.ShareQueueSnapshot{DeferredCount: 0, SkippedShares: append([]string(nil), s.skippedShares...), Items: make([]output.ShareQueueItem, 0, len(s.order))}
 	if current := s.entries[s.current]; current != nil {
 		snapshot.CurrentHost = current.plan.Host
 		snapshot.CurrentShare = current.plan.Share

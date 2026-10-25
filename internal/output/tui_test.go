@@ -25,7 +25,7 @@ func TestTUIFindingRowDoesNotRenderEvidence(t *testing.T) {
 	if strings.Contains(row, "ReplaceMe123!") {
 		t.Fatalf("finding row leaked matched secret text: %q", row)
 	}
-	if !strings.Contains(row, "credentials") {
+	if !strings.Contains(row, "Credentials") {
 		t.Fatalf("finding row missing category metadata: %q", row)
 	}
 	if strings.Contains(row, `\\dc01\SYSVOL\Policies\Groups.xml`) {
@@ -44,7 +44,7 @@ func TestTUISeverityColorOnlyCoversLabelAndBrackets(t *testing.T) {
 	if !strings.Contains(row, "38;2;239;68;68m[HIGH") || !strings.Contains(row, "38;2;239;68;68m]") {
 		t.Fatalf("high severity label was not red: %q", row)
 	}
-	if !strings.Contains(row, " 91") || !strings.Contains(row, "credentials") {
+	if !strings.Contains(row, " 91") || !strings.Contains(row, "Credentials") {
 		t.Fatalf("severity row lost unstyled content: %q", row)
 	}
 	if strings.Contains(row, "38;2;239;68;68m[HIGH 91]") {
@@ -1033,11 +1033,92 @@ func TestTUICompletionShowsFindingsCommandForDefaultDatabase(t *testing.T) {
 	model = updated.(tuiModel)
 
 	header := model.renderHeader()
-	if !strings.Contains(header, "To view findings run: snablr find") {
+	if !strings.Contains(header, "View findings: snablr find") {
 		t.Fatalf("default findings command missing: %q", header)
 	}
 	if !strings.Contains(model.renderFooter(), "Alt-K skip folder") || !strings.Contains(model.renderFooter(), "Alt-S skip share") {
 		t.Fatalf("completion footer lost scanner controls: %q", model.renderFooter())
+	}
+}
+
+func TestTUIFindingRowsAlignHyphensAndCategory(t *testing.T) {
+	rows := []tuiFindingRow{
+		{Severity: "LOW", Score: 18, Category: "database-access"},
+		{Severity: "MEDIUM", Score: 54, Category: "windows-deployment"},
+		{Severity: "HIGH", Score: 89, Category: "credentials"},
+	}
+	hyphen := -1
+	category := -1
+	for _, row := range rows {
+		plain := charmansi.Strip(renderTUIFindingRowWithStyles(row, 80, false, tuiStylesForColor(false)))
+		currentHyphen := strings.Index(plain, "-")
+		categoryName := row.Category
+		if strings.EqualFold(categoryName, "credentials") {
+			categoryName = "Credentials"
+		}
+		currentCategory := strings.Index(plain, categoryName)
+		if hyphen < 0 {
+			hyphen, category = currentHyphen, currentCategory
+		} else if currentHyphen != hyphen || currentCategory != category {
+			t.Fatalf("row columns did not align: first=(%d,%d) current=(%d,%d) row=%q", hyphen, category, currentHyphen, currentCategory, plain)
+		}
+	}
+	plainLow := charmansi.Strip(renderTUIFindingRowWithStyles(rows[0], 80, false, tuiStylesForColor(false)))
+	plainMedium := charmansi.Strip(renderTUIFindingRowWithStyles(rows[1], 80, false, tuiStylesForColor(false)))
+	plainHigh := charmansi.Strip(renderTUIFindingRowWithStyles(rows[2], 80, false, tuiStylesForColor(false)))
+	if !strings.Contains(plainLow, "[LOW 18]     -  database-access") || !strings.Contains(plainMedium, "[MEDIUM 54]  -  windows-deployment") || !strings.Contains(plainHigh, "[HIGH 89]    -  Credentials") {
+		t.Fatalf("unexpected aligned row layout: low=%q medium=%q high=%q", plainLow, plainMedium, plainHigh)
+	}
+	if strings.Contains(plainMedium, "Type") || strings.Contains(plainMedium, "*") {
+		t.Fatalf("old row separators remained: %q", plainMedium)
+	}
+}
+
+func TestTUIPanesUseCompactFindingsWidth(t *testing.T) {
+	model := newTUIModel(&TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running"})
+	model.width, model.height = 160, 30
+	model.layout()
+	left, right, _, _ := model.paneLayout()
+	wantLeft := tuiPreferredListOuterWidth(model.styles.pane)
+	if left != wantLeft {
+		t.Fatalf("unexpected compact findings pane width: got %d want %d", left, wantLeft)
+	}
+	if right != model.width-left {
+		t.Fatalf("panes do not fill terminal: left=%d right=%d width=%d", left, right, model.width)
+	}
+	if model.listContentWidth() < tuiPreferredListInner {
+		t.Fatalf("findings pane inner width is too small: %d", model.listContentWidth())
+	}
+	for _, width := range []int{100, 120, 160, 220} {
+		model.width = width
+		model.layout()
+		left, right, _, _ = model.paneLayout()
+		if left+right != width {
+			t.Fatalf("pane widths escaped terminal at %d: left=%d right=%d", width, left, right)
+		}
+	}
+}
+
+func TestTUICompletionHintUsesBlueLabelAndOrangeCommand(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(previous)
+	state, err := store.Open(filepath.Join(t.TempDir(), "completion-hint.db"), store.Options{ScanID: "completion-hint"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	writer := &TUIWriter{summary: newSummaryCollector(), validationMode: newValidationModeCollector(), status: "running", findingsDatabasePath: "snablr.db", searchStore: state}
+	model := newTUIModel(writer)
+	model.windowLoaded, model.width, model.height = true, 120, 30
+	updated, _ := model.Update(tuiFinalizeEvent{Performance: &diff.PerformanceSummary{}})
+	model = updated.(tuiModel)
+	header := model.renderHeader()
+	if !strings.Contains(charmansi.Strip(header), "View findings: snablr find") {
+		t.Fatalf("completion hint missing: %q", charmansi.Strip(header))
+	}
+	if !strings.Contains(header, "38;2;96;165;250mView findings:") || !strings.Contains(header, "38;2;251;146;60m snablr find") {
+		t.Fatalf("completion hint colors incorrect: %q", header)
 	}
 }
 

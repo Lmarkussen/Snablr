@@ -24,12 +24,14 @@ import (
 )
 
 const (
-	tuiRefreshInterval = 250 * time.Millisecond
-	tuiMaxVisibleRows  = 500
-	tuiMinSplitWidth   = 100
-	tuiMinListWidth    = 36
-	tuiMinDetailWidth  = 32
-	tuiSearchPageSize  = 100
+	tuiRefreshInterval    = 250 * time.Millisecond
+	tuiMaxVisibleRows     = 500
+	tuiMinSplitWidth      = 100
+	tuiMinListWidth       = 36
+	tuiMinDetailWidth     = 32
+	tuiSearchPageSize     = 100
+	tuiPreferredListInner = 42
+	tuiFindingMetaWidth   = 11
 )
 
 type tuiPane int
@@ -1604,7 +1606,7 @@ func (m tuiModel) renderHeader() string {
 			m.final.Performance.FilesPerSecond,
 		)))
 		if hint := m.findingsDatabaseHint(); hint != "" && lipgloss.Width(hint) <= m.width && m.height >= len(lines)+lipgloss.Height(m.renderFooter())+3 {
-			lines = append(lines, m.styles.headerHint.Render(hint))
+			lines = append(lines, m.renderFindingsDatabaseHint(hint))
 		}
 	} else {
 		lines = append(lines, m.styles.headerNavigation.Render("Navigate: Use arrow keys to navigate."))
@@ -1659,7 +1661,15 @@ func (m tuiModel) findingsDatabaseHint() string {
 		}
 		command += " --db " + shellQuote(resolved)
 	}
-	return "To view findings run: " + command
+	return "View findings: " + command
+}
+
+func (m tuiModel) renderFindingsDatabaseHint(hint string) string {
+	const prefix = "View findings:"
+	if !strings.HasPrefix(hint, prefix) {
+		return m.styles.headerValueOrange.Render(hint)
+	}
+	return m.styles.fieldLabel.Render(prefix) + m.styles.headerValueOrange.Render(strings.TrimPrefix(hint, prefix))
 }
 
 func shellQuote(value string) string {
@@ -1676,11 +1686,7 @@ func (m tuiModel) renderPanes(bodyHeight int) (string, string) {
 		return left, right
 	}
 
-	leftWidth := max(tuiMinListWidth, int(float64(m.width)*0.52))
-	rightWidth := max(tuiMinDetailWidth, m.width-leftWidth)
-	if leftWidth+rightWidth > m.width {
-		rightWidth = m.width - leftWidth
-	}
+	leftWidth, rightWidth := m.splitPaneWidths()
 	return m.renderListPane(leftWidth, bodyHeight), m.renderDetailPane(rightWidth, bodyHeight)
 }
 
@@ -1743,14 +1749,24 @@ func (m tuiModel) paneLayout() (leftWidth, rightWidth, listHeight, detailHeight 
 		return max(20, m.width), max(20, m.width), max(1, listBodyHeight-1), max(1, detailBodyHeight-1)
 	}
 
-	leftWidth = max(tuiMinListWidth, int(float64(m.width)*0.52))
-	rightWidth = max(tuiMinDetailWidth, m.width-leftWidth)
-	if leftWidth+rightWidth > m.width {
-		rightWidth = m.width - leftWidth
-	}
+	leftWidth, rightWidth = m.splitPaneWidths()
 	_, listBodyHeight := m.paneContentSize(leftWidth, bodyHeight)
 	_, detailBodyHeight := m.paneContentSize(rightWidth, bodyHeight)
 	return leftWidth, rightWidth, max(1, listBodyHeight-1), max(1, detailBodyHeight-1)
+}
+
+func (m tuiModel) splitPaneWidths() (int, int) {
+	availableWidth := max(0, m.width)
+	leftWidth := max(tuiMinListWidth, tuiPreferredListOuterWidth(m.styles.pane))
+	rightWidth := max(tuiMinDetailWidth, availableWidth-leftWidth)
+	if leftWidth+rightWidth > availableWidth {
+		rightWidth = max(1, availableWidth-leftWidth)
+	}
+	return leftWidth, rightWidth
+}
+
+func tuiPreferredListOuterWidth(paneStyle lipgloss.Style) int {
+	return tuiPreferredListInner + paneStyle.GetHorizontalFrameSize()
 }
 
 func (m tuiModel) detailContentWidth() int {
@@ -1848,11 +1864,21 @@ func renderTUIFindingRowWithStyles(row tuiFindingRow, width int, selected bool, 
 		meta += fmt.Sprintf(" %d", row.Score)
 	}
 	meta += renderTUISeverityBracket(row.Severity, "]", rowStyles)
-	if row.HasEvidence {
-		meta += " *"
+	plainMeta := "[" + strings.ToUpper(strings.TrimSpace(row.Severity))
+	if row.Score > 0 {
+		plainMeta += fmt.Sprintf(" %d", row.Score)
 	}
-	line := fmt.Sprintf("%s %-12s %-18s", meta, truncateDisplayWidth(strings.ToUpper(row.Triage), 12), truncateDisplayWidth(row.Category, 18))
+	plainMeta += "]"
+	metaWidth := max(tuiFindingMetaWidth, lipgloss.Width(plainMeta))
+	meta += strings.Repeat(" ", max(0, metaWidth-lipgloss.Width(plainMeta)))
 	rowWidth := max(8, width)
+	separator := "  -  "
+	category := row.Category
+	if strings.EqualFold(strings.TrimSpace(category), "credentials") {
+		category = "Credentials"
+	}
+	categoryWidth := max(0, rowWidth-metaWidth-lipgloss.Width(separator))
+	line := meta + separator + truncateDisplayWidth(category, categoryWidth)
 	if row.Bookmarked {
 		marker := lipgloss.NewStyle().Foreground(lipgloss.Color("#22C55E")).Render("*")
 		line = truncateDisplayWidth(line, max(1, rowWidth-lipgloss.Width(marker)-1)) + " " + marker

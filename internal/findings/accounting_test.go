@@ -170,6 +170,23 @@ func TestReadAllCredentialsTraversesMoreThanOnePage(t *testing.T) {
 	}
 }
 
+func TestCredentialProjectionUsesPersistedRowIdentityDuringRelationshipExpansion(t *testing.T) {
+	credentials := []Credential{
+		{ID: 101, CredentialKey: "same-key", Candidate: credentialanalysis.Candidate{CredentialType: "password", Identity: "alice", Value: "shared", Path: "a.ini", Verification: credentialanalysis.Confirmed}},
+		{ID: 102, CredentialKey: "same-key", Candidate: credentialanalysis.Candidate{CredentialType: "password", Identity: "alice", Value: "shared", Path: "b.ini", Verification: credentialanalysis.Confirmed}},
+	}
+	categories, audit := buildCategoriesWithAccounting("scan-row-identity", credentials, nil, nil)
+	if audit.UnaccountedRows != 0 || audit.TotalPersistedRows != 2 || audit.PresentedRows != 1 || audit.GroupedRows != 1 {
+		t.Fatalf("persisted row identity was not reconciled: %#v", audit)
+	}
+	if got := len(categories[0].Discoveries[0].PersistedRefs); got != 2 {
+		t.Fatalf("logical group retained %d persisted rows, want 2", got)
+	}
+	if got := categories[0].Discoveries[0].PersistedRefs; got[0] != "credential:101" || got[1] != "credential:102" {
+		t.Fatalf("unexpected persisted row refs: %#v", got)
+	}
+}
+
 func TestCredentialProjectionGroupsLogicalPairsWithoutLosingRows(t *testing.T) {
 	credentials := []Credential{
 		accountingCredential("same-a", "password", "alice", "Shared-Pass!", "a.ini", credentialanalysis.Confirmed),

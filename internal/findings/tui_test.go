@@ -3,8 +3,10 @@ package findings
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -12,7 +14,44 @@ import (
 	"github.com/muesli/termenv"
 	"snablr/internal/credentialanalysis"
 	"snablr/internal/scanner"
+	"snablr/internal/store"
 )
+
+func TestFetchEvidenceResolvesPersistedCredentialRowRef(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scan.db")
+	state, err := store.Open(path, store.Options{ScanID: "scan", SnablrVersion: "test", Semantics: "synthetic", QueueSize: 8, BatchSize: 1, FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := credentialanalysis.Candidate{CredentialType: "password", Identity: "svc", Value: "synthetic", Path: "fixture.ini", Verification: credentialanalysis.Confirmed}
+	if err := state.RecordCredential(candidate); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	rows, err := provider.Credentials(context.Background(), "scan", 0, PageSize)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("persisted credential rows=%d err=%v", len(rows), err)
+	}
+	ref := credentialRowRef(rows[0])
+	if ref != fmt.Sprintf("credential:%d", rows[0].ID) {
+		t.Fatalf("unexpected persisted row ref %q", ref)
+	}
+	m := &model{ctx: context.Background(), provider: provider, scans: []Scan{{ID: "scan"}}}
+	item := m.fetchEvidence(ref)
+	if item.candidate == nil || item.candidate.Path != "fixture.ini" {
+		t.Fatalf("persisted row evidence was not rehydrated: %#v", item)
+	}
+}
 
 func TestCategoryFirstNavigationAndEvidence(t *testing.T) {
 	categories := buildCategories([]Credential{{Candidate: credentialanalysis.Candidate{

@@ -1,64 +1,43 @@
 # Reporting
 
-Snablr supports several output formats so the same scan can be used for live operator feedback, automation, post-scan triage, and follow-up workflows.
+Snablr separates collection from interpretation. A scan persists authoritative
+evidence in SQLite and writes a RAW HTML collection report by default. Finder
+then exports interpreted, grouped results from that database.
 
-Supported outputs:
+Supported outputs are the live console, automatic RAW HTML, and Finder HTML or
+JSON exports.
 
-- console
-- JSON
-- HTML
-- CSV
-- Markdown
-- curated `creds.txt`
+## Scan And Finder Outputs
 
-## Output Modes
-
-The primary output mode is controlled with `output_format`.
-
-Supported primary modes:
-
-- `console`
-- `json`
-- `html`
-- `all`
-
-You can also combine primary export modes explicitly:
-
-- `html,json`
-- `console,json`
-- `console,html`
-
-Optional sidecar exports:
-
-- `--csv-out findings.csv`
-- `--md-out summary.md`
-- `--creds-out creds.txt`
-- `--scanned-targets-out scanned_targets.txt`
+`snablr scan` no longer accepts `--output-format`, `--json-out`, `--html-out`,
+`--csv-out`, `--md-out`, or `--creds-out`. Passing one produces a migration
+error. Legacy output keys in YAML are ignored for scan exports; they cannot
+silently enable an old export mode.
 
 Example:
 
 ```bash
 snablr scan \
   --config examples/config.domain.yaml \
-  --output-format all \
-  --json-out output/results.json \
-  --html-out output/report.html \
-  --csv-out output/findings.csv \
-  --md-out output/summary.md \
-  --creds-out output/creds.txt \
   --scanned-targets-out output/scanned_targets.txt
 ```
 
-In that example, Snablr writes:
+The scan writes `<domain>_RAW.html` (or the documented target/scan-ID form)
+in the invocation directory. Use `--no-outfile` to suppress only that HTML;
+SQLite persistence and the live TUI continue. RAW means collected evidence,
+not manually reviewed or confirmed results. Existing files are never silently
+overwritten; a numeric suffix is selected.
 
-- JSON to `output/results.json`
-- HTML to `output/report.html`
-- CSV to `output/findings.csv`
-- Markdown to `output/summary.md`
-- curated credentials to `output/creds.txt`
-- target audit to `output/scanned_targets.txt`
+Finder exports the complete selected scope, not the 500-row startup page:
 
-The `creds.txt` export is intentionally narrow. It includes only primary, high-confidence findings with usable credential material. Supporting artifacts, weak review items, and placeholder/example values are excluded.
+```bash
+snablr find --db output/snablr.db --scan-id scan-domain-001 --html output/finder.html --json output/finder.json
+```
+
+`--html-out` remains a Finder compatibility alias for `--html`. Both Finder
+exports use the same SQLite projection, associations, provenance, and filters
+as the interactive viewer. Existing export files are rejected rather than
+overwritten.
 
 The `scanned_targets.txt` export is an audit aid. It records the targets Snablr discovered or accepted, whether they were reachable, and whether they were actually planned for scanning.
 
@@ -268,7 +247,8 @@ Use HTML when you need:
 - a browser-friendly grouped report
 - a standalone file for remediation review
 
-After a scan, open the file you passed to `--html-out` in a browser.
+After a scan, open the reported absolute RAW HTML path in a browser, or use
+Finder's `--html` export for interpreted results.
 
 ## CSV Output
 
@@ -500,9 +480,10 @@ Two ways to use it:
 snablr scan \
   --config examples/config.domain.yaml \
   --baseline previous-results.json \
-  --output-format all \
-  --json-out results.json \
-  --html-out report.html
+  --dbname output/snablr.db
+
+snablr find --db output/snablr.db --scan-id SCAN_ID \
+  --html report.html --json results.json
 ```
 
 ### Compare Two Existing Reports

@@ -42,15 +42,9 @@ type ScanOptions struct {
 	ListShares                 bool
 	SkipReachabilityCheck      bool
 	ReachabilityTimeoutSeconds int
-	OutputFormat               string
+	NoOutfile                  bool
 	NoTUI                      bool
 	NoColor                    bool
-	JSONOut                    string
-	HTMLOut                    string
-	HTMLOutSet                 bool
-	CSVOut                     string
-	MDOut                      string
-	CredsOut                   string
 	ScannedTargetsOut          string
 	ReportBackupArtifacts      bool
 	WIMEnabled                 *bool

@@ -158,8 +158,8 @@ The scan ran, but the expected HTML report file does not exist.
 
 ### What To Check
 
-- confirm `--output-format html` or `--output-format all`
-- confirm `--html-out` is set, or that your config file sets `output.html_out`
+- confirm the scan was not run with `--no-outfile`
+- look for the reported absolute RAW HTML path
 - confirm the output directory is writable
 - check the terminal for any final output writer error
 
@@ -169,9 +169,7 @@ Minimal known-good example:
 ./bin/snablr scan \
   --targets 10.0.0.5 \
   --user 'EXAMPLE\user' \
-  --pass 'REPLACE_ME' \
-  --output-format html \
-  --html-out report.html
+  --pass 'REPLACE_ME'
 ```
 
 ## Empty JSON Output
@@ -183,7 +181,7 @@ The JSON file exists, but it contains no findings.
 ### What To Check
 
 - verify the scan actually completed
-- confirm you used `--output-format json` or `--output-format all`
+- export the selected persisted scope with `snablr find --json PATH`
 - review filters such as `share`, `exclude_share`, `path`, `exclude_path`, and `max_depth`
 - confirm the rule pack is valid with `snablr rules validate`
 - test expected matches directly with `snablr rules test`

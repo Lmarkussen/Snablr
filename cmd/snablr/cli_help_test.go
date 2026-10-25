@@ -2,12 +2,16 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	_ "github.com/mattn/go-sqlite3"
+	"snablr/internal/store"
 	"snablr/internal/ui"
 )
 
@@ -46,6 +50,21 @@ func TestScanHelpSeparatesCommonAndAdvancedFlags(t *testing.T) {
 	if strings.Contains(normal, "--wim-max-images") {
 		t.Fatal("normal scan help exposes specialized WIM flags")
 	}
+	if strings.Contains(normal, "--output-format") || strings.Contains(normal, "--json-out") || strings.Contains(normal, "--html-out") {
+		t.Fatal("scan help exposes Finder-owned export flags")
+	}
+	if !strings.Contains(normal, "--no-outfile") {
+		t.Fatal("scan help missing --no-outfile")
+	}
+}
+
+func TestRemovedScanExportFlagsReturnMigrationErrors(t *testing.T) {
+	for _, flag := range []string{"--output-format", "--json-out", "--html-out", "--csv-out", "--md-out", "--creds-out"} {
+		err := runScan([]string{flag, "value"})
+		if err == nil || !strings.Contains(err.Error(), "no longer supported") {
+			t.Fatalf("%s returned %v, want migration error", flag, err)
+		}
+	}
 }
 
 func TestDeveloperHelpAndDispatch(t *testing.T) {
@@ -62,10 +81,58 @@ func TestDeveloperHelpAndDispatch(t *testing.T) {
 
 func TestFindHelpIncludesDatabaseAlias(t *testing.T) {
 	help := captureCLIStdout(t, func() { _ = runFind([]string{"--help"}) })
-	for _, flag := range []string{"--db", "--dbname"} {
+	for _, flag := range []string{"--db", "--dbname", "--list-id"} {
 		if !strings.Contains(help, flag) {
 			t.Fatalf("find help missing %s", flag)
 		}
+	}
+}
+
+func TestFindListIDPrintsNewestExactIDs(t *testing.T) {
+	database := filepath.Join(t.TempDir(), "scans.db")
+	for _, scanID := range []string{"scan-first-with-a-long-exact-id", "scan-second-with-a-long-exact-id"} {
+		state, err := store.Open(database, store.Options{ScanID: scanID, SnablrVersion: "test", ScanDomain: "synthetic.test", FlushEvery: time.Hour})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := state.SetScanStatus(store.StatusCompleted, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output := captureCLIStdout(t, func() { _ = runFind([]string{"--db", database, "--list-id"}) })
+	if !strings.Contains(output, "SCAN ID\tSTATUS\tSTARTED\tTARGET/DOMAIN") || !strings.Contains(output, "scan-second-with-a-long-exact-id") || !strings.Contains(output, "scan-first-with-a-long-exact-id") {
+		t.Fatalf("unexpected scan listing: %q", output)
+	}
+}
+
+func TestFindListIDEmptyAndConflictingFlags(t *testing.T) {
+	database := filepath.Join(t.TempDir(), "empty.db")
+	state, err := store.Open(database, store.Options{ScanID: "unused", FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	databaseHandle, err := sql.Open("sqlite3", database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := databaseHandle.Exec("DELETE FROM scans"); err != nil {
+		t.Fatal(err)
+	}
+	if err := databaseHandle.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output := captureCLIStdout(t, func() { _ = runFind([]string{"--db", database, "--list-id"}) })
+	if !strings.Contains(output, "No scans found") {
+		t.Fatalf("empty listing = %q", output)
+	}
+	if err := runFind([]string{"--list-id", "--html", "result.html"}); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("conflicting list flags returned %v", err)
 	}
 }
 

@@ -31,10 +31,10 @@ type Provider struct {
 }
 
 type Scan struct {
-	ID, DisplayID, Version, Semantics, Status string
-	Targets                                   string
-	Started, Ended                            time.Time
-	FindingCount                              int
+	ID, DisplayID, Version, Semantics, Status string    `json:"-"`
+	Targets                                   string    `json:"targets"`
+	Started, Ended                            time.Time `json:"-"`
+	FindingCount                              int       `json:"finding_count"`
 }
 
 type ScanCounts struct {

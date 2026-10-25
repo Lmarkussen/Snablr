@@ -176,6 +176,7 @@ type model struct {
 
 type RunOptions struct {
 	ProfileDir string
+	ScanID     string
 }
 
 // Run starts the offline viewer. It only queries the supplied read-only provider.
@@ -196,7 +197,21 @@ func RunWithOptions(ctx context.Context, provider *Provider, scans []Scan, outpu
 	}
 	loadCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	m := &model{provider: provider, ctx: loadCtx, output: output, scans: scans, profiler: profiler, selectingScan: len(scans) > 1, loading: len(scans) == 1, evidenceCache: make(map[string]evidenceCacheItem), list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	selectedScan := 0
+	if strings.TrimSpace(options.ScanID) != "" {
+		selectedScan = -1
+		for index, scan := range scans {
+			if scan.ID == options.ScanID || scan.DisplayID == options.ScanID {
+				selectedScan = index
+				break
+			}
+		}
+		if selectedScan < 0 {
+			return fmt.Errorf("scan %q was not found in the selected database", options.ScanID)
+		}
+	}
+	selectingScan := len(scans) > 1 && strings.TrimSpace(options.ScanID) == ""
+	m := &model{provider: provider, ctx: loadCtx, output: output, scans: scans, selectedScan: selectedScan, profiler: profiler, selectingScan: selectingScan, loading: !selectingScan, evidenceCache: make(map[string]evidenceCacheItem), list: viewport.New(1, 1), preview: viewport.New(1, 1)}
 	program := tea.NewProgram(m, tea.WithOutput(output), tea.WithAltScreen())
 	_, err = program.Run()
 	return err

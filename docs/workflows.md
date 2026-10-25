@@ -15,9 +15,7 @@ Example:
   --targets 10.0.0.5,10.0.0.6 \
   --user 'EXAMPLE\user' \
   --pass 'REPLACE_ME' \
-  --output-format all \
-  --json-out results/direct.json \
-  --html-out results/direct.html
+  --dbname results/snablr.db
 ```
 
 Good fit for:
@@ -68,9 +66,10 @@ Example:
   --targets 10.0.0.5 \
   --user 'EXAMPLE\user' \
   --pass 'REPLACE_ME' \
-  --output-format all \
-  --json-out results.json \
-  --html-out report.html
+  --dbname results/snablr.db
+
+./bin/snablr find --db results/snablr.db --scan-id SCAN_ID \
+  --html results/finder.html --json results/finder.json
 ```
 
 Output locations in this example:
@@ -169,11 +168,7 @@ Recommended command:
 ```bash
 ./bin/snablr scan \
   --config examples/config.domain.yaml \
-  --output-format all \
-  --json-out output/domain/results.json \
-  --html-out output/domain/report.html \
-  --csv-out output/domain/findings.csv \
-  --md-out output/domain/summary.md
+  --dbname output/domain/snablr.db
 ```
 
 ## Tune Noisy Rules

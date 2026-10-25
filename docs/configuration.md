@@ -552,76 +552,30 @@ Recommended practice:
 
 ## `output`
 
-Example:
+Scan export modes are no longer configured here. `snablr scan` always uses
+SQLite plus automatic RAW HTML unless `--no-outfile` is supplied. Finder owns
+interpreted exports:
 
-```yaml
-output:
-  output_format: all
-  json_out: output/results.json
-  html_out: output/report.html
-  csv_out: output/findings.csv
-  md_out: output/summary.md
-  creds_out: output/creds.txt
-  scanned_targets_out: output/scanned_targets.txt
-  pretty: true
+```bash
+snablr find --db output/snablr.db --scan-id SCAN_ID \
+  --html output/finder.html --json output/finder.json
 ```
 
 Fields:
 
-- `output_format`
-  Primary output mode
-- `json_out`
-  JSON report path
-- `html_out`
-  HTML report path
-- `csv_out`
-  Optional CSV sidecar path
-- `md_out`
-  Optional Markdown sidecar path
-- `creds_out`
-  Optional curated credential export path. This writes only primary, high-signal findings with usable credential material into a readable `creds.txt`-style file.
 - `scanned_targets_out`
   Plain-text target audit path. This writes a stable `scanned_targets.txt`-style file showing which targets were discovered, reachable, and actually scanned.
 - `pretty`
-  Pretty-print JSON output
-
-Supported `output_format` values:
-
-- `console`
-- `json`
-- `html`
-- `all`
-
+  Retained for compatibility with shared output configuration; scan exports do not use it.
 ### Output Format Behavior
 
-#### `console`
+Scan output format keys are retained only for compatibility with shared
+configuration parsing. They do not enable scan exports. Use the scan's
+automatic RAW HTML or Finder's `--html` and `--json` exports instead.
 
-- prints findings directly to the terminal
-- best for live operator feedback
-
-#### `json`
-
-- writes one machine-readable report
-- best for automation, scripting, and baseline comparison
-
-#### `html`
-
-- writes one standalone browser report
-- best for post-scan triage and remediation review
-
-#### `all`
-
-- combines console, JSON, and HTML
-- recommended for most scans
-
-Optional sidecar exports:
-
-- `csv_out`
-- `md_out`
-- `creds_out`
-- `scanned_targets_out`
-
-These can be used together with any primary mode.
+The live console and automatic RAW HTML are controlled by the scan lifecycle.
+Finder controls interpreted HTML and JSON exports. `scanned_targets_out` is
+the only retained scan-side output path setting.
 
 ## Realistic Example Profiles
 
@@ -632,7 +586,7 @@ File:
 
 Use it when:
 - you want to scan one known host
-- you want JSON and HTML output immediately
+- you want the automatic RAW HTML output immediately
 - you do not need LDAP discovery
 
 ### Domain-Aware Scan
@@ -676,15 +630,11 @@ snablr scan \
   --pass 'REPLACE_ME'
 ```
 
-Override output locations:
+Export interpreted results with Finder:
 
 ```bash
-snablr scan \
-  --config examples/config.basic.yaml \
-  --json-out output/basic.json \
-  --html-out output/basic.html \
-  --csv-out output/basic.csv \
-  --md-out output/basic.md
+snablr find --db output/snablr.db --scan-id SCAN_ID \
+  --html output/basic.html --json output/basic.json
 ```
 
 Override scope:

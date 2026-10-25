@@ -158,6 +158,17 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			}
 		}
 	}
+	if !opts.NoOutfile {
+		reportPath, reportErr := rawHTMLReportPath(cfg, shadow)
+		if reportErr != nil {
+			return reportErr
+		}
+		cfg.Output.Format = "console,html"
+		cfg.Output.HTMLOut = reportPath
+		if logger != nil {
+			logger.Infof("RAW HTML report: %s", reportPath)
+		}
+	}
 	var authorityMonitorStop chan struct{}
 	authorityFailure := func() error {
 		if !sqliteAuthority || shadow == nil {
@@ -1207,6 +1218,65 @@ func sqliteStatePath(cfg config.Config) string {
 		}
 	}
 	return "snablr.db"
+}
+
+func rawHTMLReportPath(cfg config.Config, shadow *store.SQLiteStore) (string, error) {
+	base := ""
+	if len(cfg.Scan.Targets) == 1 && strings.TrimSpace(cfg.Scan.Targets[0]) != "" {
+		base = cfg.Scan.Targets[0]
+	} else if strings.TrimSpace(cfg.Scan.Domain) != "" {
+		base = cfg.Scan.Domain
+	}
+	if len(cfg.Scan.Targets) != 1 && strings.TrimSpace(cfg.Scan.Domain) == "" {
+		if shadow != nil {
+			base = "snablr_" + shadow.ScanID()
+		} else {
+			base = "snablr_scan"
+		}
+	}
+	base = sanitizeReportComponent(base)
+	if base == "" {
+		base = "snablr_scan"
+	}
+	if len(cfg.Scan.Targets) > 1 {
+		base = "snablr_" + sanitizeReportComponent(shadowID(shadow))
+	}
+	if strings.TrimSpace(cfg.Scan.Domain) != "" && len(cfg.Scan.Targets) != 1 {
+		base = sanitizeReportComponent(cfg.Scan.Domain)
+	}
+	destination := base + "_RAW.html"
+	for index := 2; ; index++ {
+		if _, err := os.Stat(destination); errors.Is(err, os.ErrNotExist) {
+			absolute, absErr := filepath.Abs(destination)
+			if absErr != nil {
+				return "", fmt.Errorf("resolve RAW HTML report path: %w", absErr)
+			}
+			return absolute, nil
+		} else if err != nil {
+			return "", fmt.Errorf("inspect RAW HTML report path %s: %w", destination, err)
+		}
+		destination = fmt.Sprintf("%s_%d_RAW.html", base, index)
+	}
+}
+
+func shadowID(shadow *store.SQLiteStore) string {
+	if shadow == nil {
+		return "scan"
+	}
+	return shadow.ScanID()
+}
+
+func sanitizeReportComponent(value string) string {
+	value = strings.TrimSpace(value)
+	var builder strings.Builder
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '-' || character == '_' {
+			builder.WriteRune(character)
+		} else {
+			builder.WriteByte('_')
+		}
+	}
+	return strings.Trim(builder.String(), "_-")
 }
 
 // DefaultSQLiteStatePath returns the scan database path used when no output

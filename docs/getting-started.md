@@ -1,5 +1,9 @@
 # Getting Started
 
+> Current export workflow: scans persist SQLite and create RAW HTML by default;
+> use `snablr find --html PATH --json PATH` for interpreted exports. The old
+> scan output flags are removed and return migration errors.
+
 Snablr is a defensive SMB share triage tool. It helps you discover likely Windows file share targets, enumerate accessible shares, scan filenames and file content with YAML rules, and produce review-friendly outputs for remediation work.
 
 This guide is the shortest path from a fresh clone to a first useful run.
@@ -94,9 +98,7 @@ Start with one explicit target:
   --targets 10.0.0.5 \
   --user 'EXAMPLE\user' \
   --pass 'REPLACE_ME' \
-  --output-format all \
-  --json-out results.json \
-  --html-out report.html
+  --dbname results/snablr.db
 ```
 
 Replace:
@@ -234,7 +236,6 @@ If you do not provide targets, Snablr tries LDAP discovery by default unless `--
 ./bin/snablr scan \
   --user 'EXAMPLE\user' \
   --pass 'REPLACE_ME' \
-  --output-format console
 ```
 
 Domain-aware example config:
@@ -265,7 +266,6 @@ If you want a fast, narrow validation run:
   --share Finance \
   --path Payroll/ \
   --max-depth 4 \
-  --output-format console
 ```
 
 Or use the example targeted config:
@@ -332,40 +332,19 @@ Category: credentials
 Match: password=Secret123
 ```
 
-### JSON
+### RAW HTML and Finder exports
 
-Best for automation and diff/baseline workflows.
-
-```bash
-./bin/snablr scan \
-  --config examples/config.basic.yaml \
-  --output-format json \
-  --json-out results.json
-```
-
-### HTML
-
-Best for manual triage and remediation review.
-
-```bash
-./bin/snablr scan \
-  --config examples/config.basic.yaml \
-  --output-format html \
-  --html-out report.html
-```
-
-### Combined Output
-
-Recommended for most real runs:
+Scans persist SQLite evidence and automatically write a collision-safe RAW HTML
+report. Use `--no-outfile` to suppress only that report. Finder exports the
+interpreted scope for automation or manual triage:
 
 ```bash
 ./bin/snablr scan \
   --config examples/config.domain.yaml \
-  --output-format all \
-  --json-out output/results.json \
-  --html-out output/report.html \
-  --csv-out output/findings.csv \
-  --md-out output/summary.md
+  --dbname output/snablr.db
+
+./bin/snablr find --db output/snablr.db --scan-id SCAN_ID \
+  --html output/finder.html --json output/finder.json
 ```
 
 ## First Rule Validation
@@ -392,9 +371,9 @@ Run a scan and keep the JSON output:
 ```bash
 ./bin/snablr scan \
   --config examples/config.domain.yaml \
-  --output-format all \
-  --json-out results.json \
-  --html-out report.html
+  --dbname results/snablr.db
+
+./bin/snablr find --db results/snablr.db --scan-id SCAN_ID --json results.json
 ```
 
 Later, compare a new run against that baseline:
@@ -403,9 +382,9 @@ Later, compare a new run against that baseline:
 ./bin/snablr scan \
   --config examples/config.domain.yaml \
   --baseline results.json \
-  --output-format all \
-  --json-out results-new.json \
-  --html-out report-new.html
+  --dbname results-new/snablr.db
+
+./bin/snablr find --db results-new/snablr.db --scan-id SCAN_ID --json results-new.json
 ```
 
 Or compare two existing JSON reports directly:

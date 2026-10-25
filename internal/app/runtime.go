@@ -181,29 +181,19 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if opts.ReachabilityTimeoutSeconds > 0 {
 		cfg.Scan.ReachabilityTimeoutSeconds = opts.ReachabilityTimeoutSeconds
 	}
-	if strings.TrimSpace(opts.OutputFormat) != "" {
-		cfg.Output.Format = opts.OutputFormat
-	}
+	// Scan exports are intentionally owned by the scan lifecycle. Legacy
+	// output settings in YAML must not silently reactivate removed exporters.
+	cfg.Output.Format = "console"
+	cfg.Output.JSONOut = ""
+	cfg.Output.HTMLOut = ""
+	cfg.Output.CSVOut = ""
+	cfg.Output.MDOut = ""
+	cfg.Output.CredsOut = ""
 	if opts.NoTUI {
 		cfg.Output.NoTUI = true
 	}
 	if opts.NoColor {
 		cfg.Output.NoColor = true
-	}
-	if strings.TrimSpace(opts.JSONOut) != "" {
-		cfg.Output.JSONOut = opts.JSONOut
-	}
-	if opts.HTMLOutSet || strings.TrimSpace(opts.HTMLOut) != "" {
-		cfg.Output.HTMLOut = opts.HTMLOut
-	}
-	if strings.TrimSpace(opts.CSVOut) != "" {
-		cfg.Output.CSVOut = opts.CSVOut
-	}
-	if strings.TrimSpace(opts.MDOut) != "" {
-		cfg.Output.MDOut = opts.MDOut
-	}
-	if strings.TrimSpace(opts.CredsOut) != "" {
-		cfg.Output.CredsOut = opts.CredsOut
 	}
 	if strings.TrimSpace(opts.ScannedTargetsOut) != "" {
 		cfg.Output.ScannedTargetsOut = opts.ScannedTargetsOut

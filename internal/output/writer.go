@@ -680,11 +680,11 @@ func (a *atomicOutput) Close() error {
 		_ = os.Remove(a.temporary)
 		return errors.Join(syncErr, closeErr)
 	}
-	if renameErr := os.Rename(a.temporary, a.destination); renameErr != nil {
+	if linkErr := os.Link(a.temporary, a.destination); linkErr != nil {
 		_ = os.Remove(a.temporary)
-		return errors.Join(syncErr, closeErr, renameErr)
+		return errors.Join(syncErr, closeErr, linkErr)
 	}
-	return errors.Join(syncErr, closeErr)
+	return errors.Join(syncErr, closeErr, os.Remove(a.temporary))
 }
 
 func uncPath(f scanner.Finding) string {

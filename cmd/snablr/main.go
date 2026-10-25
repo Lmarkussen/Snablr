@@ -5,11 +5,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"snablr/internal/app"
 	"snablr/internal/findings"
@@ -85,6 +87,24 @@ func isListSharesInvocation(args []string) bool {
 	return false
 }
 
+func rejectRemovedScanOutputFlags(args []string) error {
+	removed := map[string]string{
+		"--output-format": "scan now creates RAW HTML automatically; use `snablr find --html PATH` or `--json PATH` for interpreted exports",
+		"--json-out":      "scan no longer writes JSON directly; use `snablr find --json PATH` after scanning",
+		"--html-out":      "scan now chooses a collision-safe RAW HTML filename; use `snablr find --html PATH` for Finder HTML",
+		"--csv-out":       "scan no longer writes CSV directly; use Finder exports or the persisted SQLite database",
+		"--md-out":        "scan no longer writes Markdown directly; use Finder exports or the persisted SQLite database",
+		"--creds-out":     "scan no longer writes credential exports directly; use Finder and the persisted SQLite database",
+	}
+	for _, arg := range args {
+		name := strings.TrimSpace(strings.SplitN(arg, "=", 2)[0])
+		if message, ok := removed[name]; ok {
+			return fmt.Errorf("%s is no longer supported by `snablr scan`: %s", name, message)
+		}
+	}
+	return nil
+}
+
 func terminalColorEnabled(file *os.File) bool {
 	if file == nil {
 		return false
@@ -129,12 +149,20 @@ func runFind(args []string) error {
 	fs.Usage = func() { printFindUsage() }
 	dbPath := fs.String("db", "", "Path to an existing Snablr SQLite database")
 	dbName := fs.String("dbname", "", "Alias for --db")
+	scanID := fs.String("scan-id", "", "Persisted scan ID or display ID to export or browse")
+	listID := fs.Bool("list-id", false, "List available persisted scan IDs without opening the TUI")
+	htmlPath := fs.String("html", "", "Write the selected Finder projection as an HTML report")
+	jsonPath := fs.String("json", "", "Write the selected Finder projection as JSON")
+	htmlOutCompat := fs.String("html-out", "", "Compatibility alias for --html")
 	profileDir := fs.String("profile-dir", "", "Opt-in Finder CPU, heap, and allocation profiles")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
 		return err
+	}
+	if *listID && (strings.TrimSpace(*htmlPath) != "" || strings.TrimSpace(*jsonPath) != "" || strings.TrimSpace(*htmlOutCompat) != "" || strings.TrimSpace(*scanID) != "") {
+		return fmt.Errorf("--list-id cannot be combined with --html, --json, --html-out, or --scan-id")
 	}
 	path, err := reconcileFinderDatabasePaths(*dbPath, *dbName)
 	if err != nil {
@@ -152,11 +180,42 @@ func runFind(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *listID {
+		printScanIDs(os.Stdout, provider.Path(), scans)
+		return nil
+	}
 	if len(scans) == 0 {
 		fmt.Fprintf(os.Stdout, "No usable scan records found in %s.\n", provider.Path())
 		return nil
 	}
-	return findings.RunWithOptions(context.Background(), provider, scans, os.Stdout, findings.RunOptions{ProfileDir: *profileDir})
+	if strings.TrimSpace(*htmlPath) == "" {
+		*htmlPath = strings.TrimSpace(*htmlOutCompat)
+	} else if strings.TrimSpace(*htmlOutCompat) != "" && filepath.Clean(*htmlPath) != filepath.Clean(*htmlOutCompat) {
+		return fmt.Errorf("--html and --html-out must name the same export path")
+	}
+	if strings.TrimSpace(*htmlPath) != "" || strings.TrimSpace(*jsonPath) != "" {
+		return provider.Export(context.Background(), findings.ExportOptions{ScanID: *scanID, HTMLPath: *htmlPath, JSONPath: *jsonPath})
+	}
+	return findings.RunWithOptions(context.Background(), provider, scans, os.Stdout, findings.RunOptions{ProfileDir: *profileDir, ScanID: *scanID})
+}
+
+func printScanIDs(w io.Writer, databasePath string, scans []findings.Scan) {
+	if len(scans) == 0 {
+		fmt.Fprintf(w, "No scans found in %s.\n", databasePath)
+		return
+	}
+	fmt.Fprintln(w, "SCAN ID\tSTATUS\tSTARTED\tTARGET/DOMAIN")
+	for _, scan := range scans {
+		targets := strings.TrimSpace(scan.Targets)
+		if targets == "" {
+			targets = "-"
+		}
+		started := "-"
+		if !scan.Started.IsZero() {
+			started = scan.Started.Format(time.RFC3339)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", scan.ID, scan.Status, started, targets)
+	}
 }
 
 func reconcileFinderDatabasePaths(dbPath, dbName string) (string, error) {
@@ -183,6 +242,9 @@ func reconcileFinderDatabasePaths(dbPath, dbName string) (string, error) {
 }
 
 func runScan(args []string) error {
+	if err := rejectRemovedScanOutputFlags(args); err != nil {
+		return err
+	}
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
 	fs.Usage = func() { printScanUsage(fs) }
@@ -240,15 +302,10 @@ func runScan(args []string) error {
 	listShares := fs.Bool("list-shares", false, "List readable shares accessible to the authenticated user and exit")
 	skipReachability := fs.Bool("skip-reachability-check", false, "Skip TCP 445 reachability testing before scanning")
 	reachabilityTimeout := fs.Int("reachability-timeout", 0, "Reachability timeout in seconds")
-	outputFormat := fs.String("output-format", "", "Output format: console, json, html, all, or a comma-separated combination like html,json")
 	noTUI := fs.Bool("no-tui", false, "Disable the Bubble Tea live console UI and use plain stdout console output")
 	noColor := fs.Bool("no-color", false, "Disable ANSI colors while preserving status text")
+	noOutfile := fs.Bool("no-outfile", false, "Do not create the automatic RAW HTML report")
 	helpAdvanced := fs.Bool("help-advanced", false, "Show the complete advanced scan flag reference and exit")
-	jsonOut := fs.String("json-out", "", "Path to JSON output file")
-	htmlOut := fs.String("html-out", "", "Path to HTML report file")
-	csvOut := fs.String("csv-out", "", "Path to CSV findings export file")
-	mdOut := fs.String("md-out", "", "Path to Markdown summary export file")
-	credsOut := fs.String("creds-out", "", "Path to curated creds.txt export file")
 	scannedTargetsOut := fs.String("scanned-targets-out", "", "Path to sensitive scanned-target inventory export (default: scanned_targets.txt)")
 	reportBackupArtifacts := fs.Bool("report-backup-artifacts", false, "Collect .bak, .wim, and .mtf file locations into a separate HTML/JSON backup artifact inventory section")
 	logLevel := fs.String("log-level", "", "Log level: debug, info, warn, error")
@@ -304,13 +361,6 @@ func runScan(args []string) error {
 			return fmt.Errorf("--flushdb requires an explicit SQLite database path")
 		}
 	}
-	htmlOutSet := false
-	fs.Visit(func(flag *flag.Flag) {
-		if flag.Name == "html-out" {
-			htmlOutSet = true
-		}
-	})
-
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stopSignals()
 	return app.RunScan(ctx, app.ScanOptions{
@@ -355,15 +405,9 @@ func runScan(args []string) error {
 		ListShares:                 *listShares,
 		SkipReachabilityCheck:      *skipReachability,
 		ReachabilityTimeoutSeconds: *reachabilityTimeout,
-		OutputFormat:               *outputFormat,
+		NoOutfile:                  *noOutfile,
 		NoTUI:                      *noTUI,
 		NoColor:                    *noColor,
-		JSONOut:                    *jsonOut,
-		HTMLOut:                    *htmlOut,
-		HTMLOutSet:                 htmlOutSet,
-		CSVOut:                     *csvOut,
-		MDOut:                      *mdOut,
-		CredsOut:                   *credsOut,
 		ScannedTargetsOut:          *scannedTargetsOut,
 		ReportBackupArtifacts:      *reportBackupArtifacts,
 		WIMEnabled:                 wimEnabled.ptr(),
@@ -718,7 +762,7 @@ func printUsage() {
 	fmt.Println("    snablr scan --targets HOST --domain DOMAIN --username USER --password 'PASSWORD'")
 	fmt.Println()
 	fmt.Println("  Recommended — scan with HTML report:")
-	fmt.Println("    snablr scan --targets HOST --domain DOMAIN --username USER --password 'PASSWORD' --output-format html --html-out report.html")
+	fmt.Println("    snablr scan --targets HOST --domain DOMAIN --username USER --password 'PASSWORD'")
 	fmt.Println()
 	fmt.Println("  Automatic domain discovery:")
 	fmt.Println("    snablr scan --domain DOMAIN --username USER --password 'PASSWORD'")
@@ -735,14 +779,20 @@ func printFindUsage() {
 	printHelpParagraph("Browse persisted Snablr findings and evidence without contacting SMB targets.")
 	printHelpLine("--db PATH", "Open an existing SQLite database instead of the default snablr.db", 30)
 	printHelpLine("--dbname PATH", "Alias for --db; cannot conflict with --db", 30)
+	printHelpLine("--scan-id ID", "Select a persisted scan for deterministic browsing or export", 30)
+	printHelpLine("--list-id", "List persisted scan IDs without loading findings or opening the TUI", 30)
+	printHelpLine("--html PATH", "Export the complete interpreted Finder scope as HTML", 30)
+	printHelpLine("--json PATH", "Export the complete interpreted Finder scope as JSON", 30)
+	printHelpLine("--html-out PATH", "Compatibility alias for --html", 30)
 	printHelpLine("--profile-dir PATH", "Write opt-in Finder CPU, heap, allocation, and stage profiles", 30)
 	fmt.Println()
+	printHelpParagraph("Example: snablr find --db scan.db --list-id")
 	printHelpParagraph("If both database flags are supplied they must name the same file. If omitted, Snablr checks the same default database path used by scan.")
 }
 
 func printScanUsage(fs *flag.FlagSet) {
 	section("Usage", "snablr scan [options]")
-	printHelpParagraph("Scans authorized SMB targets, applies YAML rules, and writes selected reports.")
+	printHelpParagraph("Scans authorized SMB targets, persists evidence in SQLite, and writes a RAW HTML report unless --no-outfile is used.")
 	printHelpParagraph("Use --list-shares to authenticate and enumerate readable shares without scanning files.")
 	fmt.Println()
 	for _, group := range scanHelpGroups(false) {
@@ -767,7 +817,7 @@ func scanHelpGroups(advanced bool) []scanHelpGroup {
 		{Title: "Target and scope", Flags: []string{"targets", "targets-file", "share", "path", "exclude-share", "exclude-path"}},
 		{Title: "Authentication", Flags: []string{"username", "password", "user", "pass", "auth", "smb-auth", "domain", "dc", "no-ldap", "list-shares"}},
 		{Title: "Persistence and execution", Flags: []string{"resume", "force-rescan", "sqlite-state-file", "dbname", "flushdb", "worker-count", "low-memory", "max-scan-time"}},
-		{Title: "Output", Flags: []string{"output-format", "json-out", "html-out", "csv-out", "md-out", "creds-out", "scanned-targets-out", "no-tui", "no-color"}},
+		{Title: "Output", Flags: []string{"no-outfile", "scanned-targets-out", "no-tui", "no-color"}},
 	}
 	if !advanced {
 		return groups

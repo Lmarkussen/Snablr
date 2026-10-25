@@ -469,7 +469,17 @@ func expandCredentialGroups(ctx context.Context, provider *Provider, scanID stri
 			result = append(result, relatedItem)
 		}
 	}
-	return result, nil
+	unique := make(map[string]struct{}, len(result))
+	compacted := make([]Credential, 0, len(result))
+	for _, item := range result {
+		ref := credentialRowRef(item)
+		if _, exists := unique[ref]; exists {
+			continue
+		}
+		unique[ref] = struct{}{}
+		compacted = append(compacted, item)
+	}
+	return compacted, nil
 }
 
 func credentialGroupKey(candidate credentialanalysis.Candidate) string {
@@ -1735,6 +1745,14 @@ func (m *model) fetchEvidence(ref string) evidenceCacheItem {
 		correlation, err := m.provider.Correlation(m.ctx, scanID, key)
 		if err == nil {
 			item.correlation = correlation.Payload
+		}
+	case strings.HasPrefix(ref, "credential:"):
+		id, err := strconv.ParseInt(strings.TrimPrefix(ref, "credential:"), 10, 64)
+		if err == nil {
+			credential, err := m.provider.CredentialByID(m.ctx, scanID, id)
+			if err == nil {
+				item.candidate = &credential.Candidate
+			}
 		}
 	default:
 		credential, err := m.provider.Credential(m.ctx, scanID, ref)

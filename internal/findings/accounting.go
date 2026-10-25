@@ -25,10 +25,15 @@ type ProjectionAudit struct {
 	MissingCredentialKeyRefs []string       `json:"missing_credential_key_refs,omitempty"`
 }
 
-// credentialRowRef is the stable link between a provider row and a Finder
-// discovery. CredentialKey is unique within a scan; the row-ID fallback keeps
-// malformed historical rows traceable without inventing a content key.
+// credentialRowRef is the stable link between a persisted provider row and a
+// Finder discovery. The persisted row ID is authoritative: logical credential
+// keys can recur when relationship expansion rehydrates the seed row, and a
+// content key must not collapse distinct persisted rows. ID-zero values are
+// retained for in-memory projections that do not represent persisted rows.
 func credentialRowRef(item Credential) string {
+	if item.ID != 0 {
+		return fmt.Sprintf("credential:%d", item.ID)
+	}
 	if key := strings.TrimSpace(item.CredentialKey); key != "" {
 		return key
 	}

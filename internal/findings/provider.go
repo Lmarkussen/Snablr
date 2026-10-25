@@ -316,13 +316,15 @@ func (p *Provider) CredentialsAfter(ctx context.Context, scanID string, afterID 
 
 func (p *Provider) CredentialByID(ctx context.Context, scanID string, id int64) (Credential, error) {
 	var item Credential
+	var value string
 	var payload string
-	if err := p.db.QueryRowContext(ctx, `SELECT id,credential_key,payload FROM credentials WHERE scan_id=? AND id=?`, scanID, id).Scan(&item.ID, &item.CredentialKey, &payload); err != nil {
+	if err := p.db.QueryRowContext(ctx, `SELECT id,credential_key,value,payload FROM credentials WHERE scan_id=? AND id=?`, scanID, id).Scan(&item.ID, &item.CredentialKey, &value, &payload); err != nil {
 		return Credential{}, fmt.Errorf("read persisted credential %d: %w", id, err)
 	}
 	if err := json.Unmarshal([]byte(payload), &item.Candidate); err != nil {
 		return Credential{}, fmt.Errorf("decode persisted credential %d: %w", id, err)
 	}
+	item.Candidate.Value = value
 	return item, nil
 }
 

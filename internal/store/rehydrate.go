@@ -117,10 +117,8 @@ func OpenForResume(path string, options ResumeOptions) (*SQLiteStore, ResumeStat
 		return nil, ResumeState{}, fmt.Errorf("open sqlite resume state: %w", err)
 	}
 	cleanup := func(e error) (*SQLiteStore, ResumeState, error) { _ = db.Close(); return nil, ResumeState{}, e }
-	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000"} {
-		if _, err := db.Exec(pragma); err != nil {
-			return cleanup(fmt.Errorf("configure sqlite resume state: %w", err))
-		}
+	if err := configureSQLiteState(db, "sqlite resume state"); err != nil {
+		return cleanup(err)
 	}
 	if err := validateExistingSchema(db); err != nil {
 		return cleanup(err)

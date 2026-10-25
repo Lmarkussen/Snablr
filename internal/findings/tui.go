@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1532,17 +1533,22 @@ func (m *model) evidenceText() string {
 	if d.MaterialType == "correlation" {
 		return correlationEvidenceText(d)
 	}
-	if evidence := discoveryEvidence(d); len(evidence) > 0 {
-		section := "OBSERVED EVIDENCE"
-		if discoveryIsSecretBearing(d) {
-			section = "RECOVERED EVIDENCE"
+	if recovered := recoveredEvidence(d); len(recovered) > 0 {
+		fmt.Fprintf(&b, "%s\n", evidenceSectionForDiscovery("RECOVERED EVIDENCE", d))
+		for _, value := range recovered {
+			b.WriteString(styleCredentialEvidence(value, d))
+			b.WriteByte('\n')
 		}
-		fmt.Fprintf(&b, "%s\n", evidenceSectionForDiscovery(section, d))
+		b.WriteByte('\n')
+	}
+	evidence := distinctEvidence(discoveryEvidence(d), recoveredEvidence(d))
+	if len(evidence) > 0 {
+		fmt.Fprintf(&b, "%s\n", evidenceSectionForDiscovery("OBSERVED EVIDENCE", d))
 		for index, value := range evidence {
 			if len(evidence) > 1 {
 				fmt.Fprintf(&b, "Observation %d\n", index+1)
 			}
-			b.WriteString(evidenceValueForDiscovery(value, d))
+			b.WriteString(styleCredentialEvidence(value, d))
 			b.WriteByte('\n')
 		}
 		b.WriteByte('\n')
@@ -1550,17 +1556,16 @@ func (m *model) evidenceText() string {
 	fmt.Fprintf(&b, "%s\n%s\n\nMaterial family: %s\nMaterial type: %s\nVerification: %s\nConfidence: %s\nPersisted rows: %d\nSource observations: %d\n", evidenceSection("DISCOVERY"), d.Title, firstNonEmpty(d.MaterialFamily, "unknown"), firstNonEmpty(d.MaterialType, "unknown"), firstNonEmpty(d.Verification, "unknown"), firstNonEmpty(d.Confidence, "unknown"), len(d.PersistedRefs), len(d.Sources))
 	if d.RecoveredPassword != "" && d.Identity != "" {
 		fmt.Fprintf(&b, "\n%s\n", evidenceSection("USERNAME + PASSWORD COMBINATION"))
-		fmt.Fprintf(&b, "%s %s\n%s %s\n", evidenceLabel("Username:"), evidenceValue(qualifiedIdentity(d)), evidencePasswordLabel("Password:"), evidenceValue(d.RecoveredPassword))
 		fmt.Fprintf(&b, "Credential kind: database credential\nOrigin type: %s\n", firstNonEmpty(d.OriginType, "Database Credential"))
 	} else if d.Value != "" && isUsernamePasswordType(d.MaterialType) && strings.Contains(strings.ToLower(d.PairingStatus), "password only") {
 		fmt.Fprintf(&b, "\n%s\n", evidenceSection("PASSWORD ONLY — IDENTITY NOT ESTABLISHED"))
 		b.WriteString("Pairing: not confirmed\n")
 		b.WriteString("Username: not safely established\n")
-		fmt.Fprintf(&b, "%s %s\n", evidencePasswordLabel("Password:"), evidenceValue(d.Value))
+		fmt.Fprintf(&b, "%s %s\n", evidencePasswordLabel("Password:"), evidenceSecretValue(d.Value))
 	} else if strings.EqualFold(d.MaterialFamily, "Credentials") && d.Value != "" {
 		if d.Identity != "" {
 			fmt.Fprintf(&b, "\n%s\n", evidenceSection("USERNAME + PASSWORD COMBINATION"))
-			fmt.Fprintf(&b, "%s %s\n%s %s\n", evidenceLabel("Username:"), evidenceValue(qualifiedIdentity(d)), evidencePasswordLabel("Password:"), evidenceValue(d.Value))
+			fmt.Fprintf(&b, "%s %s\n%s %s\n", evidenceLabel("Username:"), evidenceValue(qualifiedIdentity(d)), evidencePasswordLabel("Password:"), evidenceSecretValue(d.Value))
 		}
 		fmt.Fprintf(&b, "Credential kind: %s\nOrigin type: %s\n", firstNonEmpty(credentialKind(d.MaterialType), "credential material"), firstNonEmpty(d.OriginType, "Unknown Origin Credential"))
 	} else if strings.EqualFold(d.MaterialFamily, "Keys & Certificates") {
@@ -1660,6 +1665,83 @@ func (m *model) evidenceText() string {
 		if f.MatchedRuleIDs != nil {
 			fmt.Fprintf(&b, "Rule IDs: %s\n", strings.Join(f.MatchedRuleIDs, ", "))
 		}
+	}
+	return b.String()
+}
+
+func recoveredEvidence(d discovery) []string {
+	if !discoveryIsSecretBearing(d) {
+		return nil
+	}
+	values := make([]string, 0, 3)
+	if d.Identity != "" && (d.RecoveredPassword != "" || d.Value != "") {
+		values = append(values, fmt.Sprintf("Username: %s", qualifiedIdentity(d)))
+	}
+	secret := firstNonEmpty(d.RecoveredPassword, d.Value)
+	if secret != "" {
+		values = append(values, fmt.Sprintf("Password: %s", secret))
+	}
+	if len(values) == 0 {
+		for _, value := range discoveryEvidence(d) {
+			values = appendUnique(values, value)
+		}
+	}
+	return values
+}
+
+func distinctEvidence(values, recovered []string) []string {
+	if len(values) == 0 || len(recovered) == 0 {
+		return values
+	}
+	seen := make(map[string]struct{}, len(recovered)*2)
+	for _, value := range recovered {
+		seen[value] = struct{}{}
+		if labelEnd := strings.IndexByte(value, ':'); labelEnd >= 0 {
+			seen[strings.TrimSpace(value[labelEnd+1:])] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, duplicate := seen[value]; duplicate {
+			continue
+		}
+		result = appendUnique(result, value)
+	}
+	return result
+}
+
+var credentialEvidenceLabelRE = regexp.MustCompile(`(?i)(username|brukernavn|password|passord)\s*:`)
+
+func styleCredentialEvidence(value string, d discovery) string {
+	if !discoveryIsSecretBearing(d) {
+		return evidenceValueForDiscovery(value, d)
+	}
+	matches := credentialEvidenceLabelRE.FindAllStringIndex(value, -1)
+	if len(matches) == 0 {
+		return evidenceValueForDiscovery(value, d)
+	}
+	blue := lipgloss.NewStyle().Foreground(lipgloss.Color("#60A5FA"))
+	orange := lipgloss.NewStyle().Foreground(lipgloss.Color("#FB923C"))
+	var b strings.Builder
+	cursor := 0
+	for index, match := range matches {
+		if match[0] > cursor {
+			style := blue
+			if index > 0 && strings.Contains(strings.ToLower(value[matches[index-1][0]:matches[index-1][1]]), "password") || index > 0 && strings.Contains(strings.ToLower(value[matches[index-1][0]:matches[index-1][1]]), "passord") {
+				style = orange
+			}
+			b.WriteString(style.Render(value[cursor:match[0]]))
+		}
+		b.WriteString(blue.Render(value[match[0]:match[1]]))
+		cursor = match[1]
+	}
+	if cursor < len(value) {
+		style := blue
+		last := strings.ToLower(value[matches[len(matches)-1][0]:matches[len(matches)-1][1]])
+		if strings.Contains(last, "password") || strings.Contains(last, "passord") {
+			style = orange
+		}
+		b.WriteString(style.Render(value[cursor:]))
 	}
 	return b.String()
 }
@@ -1973,11 +2055,15 @@ func evidenceLabel(label string) string {
 }
 
 func evidencePasswordLabel(label string) string {
-	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FB923C")).Render(label)
+	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#60A5FA")).Render(label)
 }
 
 func evidenceValue(value string) string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("#EDF4F8")).Render(value)
+}
+
+func evidenceSecretValue(value string) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#FB923C")).Render(value)
 }
 
 func evidenceValueForDiscovery(value string, d discovery) string {

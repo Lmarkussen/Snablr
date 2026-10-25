@@ -114,18 +114,11 @@ func Open(path string, options Options) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("open sqlite state store: %w", err)
 	}
 	cleanup := func(e error) (*SQLiteStore, error) { _ = db.Close(); return nil, e }
-	for _, pragma := range []string{
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA synchronous=NORMAL",
-		"PRAGMA foreign_keys=ON",
-		"PRAGMA busy_timeout=5000",
-	} {
-		if _, err := db.Exec(pragma); err != nil {
-			return cleanup(fmt.Errorf("configure sqlite state store: %w", err))
-		}
+	if err := configureSQLiteState(db, "sqlite state store"); err != nil {
+		return cleanup(err)
 	}
 	if err := initializeSchema(db); err != nil {
-		return cleanup(err)
+		return cleanup(fmt.Errorf("initialize sqlite state store schema: %w", err))
 	}
 	_ = os.Chmod(path, 0o600)
 	s := &SQLiteStore{db: db, path: path, scanID: options.ScanID, scanDomain: options.ScanDomain, queue: make(chan event, options.QueueSize), batch: options.BatchSize, interval: options.FlushEvery, done: make(chan struct{}), healthy: true, failAfterBatches: options.FailAfterBatches}
@@ -139,6 +132,28 @@ func Open(path string, options Options) (*SQLiteStore, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+func configureSQLiteState(db *sql.DB, operation string) error {
+	for _, pragma := range []string{"PRAGMA synchronous=NORMAL", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000"} {
+		if _, err := db.Exec(pragma); err != nil {
+			return fmt.Errorf("configure %s with %s: %w", operation, pragma, err)
+		}
+	}
+	var journalMode string
+	if err := db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
+		return fmt.Errorf("inspect %s journal mode: %w", operation, err)
+	}
+	if strings.EqualFold(strings.TrimSpace(journalMode), "wal") {
+		return nil
+	}
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "database is locked") || strings.Contains(strings.ToLower(err.Error()), "database is busy") {
+			return fmt.Errorf("configure %s journal mode (database is busy; close active Finder/export readers or retry after they finish): %w", operation, err)
+		}
+		return fmt.Errorf("configure %s journal mode: %w", operation, err)
+	}
+	return nil
 }
 
 func initializeSchema(db *sql.DB) error {

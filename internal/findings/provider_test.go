@@ -43,6 +43,28 @@ func makeFixtureDB(t *testing.T, scanIDs ...string) string {
 	return path
 }
 
+func TestCredentialByIDRestoresAuthoritativeValue(t *testing.T) {
+	path := makeFixtureDB(t, "credential-by-id")
+	provider, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+
+	credentials, err := provider.Credentials(context.Background(), "credential-by-id", 0, 10)
+	if err != nil || len(credentials) != 1 {
+		t.Fatalf("credentials = %#v, err = %v", credentials, err)
+	}
+	id := credentials[0].ID
+	credential, err := provider.CredentialByID(context.Background(), "credential-by-id", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential.Candidate.Identity != "synthetic-user" || credential.Candidate.Value != "SyntheticPassword!" {
+		t.Fatalf("credential by id lost recovered values: %#v", credential.Candidate)
+	}
+}
+
 func TestOpenRejectsMissingWithoutCreating(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.db")
 	if _, err := Open(path); err == nil {

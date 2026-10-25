@@ -152,6 +152,38 @@ func TestDiscoverySelectionUpdatesFullDetailsWithoutEvidenceScreen(t *testing.T)
 	}
 }
 
+func TestRecoveredCredentialStylingAndDeduplication(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(previous)
+
+	d := discovery{MaterialFamily: "Credentials", MaterialType: "password", Identity: "charlie", Value: "SyntheticSecret!", Verification: "confirmed"}
+	m := &model{scans: []Scan{{ID: "scan"}}, categories: []category{{Name: "Credentials", Discoveries: []discovery{d}}}, screen: screenDiscoveries, discoveries: []discovery{d}, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
+	m.resizeTo(120, 40)
+	view := m.preview.View()
+	if strings.Count(view, "RECOVERED EVIDENCE") != 1 {
+		t.Fatalf("recovered evidence block duplicated: %q", view)
+	}
+	if strings.Index(view, "Username: charlie") > strings.Index(view, "DISCOVERY") || strings.Index(view, "Password: SyntheticSecret!") > strings.Index(view, "DISCOVERY") {
+		t.Fatalf("recovered values did not precede classification: %q", view)
+	}
+	blue := "\x1b[38;2;96;165;250m"
+	orange := "\x1b[38;2;251;146;60m"
+	if !strings.Contains(view, blue+"Username:") || !strings.Contains(view, blue+" charlie") || !strings.Contains(view, blue+"Password:") || !strings.Contains(view, orange+" SyntheticSecret!") {
+		t.Fatalf("final rendered pane did not preserve field-level credential colors: %q", view)
+	}
+	if strings.Contains(view, "OBSERVED EVIDENCE") {
+		t.Fatalf("duplicate recovered value was rendered as observed evidence: %q", view)
+	}
+	styled := styleCredentialEvidence("Brukernavn: charlie Passord: SyntheticSecret!", d)
+	if !strings.Contains(styled, blue) || !strings.Contains(styled, orange) {
+		t.Fatalf("credential labels/values were not colored: %q", styled)
+	}
+	if strings.Index(styled, orange) <= strings.Index(styled, "Passord:") {
+		t.Fatalf("password color began before password label: %q", styled)
+	}
+}
+
 func TestEvidenceFirstAndSecretHighlighting(t *testing.T) {
 	previous := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
@@ -475,6 +507,13 @@ func TestCredentialOriginClassificationAndPresentation(t *testing.T) {
 	m := &model{scans: []Scan{{ID: "scan"}}, categories: categories, screen: screenDiscoveries, discoveries: categories[0].Discoveries, list: viewport.New(1, 1), preview: viewport.New(1, 1)}
 	m.resizeTo(120, 40)
 	details := m.preview.View()
+	recovered := strings.Index(details, "RECOVERED EVIDENCE")
+	classification := strings.Index(details, "DISCOVERY")
+	username := strings.Index(details, "Username: SYNTHETIC\\join-xml")
+	password := strings.Index(details, "Password: Synthetic-SCCM-XML-482!")
+	if recovered < 0 || classification < 0 || username < recovered || password < recovered || username > classification || password > classification {
+		t.Fatalf("recovered pair was not shown before classification: %q", details)
+	}
 	for _, want := range []string{"RECOVERED EVIDENCE", "Synthetic-SCCM-XML-482!", "USERNAME + PASSWORD COMBINATION", "Username: SYNTHETIC\\join-xml", "Password: Synthetic-SCCM-XML-482!", "Origin type: SCCM / MECM Credential"} {
 		if !strings.Contains(details, want) {
 			t.Fatalf("details missing %q: %q", want, details)

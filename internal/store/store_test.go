@@ -724,3 +724,40 @@ func TestSchemaThreeMigrationAddsDerivedAndCorrelationState(t *testing.T) {
 		t.Fatalf("schema version=%q, want 3", version)
 	}
 }
+
+func TestOpenWithFinderStyleReadTransactionOnWAL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scan.db")
+	state, err := Open(path, Options{ScanID: "initial", Semantics: "synthetic", BatchSize: 1, FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reader, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	tx, err := reader.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	var count int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM scans").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(path, Options{ScanID: "concurrent", Semantics: "synthetic", BatchSize: 1, FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatalf("scanner startup failed while Finder-style read transaction was open: %v", err)
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

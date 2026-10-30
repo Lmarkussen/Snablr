@@ -121,58 +121,94 @@ type evidenceCacheItem struct {
 }
 
 type model struct {
-	provider                *Provider
-	ctx                     context.Context
-	output                  io.Writer
-	scans                   []Scan
-	selectedScan            int
-	selectingScan           bool
-	screen                  screen
-	focus                   int
-	selected                int
-	selectedSub             int
-	selectedDisc            int
-	categories              []category
-	allMaterial             category
-	subs                    []string
-	discoveries             []discovery
-	findings                []Finding
-	width, height           int
-	list, preview           viewport.Model
-	previewHeight           int
-	status                  string
-	filter                  string
-	filterMode              bool
-	discoveryTotal          int
-	discoverySource         []discovery
-	loading                 bool
-	browseLoading           bool
-	accountingComplete      bool
-	totals                  ScanCounts
-	loadError               string
-	loadedFindings          []Finding
-	loadedCreds             []Credential
-	loadedCorrs             []Correlation
-	findingCursor           int64
-	credentialCursor        int64
-	correlationCursor       string
-	findingsDone            bool
-	credentialsDone         bool
-	correlationsDone        bool
-	browseStart             browseCursor
-	browseHistory           []browseCursor
-	searchQuery             string
-	searchFindingCursor     int64
-	searchCredentialCursor  int64
-	searchCorrelationCursor string
-	searchDone              bool
-	searchLoading           bool
-	searchStart             searchCursor
-	searchHistory           []searchCursor
-	evidenceCache           map[string]evidenceCacheItem
-	evidenceOrder           []string
-	evidenceBytes           int
-	profiler                *finderProfiler
+	provider                 *Provider
+	ctx                      context.Context
+	output                   io.Writer
+	scans                    []Scan
+	selectedScan             int
+	selectingScan            bool
+	screen                   screen
+	focus                    int
+	selected                 int
+	selectedSub              int
+	selectedDisc             int
+	categories               []category
+	allMaterial              category
+	subs                     []string
+	discoveries              []discovery
+	findings                 []Finding
+	width, height            int
+	list, preview            viewport.Model
+	previewHeight            int
+	status                   string
+	filter                   string
+	filterMode               bool
+	discoveryTotal           int
+	discoverySource          []discovery
+	loading                  bool
+	browseLoading            bool
+	accountingComplete       bool
+	totals                   ScanCounts
+	loadError                string
+	loadedFindings           []Finding
+	loadedCreds              []Credential
+	loadedCorrs              []Correlation
+	findingCursor            int64
+	credentialCursor         int64
+	correlationCursor        string
+	findingsDone             bool
+	credentialsDone          bool
+	correlationsDone         bool
+	browseStart              browseCursor
+	browseHistory            []browseCursor
+	searchQuery              string
+	searchFindingCursor      int64
+	searchCredentialCursor   int64
+	searchCorrelationCursor  string
+	searchDone               bool
+	searchLoading            bool
+	searchStart              searchCursor
+	searchHistory            []searchCursor
+	evidenceCache            map[string]evidenceCacheItem
+	evidenceOrder            []string
+	evidenceBytes            int
+	profiler                 *finderProfiler
+	globalSearchOpen         bool
+	globalSearchInput        bool
+	globalSearchQuery        string
+	globalSearchCategory     GlobalSearchCategory
+	globalSearchResults      []GlobalSearchResult
+	globalSearchSelected     int
+	globalSearchOffset       int
+	globalSearchPhase        int
+	globalSearchPagePhase    int
+	globalSearchPageOffset   int
+	globalSearchPageIndex    int
+	globalSearchMaxPageIndex int
+	globalSearchMatchCount   int
+	globalSearchPriorPages   map[int]int
+	globalSearchEndReached   bool
+	globalSearchLoading      bool
+	globalSearchDone         bool
+	globalSearchGeneration   uint64
+	globalSearchDetail       bool
+	globalSearchDetailOffset int
+	globalSearchStatus       string
+	globalSearchCancel       context.CancelFunc
+}
+
+type globalSearchLoadedMsg struct {
+	generation uint64
+	query      string
+	category   GlobalSearchCategory
+	phase      int
+	offset     int
+	pageIndex  int
+	nextPhase  int
+	nextOffset int
+	done       bool
+	results    []GlobalSearchResult
+	err        error
 }
 
 type RunOptions struct {
@@ -215,6 +251,9 @@ func RunWithOptions(ctx context.Context, provider *Provider, scans []Scan, outpu
 	m := &model{provider: provider, ctx: loadCtx, output: output, scans: scans, selectedScan: selectedScan, profiler: profiler, selectingScan: selectingScan, loading: !selectingScan, evidenceCache: make(map[string]evidenceCacheItem), list: viewport.New(1, 1), preview: viewport.New(1, 1)}
 	program := tea.NewProgram(m, tea.WithOutput(output), tea.WithAltScreen())
 	_, err = program.Run()
+	// Bubble Tea does not wait for command goroutines on exit. Cancel Finder's
+	// search before the caller closes the provider's one-connection SQLite pool.
+	m.cancelGlobalSearch()
 	return err
 }
 
@@ -1060,6 +1099,55 @@ func (m *model) Init() tea.Cmd {
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case globalSearchLoadedMsg:
+		if msg.generation != m.globalSearchGeneration || msg.query != m.globalSearchQuery || msg.category != m.globalSearchCategory {
+			return m, nil
+		}
+		m.globalSearchLoading = false
+		if msg.err != nil {
+			m.globalSearchStatus = "Search failed: " + msg.err.Error()
+		} else {
+			if len(msg.results) > 0 {
+				backward := msg.pageIndex < m.globalSearchPageIndex
+				m.globalSearchResults = msg.results
+				m.globalSearchSelected = 0
+				if backward {
+					m.globalSearchSelected = len(msg.results) - 1
+				}
+				m.globalSearchPageIndex = msg.pageIndex
+				if msg.pageIndex > m.globalSearchMaxPageIndex || m.globalSearchMatchCount == 0 {
+					m.globalSearchMaxPageIndex = msg.pageIndex
+					m.globalSearchMatchCount += len(msg.results)
+				}
+				resultPhase := msg.nextPhase
+				if len(msg.results) < globalSearchPageSize {
+					resultPhase--
+				}
+				resultOffset := 0
+				if resultPhase == msg.phase {
+					resultOffset = msg.offset
+				}
+				m.globalSearchPagePhase, m.globalSearchPageOffset = resultPhase, resultOffset
+				if m.globalSearchPriorPages == nil {
+					m.globalSearchPriorPages = make(map[int]int)
+				}
+				if prior, seen := m.globalSearchPriorPages[resultPhase]; !seen || resultOffset > prior {
+					m.globalSearchPriorPages[resultPhase] = resultOffset
+				}
+			}
+			m.globalSearchDone = msg.done
+			m.globalSearchPhase, m.globalSearchOffset = msg.nextPhase, msg.nextOffset
+			m.globalSearchEndReached = m.globalSearchEndReached || msg.done
+			if m.globalSearchEndReached && m.globalSearchPageIndex == m.globalSearchMaxPageIndex {
+				m.globalSearchDone = true
+			}
+			if m.globalSearchDone && m.globalSearchPageIndex == m.globalSearchMaxPageIndex {
+				m.globalSearchStatus = fmt.Sprintf("%d match(es) · end of results", m.globalSearchMatchCount)
+			} else {
+				m.globalSearchStatus = fmt.Sprintf("%d match(es) on this page · PageDown for more", len(m.globalSearchResults))
+			}
+		}
+		return m, nil
 	case scanLoadedMsg:
 		cmd := m.applyScanLoaded(msg)
 		if m.width > 0 && m.height > 0 {
@@ -1082,6 +1170,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.resize()
 	case tea.KeyMsg:
+		if m.globalSearchOpen {
+			return m, m.updateGlobalSearchKey(msg)
+		}
 		if m.loading {
 			if msg.String() == "ctrl+c" {
 				return m, tea.Quit
@@ -1093,6 +1184,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch msg.String() {
+		case "ctrl+f":
+			m.globalSearchOpen, m.globalSearchInput = true, true
+			m.globalSearchCategory = SearchAll
+			m.globalSearchQuery, m.globalSearchResults = "", nil
+			m.globalSearchSelected, m.globalSearchOffset, m.globalSearchPhase = 0, 0, 0
+			m.globalSearchPagePhase, m.globalSearchPageOffset, m.globalSearchPageIndex = 0, 0, 0
+			m.globalSearchMaxPageIndex, m.globalSearchMatchCount = 0, 0
+			m.globalSearchPriorPages = nil
+			m.globalSearchEndReached = false
+			m.globalSearchDetail, m.globalSearchLoading, m.globalSearchDone = false, false, false
+			m.globalSearchStatus = "Type a query and press Enter · Esc closes search"
+			m.globalSearchGeneration++
+			return m, nil
 		case "ctrl+c":
 			return m, tea.Quit
 		case "tab":
@@ -1119,6 +1223,196 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m *model) updateGlobalSearchKey(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "tab", "right":
+		if !m.globalSearchDetail {
+			return m.changeGlobalSearchCategory(1)
+		}
+	case "shift+tab", "left":
+		if !m.globalSearchDetail {
+			return m.changeGlobalSearchCategory(-1)
+		}
+	case "esc":
+		if m.globalSearchDetail {
+			m.globalSearchDetail = false
+			return nil
+		}
+		m.cancelGlobalSearch()
+		m.globalSearchGeneration++
+		m.globalSearchOpen, m.globalSearchInput = false, false
+		return nil
+	case "ctrl+c":
+		m.cancelGlobalSearch()
+		m.globalSearchGeneration++
+		return tea.Quit
+	case "enter":
+		if m.globalSearchDetail {
+			return nil
+		}
+		if m.globalSearchInput {
+			m.globalSearchInput = false
+			m.globalSearchOffset, m.globalSearchPhase = 0, 0
+			m.globalSearchResults = nil
+			m.globalSearchDone = false
+			m.globalSearchPageIndex, m.globalSearchMaxPageIndex, m.globalSearchMatchCount = 0, 0, 0
+			m.globalSearchPriorPages = nil
+			m.globalSearchEndReached = false
+			return m.globalSearchPageCmd(0, 0, 0)
+		}
+		if len(m.globalSearchResults) > 0 {
+			m.globalSearchDetail = true
+			m.globalSearchDetailOffset = 0
+		}
+	case "backspace":
+		if m.globalSearchInput {
+			r := []rune(m.globalSearchQuery)
+			if len(r) > 0 {
+				m.globalSearchQuery = string(r[:len(r)-1])
+			}
+		}
+	case "up", "k":
+		if m.globalSearchDetail {
+			m.globalSearchDetailOffset = max(0, m.globalSearchDetailOffset-1)
+			return nil
+		}
+		if !m.globalSearchInput && len(m.globalSearchResults) > 0 {
+			m.globalSearchSelected = max(0, m.globalSearchSelected-1)
+		}
+	case "down", "j":
+		if m.globalSearchDetail {
+			m.globalSearchDetailOffset++
+			return nil
+		}
+		if !m.globalSearchInput && len(m.globalSearchResults) > 0 {
+			m.globalSearchSelected = min(len(m.globalSearchResults)-1, m.globalSearchSelected+1)
+		}
+	case "pgup":
+		if m.globalSearchDetail {
+			m.globalSearchDetailOffset = max(0, m.globalSearchDetailOffset-max(1, m.height-10))
+			return nil
+		}
+		if !m.globalSearchInput {
+			if m.globalSearchPageIndex > 0 && !m.globalSearchLoading {
+				phase, offset := m.globalSearchPagePhase, m.globalSearchPageOffset
+				if offset >= globalSearchPageSize {
+					return m.globalSearchPageCmd(phase, offset-globalSearchPageSize, m.globalSearchPageIndex-1)
+				}
+				for priorPhase := phase - 1; priorPhase >= 0; priorPhase-- {
+					if priorOffset, ok := m.globalSearchPriorPages[priorPhase]; ok {
+						return m.globalSearchPageCmd(priorPhase, priorOffset, m.globalSearchPageIndex-1)
+					}
+				}
+			}
+			m.globalSearchSelected = 0
+		}
+	case "pgdown", "space":
+		if m.globalSearchDetail {
+			m.globalSearchDetailOffset += max(1, m.height-10)
+			return nil
+		}
+		if !m.globalSearchInput {
+			if m.globalSearchSelected+1 < len(m.globalSearchResults) {
+				m.globalSearchSelected = min(len(m.globalSearchResults)-1, m.globalSearchSelected+10)
+			} else if !m.globalSearchLoading && !m.globalSearchDone {
+				return m.globalSearchPageCmd(m.globalSearchPhase, m.globalSearchOffset, m.globalSearchPageIndex+1)
+			}
+		}
+	default:
+		if m.globalSearchInput && msg.Type == tea.KeyRunes {
+			m.globalSearchQuery += string(msg.Runes)
+		}
+	}
+	return nil
+}
+
+func (m *model) changeGlobalSearchCategory(delta int) tea.Cmd {
+	index := 0
+	for i, category := range globalSearchCategories {
+		if category == m.globalSearchCategory {
+			index = i
+			break
+		}
+	}
+	m.globalSearchCategory = globalSearchCategories[(index+delta+len(globalSearchCategories))%len(globalSearchCategories)]
+	m.cancelGlobalSearch()
+	m.globalSearchGeneration++
+	m.globalSearchResults = nil
+	m.globalSearchSelected, m.globalSearchPhase, m.globalSearchOffset = 0, 0, 0
+	m.globalSearchPagePhase, m.globalSearchPageOffset, m.globalSearchPageIndex = 0, 0, 0
+	m.globalSearchMaxPageIndex, m.globalSearchMatchCount = 0, 0
+	m.globalSearchPriorPages = nil
+	m.globalSearchEndReached = false
+	m.globalSearchDetail, m.globalSearchLoading, m.globalSearchDone = false, false, false
+	if m.globalSearchInput || m.globalSearchQuery == "" {
+		m.globalSearchStatus = "Type a query and press Enter · Esc closes search"
+		return nil
+	}
+	m.globalSearchStatus = "Searching..."
+	return m.globalSearchPageCmd(0, 0, 0)
+}
+
+func (m *model) globalSearchPageCmd(phase, offset, pageIndex int) tea.Cmd {
+	m.cancelGlobalSearch()
+	m.globalSearchLoading = true
+	m.globalSearchGeneration++
+	generation, query, category, scanID := m.globalSearchGeneration, m.globalSearchQuery, m.globalSearchCategory, m.scans[m.selectedScan].ID
+	searchCtx, cancel := context.WithCancel(m.ctx)
+	m.globalSearchCancel = cancel
+	return func() tea.Msg {
+		defer cancel()
+		rows, nextPhase, nextOffset, done, err := m.provider.GlobalSearchCategoryPage(searchCtx, scanID, query, category, phase, offset, globalSearchPageSize)
+		return globalSearchLoadedMsg{generation: generation, query: query, category: category, phase: phase, offset: offset, pageIndex: pageIndex, nextPhase: nextPhase, nextOffset: nextOffset, done: done, results: rows, err: err}
+	}
+}
+
+func (m *model) cancelGlobalSearch() {
+	if m.globalSearchCancel != nil {
+		m.globalSearchCancel()
+		m.globalSearchCancel = nil
+	}
+}
+
+func (m *model) globalSearchView() string {
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42")).Render("SNABLR // GLOBAL SEARCH")
+	line := "Query: " + m.globalSearchQuery
+	if m.globalSearchInput {
+		line += "▏"
+	}
+	category := m.globalSearchCategory
+	if category == "" {
+		category = SearchAll
+	}
+	lines := []string{title, "", line, "Category: [" + string(category) + "]  Tab / Shift-Tab to change", "", m.globalSearchStatus, ""}
+	if m.globalSearchDetail && len(m.globalSearchResults) > 0 {
+		r := m.globalSearchResults[m.globalSearchSelected]
+		lines = append(lines, fmt.Sprintf("%s · %s · record %s", r.Kind, r.Field, r.ID), "Source: "+truncateDisplay(r.Context, max(20, m.width-12)), "", "Persisted matching field and evidence:")
+		evidenceLines := strings.Split(wrapDetails("Source: "+r.Context+"\n"+r.Value, max(20, m.width-8)), "\n")
+		visible := max(1, m.height-len(lines)-4)
+		m.globalSearchDetailOffset = clamp(m.globalSearchDetailOffset, 0, max(0, len(evidenceLines)-visible))
+		end := min(len(evidenceLines), m.globalSearchDetailOffset+visible)
+		lines = append(lines, evidenceLines[m.globalSearchDetailOffset:end]...)
+	} else {
+		start := max(0, m.globalSearchSelected-max(0, (m.height-11)/2))
+		end := min(len(m.globalSearchResults), start+max(1, m.height-10))
+		for i := start; i < end; i++ {
+			r := m.globalSearchResults[i]
+			marker := "  "
+			if i == m.globalSearchSelected {
+				marker = "> "
+			}
+			contextPreview := strings.ReplaceAll(strings.ReplaceAll(r.Context, "\n", " "), "\r", " ")
+			lines = append(lines, truncateDisplay(fmt.Sprintf("%s[%s] %s · %s · %s", marker, r.Kind, r.Field, r.ID, contextPreview), max(20, m.width-8)), "    "+truncateDisplay(contextPreview, max(20, m.width-12)))
+		}
+	}
+	footer := "↑/↓ select · Enter inspect · PgUp/PgDn scroll · Esc return to Finder"
+	if m.globalSearchInput {
+		footer = "Type query · Enter search · Esc return to Finder"
+	}
+	content := strings.Join(lines, "\n") + "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(footer)
+	return lipgloss.NewStyle().Width(max(20, m.width-4)).Height(max(1, m.height-2)).Padding(1, 2).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Render(content)
 }
 
 func (m *model) toggleFocus() {
@@ -2145,6 +2439,9 @@ func (m *model) resize() {
 }
 
 func (m *model) View() string {
+	if m.globalSearchOpen {
+		return m.globalSearchView()
+	}
 	if m.width < 1 || m.height < 1 {
 		return "Loading Findings Engine..."
 	}

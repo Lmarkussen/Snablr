@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -62,6 +64,493 @@ func TestCredentialByIDRestoresAuthoritativeValue(t *testing.T) {
 	}
 	if credential.Candidate.Identity != "synthetic-user" || credential.Candidate.Value != "SyntheticPassword!" {
 		t.Fatalf("credential by id lost recovered values: %#v", credential.Candidate)
+	}
+}
+
+func TestGlobalSearchFindsPersistedFilenameEvidenceCredentialAndLiteralText(t *testing.T) {
+	path := makeFixtureDB(t, "global-search")
+	p, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	for _, query := range []string{"evidence.txt", "synthetic-value", "synthetic-user", "SyntheticPassword!", "synthetic", "SYNTHETIC"} {
+		rows, err := p.GlobalSearch(context.Background(), "global-search", query, globalSearchPageSize, 0)
+		if err != nil {
+			t.Fatalf("search %q: %v", query, err)
+		}
+		if len(rows) == 0 {
+			t.Fatalf("search %q returned no persisted records", query)
+		}
+	}
+	for _, literal := range []string{"%", "_", "'", "!"} {
+		// Searches are literal: metacharacters may return real matches but must
+		// never be parsed as SQL syntax or cause an error.
+		if _, err := p.GlobalSearch(context.Background(), "global-search", literal, globalSearchPageSize, 0); err != nil {
+			t.Fatalf("literal search %q: %v", literal, err)
+		}
+	}
+}
+
+func TestGlobalSearchPaginatesPastFiveHundredFindings(t *testing.T) {
+	path := makeFixtureDB(t, "global-search-pages")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 510; i++ {
+		name := fmt.Sprintf("/fixture/deepterm-%03d-æøå_%%.cfg", i)
+		payload := fmt.Sprintf(`{"rule_id":"fixture.rule","category":"test","file_path":%q}`, name)
+		if _, err := db.Exec(`INSERT INTO findings(scan_id,fingerprint,payload,path,rule_id,category,host,share) VALUES(?,?,?,?,?,?,?,?)`, "global-search-pages", fmt.Sprintf("fingerprint-%03d", i), payload, name, "fixture.rule", "test", "host", "share"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	first, err := p.GlobalSearch(context.Background(), "global-search-pages", "deepterm", globalSearchPageSize, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last, err := p.GlobalSearch(context.Background(), "global-search-pages", "deepterm", globalSearchPageSize, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 5 || len(last) != 5 {
+		t.Fatalf("page sizes = %d and %d, want 5 and 5", len(first), len(last))
+	}
+	unicode, err := p.GlobalSearch(context.Background(), "global-search-pages", "ÆØÅ_%", globalSearchPageSize, 0)
+	if err != nil || len(unicode) == 0 {
+		t.Fatalf("Unicode/literal search = %d rows, %v", len(unicode), err)
+	}
+	if rows := collectCategoryResults(t, p, "global-search-pages", "deepterm", SearchFiles); len(rows) != 510 {
+		t.Fatalf("Files & Paths search past 500 findings returned %d rows", len(rows))
+	}
+	if rows := collectCategoryResults(t, p, "global-search-pages", "ÆØÅ_%", SearchFiles); len(rows) != 510 {
+		t.Fatalf("Files & Paths literal Unicode search returned %d rows", len(rows))
+	}
+	if rows := collectCategoryResults(t, p, "global-search-pages", "ÆØÅ_X", SearchFiles); len(rows) != 0 {
+		t.Fatalf("Files & Paths treated literal %% or _ as a wildcard: %d rows", len(rows))
+	}
+}
+
+func TestGlobalSearchConcurrentReadersCancellationAndRepeatedQueries(t *testing.T) {
+	path := makeFixtureDB(t, "global-search-concurrent")
+	p, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	const workers = 8
+	var wg sync.WaitGroup
+	errCh := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rows, err := p.GlobalSearch(context.Background(), "global-search-concurrent", "synthetic", globalSearchPageSize, 0)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if len(rows) == 0 {
+				errCh <- fmt.Errorf("concurrent query lost fixture match")
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := p.GlobalSearch(ctx, "global-search-concurrent", "synthetic", globalSearchPageSize, 0); err == nil {
+		t.Fatal("canceled database search unexpectedly succeeded")
+	}
+	for i := 0; i < 10; i++ {
+		if _, err := p.GlobalSearch(context.Background(), "global-search-concurrent", "SyntheticPassword", globalSearchPageSize, 0); err != nil {
+			t.Fatalf("search cycle %d: %v", i, err)
+		}
+	}
+}
+
+func TestGlobalSearchCancelsActiveSQLiteScan(t *testing.T) {
+	path := makeFixtureDB(t, "global-search-active-cancel")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmt, err := tx.Prepare(`INSERT INTO findings(scan_id,fingerprint,payload,path,rule_id,category,host,share) VALUES(?,?,?,?,?,?,?,?)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 50000; i++ {
+		pathValue := fmt.Sprintf("/cancel-scan/%06d.cfg", i)
+		payload := fmt.Sprintf(`{"rule_id":"fixture.rule","file_path":%q,"matched_text":"absent"}`, pathValue)
+		if _, err := stmt.Exec("global-search-active-cancel", fmt.Sprintf("cancel-%06d", i), payload, pathValue, "fixture.rule", "test", "host", "share"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := stmt.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := p.GlobalSearch(ctx, "global-search-active-cancel", "guaranteed-no-match", globalSearchPageSize, 0)
+		done <- err
+	}()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	for p.db.Stats().InUse == 0 {
+		select {
+		case err := <-done:
+			cancel()
+			if err != nil {
+				t.Fatalf("search ended before becoming cancellable: %v", err)
+			}
+			t.Fatal("fixture query completed before cancellation could be issued")
+		case <-deadline.C:
+			cancel()
+			t.Fatal("global search never acquired its SQLite connection")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("active search was not interrupted by context cancellation")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("active SQLite search did not stop after context cancellation")
+	}
+	categoryCtx, cancelCategory := context.WithCancel(context.Background())
+	categoryDone := make(chan error, 1)
+	go func() {
+		_, _, _, _, err := p.GlobalSearchCategoryPage(categoryCtx, "global-search-active-cancel", "guaranteed-no-match", SearchContent, 0, 0, globalSearchPageSize)
+		categoryDone <- err
+	}()
+	categoryDeadline := time.NewTimer(5 * time.Second)
+	defer categoryDeadline.Stop()
+	for p.db.Stats().InUse == 0 {
+		select {
+		case err := <-categoryDone:
+			cancelCategory()
+			t.Fatalf("categorized search completed before cancellation: %v", err)
+		case <-categoryDeadline.C:
+			cancelCategory()
+			t.Fatal("categorized search never acquired its SQLite connection")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	cancelCategory()
+	select {
+	case err := <-categoryDone:
+		if err == nil {
+			t.Fatal("active categorized search was not interrupted")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("categorized SQLite search did not stop after cancellation")
+	}
+}
+
+func TestGlobalSearchUsesAuthoritativeCredentialValueAndPayload(t *testing.T) {
+	path := makeFixtureDB(t, "global-search-authoritative")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := `Secret%_"'\\!æøå.,:;@#$^&*()+[]{}=|?/`
+	if _, err := db.Exec(`INSERT INTO credentials(scan_id,credential_key,credential_type,identity,value,payload) VALUES(?,?,?,?,?,?)`, "global-search-authoritative", "password|fixture-user|evidence.txt|persisted", "password", "fixture-user", secret, `{"additional_evidence":"PayloadNeedle-ø"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	byValue, err := p.GlobalSearch(context.Background(), "global-search-authoritative", `%_"'\\!æøå`, globalSearchPageSize, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var credential *GlobalSearchResult
+	for i := range byValue {
+		if byValue[i].Kind == "credential" && byValue[i].Field == "credential value" {
+			credential = &byValue[i]
+			break
+		}
+	}
+	if credential == nil {
+		t.Fatal("authoritative credentials.value did not match")
+	}
+	if !strings.Contains(credential.Value, secret) || !strings.Contains(credential.Value, "evidence.txt") {
+		t.Fatal("result did not preserve the full credential value and source association")
+	}
+	byPayload, err := p.GlobalSearch(context.Background(), "global-search-authoritative", "PayloadNeedle-Ø", globalSearchPageSize, 0)
+	if err != nil || len(byPayload) == 0 {
+		t.Fatalf("credential payload search = %d results, %v", len(byPayload), err)
+	}
+	user, err := p.GlobalSearch(context.Background(), "global-search-authoritative", "FIXTURE-USER", globalSearchPageSize, 0)
+	if err != nil || len(user) == 0 {
+		t.Fatalf("username search = %d results, %v", len(user), err)
+	}
+}
+
+func TestGlobalSearchFirstPagePrioritizesVisibleCredentialOverAccessMatches(t *testing.T) {
+	path := makeFixtureDB(t, "global-search-priority")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	largeKey := strings.Repeat("long-credential-key-", 1000)
+	if _, err := db.Exec(`UPDATE credentials SET credential_key=?,value='priority-needle',payload='{"CredentialType":"password","Identity":"synthetic-user","Path":"fixture/evidence.txt","value":"priority-needle"}' WHERE scan_id=?`, largeKey, "global-search-priority"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE findings SET payload=replace(payload,'synthetic-value','priority-needle') WHERE scan_id=?`, "global-search-priority"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 75; i++ {
+		if _, err := db.Exec(`INSERT INTO access_observations(scan_id,context_id,file_key,first_seen,last_seen,access_result) VALUES(?,?,?,?,?,?)`, "global-search-priority", "priority-needle", fmt.Sprintf("file-%03d", i), "now", "now", "read"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	page, nextPhase, nextOffset, done, err := p.GlobalSearchPage(context.Background(), "global-search-priority", "priority-needle", 0, 0, globalSearchPageSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 1 || page[0].Kind != "credential" || page[0].Field != "credential value" || done || nextPhase != 1 || nextOffset != 0 {
+		t.Fatalf("first page did not expose the credential before access observations: kind=%q count=%d cursor=%d/%d done=%v", firstKind(page), len(page), nextPhase, nextOffset, done)
+	}
+	if page[0].Context != "fixture/evidence.txt" || !strings.Contains(page[0].Value, largeKey) {
+		t.Fatal("credential result lost source path or full persisted credential key")
+	}
+	next, _, _, _, err := p.GlobalSearchPage(context.Background(), "global-search-priority", "priority-needle", nextPhase, nextOffset, globalSearchPageSize)
+	if err != nil || len(next) != 1 || next[0].Kind != "finding" {
+		t.Fatalf("second page did not retain the associated finding: kind=%q count=%d err=%v", firstKind(next), len(next), err)
+	}
+}
+
+func firstKind(rows []GlobalSearchResult) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	return rows[0].Kind
+}
+
+func collectCategoryResults(t *testing.T, p *Provider, scanID, query string, category GlobalSearchCategory) []GlobalSearchResult {
+	t.Helper()
+	var all []GlobalSearchResult
+	phase, offset := 0, 0
+	for pages := 0; pages < 1000; pages++ {
+		rows, nextPhase, nextOffset, done, err := p.GlobalSearchCategoryPage(context.Background(), scanID, query, category, phase, offset, globalSearchPageSize)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, rows...)
+		if done {
+			return all
+		}
+		phase, offset = nextPhase, nextOffset
+	}
+	t.Fatal("category pagination did not finish")
+	return nil
+}
+
+func categoryContains(rows []GlobalSearchResult, kind, id string) bool {
+	for _, row := range rows {
+		if row.Kind == kind && row.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func TestGlobalSearchCategoriesUsePersistedMatchLocation(t *testing.T) {
+	const scanID = "global-search-categories"
+	path := makeFixtureDB(t, scanID)
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := `{"rule_id":"cisco.rule","category":"credentials","file_path":"/configs/cisco/router.cfg","host":"cisco-switch01","matched_text":"username=ciscoadmin password=Cisco123","snippet":"cfgneedle configuration"}`
+	if _, err := db.Exec(`UPDATE findings SET payload=?,path='/configs/cisco/router.cfg',host='cisco-switch01',rule_id='cisco.rule',category='credentials' WHERE scan_id=?`, payload, scanID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE credentials SET identity='ciscoadmin',value='Cisco123',payload='{"Identity":"ciscoadmin","Path":"/configs/cisco/router.cfg","Host":"cisco-switch01","value":"Cisco123"}' WHERE scan_id=?`, scanID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO files(scan_id,file_key,host,share,path,size,updated_at,status,semantics) VALUES(?,?,?,?,?,?,?,?,?)`, scanID, "fixture-file", "cisco-switch01", "configs", "/configs/cisco/router.cfg", 1, "now", "seen", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO shares(scan_id,host,share,status,updated_at) VALUES(?,?,?,?,?)`, scanID, "cisco-switch01", "cisco-share", "seen", "now"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO correlations(scan_id,correlation_key,payload) VALUES(?,?,?)`, scanID, "correlation-fixture", `{"type":"reuse","identity":"corruser","sources":[{"path":"/corrcfg/router.cfg","host":"corrhost","share":"corrshare"}]}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	all := collectCategoryResults(t, p, scanID, "cisco", SearchAll)
+	for _, kind := range []string{"credential", "finding", "file", "share"} {
+		found := false
+		for _, row := range all {
+			found = found || row.Kind == kind
+		}
+		if !found {
+			t.Fatalf("All omitted persisted %s match", kind)
+		}
+	}
+	for _, row := range all {
+		if row.Kind == "finding" && row.Field != "source path" {
+			t.Fatalf("All did not identify the persisted finding field: %q", row.Field)
+		}
+	}
+	allContent := collectCategoryResults(t, p, scanID, "cfgneedle", SearchAll)
+	if len(allContent) == 0 || allContent[0].Field != "snippet" {
+		t.Fatalf("All did not identify the persisted content field: %q", firstField(allContent))
+	}
+	var findingID, credentialID string
+	for _, row := range all {
+		if row.Kind == "finding" {
+			findingID = row.ID
+		}
+		if row.Kind == "credential" {
+			credentialID = row.ID
+		}
+	}
+	for _, category := range []GlobalSearchCategory{SearchFiles, SearchContent, SearchHosts, SearchOther} {
+		if !categoryContains(collectCategoryResults(t, p, scanID, "cisco", category), "finding", findingID) {
+			t.Fatalf("finding did not appear in %s for its independent matching field", category)
+		}
+	}
+	if categoryContains(collectCategoryResults(t, p, scanID, "cisco", SearchCreds), "finding", findingID) {
+		t.Fatal("finding classification or embedded password incorrectly created a credential match")
+	}
+	for _, query := range []string{"ciscoadmin", "Cisco123"} {
+		if !categoryContains(collectCategoryResults(t, p, scanID, query, SearchCreds), "credential", credentialID) {
+			t.Fatalf("Credentials omitted username or authoritative value for %q", query)
+		}
+	}
+	for _, check := range []struct {
+		query    string
+		category GlobalSearchCategory
+		kind     string
+		field    string
+	}{
+		{"router.cfg", SearchFiles, "finding", "source path"},
+		{"cfgneedle", SearchContent, "finding", "evidence snippet"},
+		{"cisco-switch01", SearchHosts, "finding", "hostname"},
+		{"cisco.rule", SearchOther, "finding", "rule ID"},
+	} {
+		rows := collectCategoryResults(t, p, scanID, check.query, check.category)
+		if !categoryContains(rows, check.kind, findingID) {
+			t.Fatalf("%s omitted %s match in %s", check.category, check.query, check.kind)
+		}
+		for _, row := range rows {
+			if row.Kind == check.kind && row.ID == findingID && row.Field != check.field {
+				t.Fatalf("%s labeled %s match as %q, want %q", check.category, check.query, row.Field, check.field)
+			}
+		}
+	}
+	credentials := collectCategoryResults(t, p, scanID, "Cisco123", SearchCreds)
+	if len(credentials) == 0 || credentials[0].Field != "credential value" || !strings.Contains(credentials[0].Value, "Cisco123") {
+		t.Fatal("credential result lost the exact matched field or recovered value")
+	}
+	for _, check := range []struct {
+		query    string
+		category GlobalSearchCategory
+	}{
+		{"corruser", SearchCreds},
+		{"corrcfg", SearchFiles},
+		{"corrhost", SearchHosts},
+		{"reuse", SearchOther},
+	} {
+		if !categoryContains(collectCategoryResults(t, p, scanID, check.query, check.category), "correlation", "correlation-fixture") {
+			t.Fatalf("correlation %s match was omitted from %s", check.query, check.category)
+		}
+	}
+}
+
+func firstField(rows []GlobalSearchResult) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	return rows[0].Field
+}
+
+func TestGlobalSearchCategoryPaginationIsIndependent(t *testing.T) {
+	const scanID = "global-search-category-pages"
+	path := makeFixtureDB(t, scanID)
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 17; i++ {
+		name := fmt.Sprintf("/manyneedle/file-%03d.cfg", i)
+		if _, err := db.Exec(`INSERT INTO findings(scan_id,fingerprint,payload,path,rule_id,category) VALUES(?,?,?,?,?,?)`, scanID, fmt.Sprintf("many-%03d", i), fmt.Sprintf(`{"file_path":%q,"matched_text":"contentneedle"}`, name), name, "fixture.rule", "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	files := collectCategoryResults(t, p, scanID, "manyneedle", SearchFiles)
+	if len(files) != 17 || len(collectCategoryResults(t, p, scanID, "manyneedle", SearchContent)) != 0 {
+		t.Fatalf("category pages mixed path/content matches: files=%d", len(files))
+	}
+	first, phase, offset, done, err := p.GlobalSearchCategoryPage(context.Background(), scanID, "manyneedle", SearchFiles, 0, 0, globalSearchPageSize)
+	if err != nil || len(first) != globalSearchPageSize || done {
+		t.Fatalf("first category page = %d rows, done=%v, err=%v", len(first), done, err)
+	}
+	second, _, _, _, err := p.GlobalSearchCategoryPage(context.Background(), scanID, "manyneedle", SearchFiles, phase, offset, globalSearchPageSize)
+	if err != nil || len(second) != globalSearchPageSize || first[0].ID == second[0].ID {
+		t.Fatal("category pagination repeated or lost its cursor")
 	}
 }
 

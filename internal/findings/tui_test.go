@@ -2,6 +2,7 @@ package findings
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -50,6 +51,155 @@ func TestFetchEvidenceResolvesPersistedCredentialRowRef(t *testing.T) {
 	item := m.fetchEvidence(ref)
 	if item.candidate == nil || item.candidate.Path != "fixture.ini" {
 		t.Fatalf("persisted row evidence was not rehydrated: %#v", item)
+	}
+}
+
+func TestGlobalSearchWindowClosesWithoutChangingFinderState(t *testing.T) {
+	m := &model{scans: []Scan{{ID: "scan"}}, selectedScan: 0, screen: screenDiscoveries, selectedDisc: 3, filter: "existing", width: 100, height: 30, discoveries: []discovery{{Title: "preserved"}}}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	if !m.globalSearchOpen {
+		t.Fatal("Ctrl-F did not open the dedicated Finder search window")
+	}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.globalSearchOpen || m.screen != screenDiscoveries || m.selectedDisc != 3 || m.filter != "existing" || len(m.discoveries) != 1 || m.discoveries[0].Title != "preserved" {
+		t.Fatalf("closing search changed Finder view state: %#v", m)
+	}
+}
+
+func TestGlobalSearchCancelsOnCloseAndCtrlCAndRejectsStalePages(t *testing.T) {
+	for _, key := range []tea.KeyType{tea.KeyEsc, tea.KeyCtrlC} {
+		ctx, cancel := context.WithCancel(context.Background())
+		m := &model{ctx: context.Background(), scans: []Scan{{ID: "scan"}}, globalSearchOpen: true, globalSearchCancel: cancel, globalSearchGeneration: 2, globalSearchQuery: "new", globalSearchResults: []GlobalSearchResult{{Value: "current"}}}
+		msg := tea.KeyMsg{Type: key}
+		_, cmd := m.Update(msg)
+		if key == tea.KeyCtrlC && cmd == nil {
+			t.Fatal("Ctrl-C did not schedule program exit")
+		}
+		select {
+		case <-ctx.Done():
+		default:
+			t.Fatalf("key %v did not cancel the active search", key)
+		}
+		cancel()
+		m.globalSearchCancel = nil
+	}
+	m := &model{globalSearchGeneration: 3, globalSearchQuery: "new", globalSearchResults: []GlobalSearchResult{{Value: "current"}}}
+	_, _ = m.Update(globalSearchLoadedMsg{generation: 2, query: "old", offset: 0, results: []GlobalSearchResult{{Value: "stale"}}})
+	if len(m.globalSearchResults) != 1 || m.globalSearchResults[0].Value != "current" {
+		t.Fatal("stale search page replaced current results")
+	}
+}
+
+func TestGlobalSearchLargeFindingEvidenceRemainsAccessible(t *testing.T) {
+	evidence := "first-evidence " + strings.Repeat("persisted context ", 2000) + "last-evidence"
+	for _, result := range []GlobalSearchResult{
+		{Kind: "finding", ID: "50351", Field: "finding details", Value: evidence, Context: "/source/fixture.cfg"},
+		{Kind: "credential", ID: "332", Field: "credential value", Value: evidence, Context: "/source/fixture.cfg"},
+	} {
+		m := &model{width: 120, height: 32, globalSearchOpen: true, globalSearchQuery: "context", globalSearchResults: []GlobalSearchResult{result}}
+		list := m.View()
+		if !strings.Contains(list, "SNABLR // GLOBAL SEARCH") || !strings.Contains(list, result.Field) || strings.Count(list, "\n") > m.height+2 {
+			t.Fatalf("large %s payload pushed search result labels offscreen", result.Kind)
+		}
+		m.globalSearchDetail = true
+		m.globalSearchDetailOffset = 1 << 30
+		detail := m.View()
+		if !strings.Contains(detail, "last-evidence") || m.globalSearchResults[0].Value != evidence {
+			t.Fatalf("scrolling did not preserve the full %s evidence", result.Kind)
+		}
+	}
+}
+
+func TestGlobalSearchCategorySwitchPreservesQueryAndRejectsStaleResults(t *testing.T) {
+	path := makeFixtureDB(t, "category-switch")
+	provider, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	m := &model{ctx: context.Background(), provider: provider, scans: []Scan{{ID: "category-switch"}}, globalSearchOpen: true, globalSearchQuery: "synthetic", globalSearchCategory: SearchAll, globalSearchResults: []GlobalSearchResult{{Kind: "old", ID: "old"}}}
+	_, oldCmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.globalSearchCategory != SearchCreds || oldCmd == nil || len(m.globalSearchResults) != 0 {
+		t.Fatal("switching to Credentials did not reset its category page")
+	}
+	_, filesCmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.globalSearchCategory != SearchFiles || filesCmd == nil || m.globalSearchQuery != "synthetic" {
+		t.Fatal("switching categories lost the query")
+	}
+	_, _ = m.Update(globalSearchLoadedMsg{generation: m.globalSearchGeneration, query: "synthetic", category: SearchCreds, results: []GlobalSearchResult{{Kind: "stale", ID: "stale"}}})
+	if len(m.globalSearchResults) != 0 {
+		t.Fatal("stale results from another category entered the active list")
+	}
+	_, _ = m.Update(filesCmd())
+	if m.globalSearchCategory != SearchFiles || m.globalSearchQuery != "synthetic" {
+		t.Fatal("completed category page changed the query or active category")
+	}
+	_, contentCmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if contentCmd == nil || m.globalSearchCategory != SearchContent {
+		t.Fatal("Content & Configs did not start a fresh category search")
+	}
+	_, _ = m.Update(contentCmd())
+	if len(m.globalSearchResults) == 0 || m.globalSearchResults[0].Kind != "finding" || m.globalSearchQuery != "synthetic" {
+		t.Fatal("Content & Configs did not show the persisted finding evidence")
+	}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.globalSearchOpen || len(m.globalSearchResults) == 0 {
+		t.Fatal("closing a categorized search changed results or failed to return to Finder")
+	}
+}
+
+func TestGlobalSearchKeepsOnlyCurrentSQLitePage(t *testing.T) {
+	const scanID = "bounded-category-pages"
+	path := makeFixtureDB(t, scanID)
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 17; i++ {
+		name := fmt.Sprintf("/manyneedle/file-%02d.cfg", i)
+		if _, err := db.Exec(`INSERT INTO findings(scan_id,fingerprint,payload,path,rule_id,category) VALUES(?,?,?,?,?,?)`, scanID, fmt.Sprintf("bounded-%02d", i), fmt.Sprintf(`{"file_path":%q}`, name), name, "fixture.rule", "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	m := &model{ctx: context.Background(), provider: provider, scans: []Scan{{ID: scanID}}, globalSearchOpen: true, globalSearchQuery: "manyneedle", globalSearchCategory: SearchFiles}
+	_, _ = m.Update(m.globalSearchPageCmd(0, 0, 0)())
+	for pages := 0; !m.globalSearchDone; pages++ {
+		if pages > 10 || len(m.globalSearchResults) > globalSearchPageSize {
+			t.Fatalf("category paging retained too many results or did not finish: page=%d rows=%d", pages, len(m.globalSearchResults))
+		}
+		m.globalSearchSelected = len(m.globalSearchResults) - 1
+		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+		if cmd == nil {
+			t.Fatal("PageDown did not request the next SQLite page")
+		}
+		_, _ = m.Update(cmd())
+	}
+	if m.globalSearchMatchCount != 17 || len(m.globalSearchResults) > globalSearchPageSize {
+		t.Fatalf("end count or bounded page wrong: count=%d rows=%d", m.globalSearchMatchCount, len(m.globalSearchResults))
+	}
+	_, previous := m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	if previous == nil {
+		t.Fatal("PageUp did not reload the previous SQLite page")
+	}
+	_, _ = m.Update(previous())
+	if len(m.globalSearchResults) != globalSearchPageSize || m.globalSearchMatchCount != 17 {
+		t.Fatal("backward pagination lost the count or page bounds")
+	}
+	_, next := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	if next == nil {
+		t.Fatal("PageDown did not return to the final SQLite page")
+	}
+	_, _ = m.Update(next())
+	if !m.globalSearchDone || m.globalSearchMatchCount != 17 || len(m.globalSearchResults) != 2 {
+		t.Fatal("returning to final page changed the exact match count or evidence")
 	}
 }
 

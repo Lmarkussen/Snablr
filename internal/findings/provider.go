@@ -9,9 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	sqlite3 "github.com/mattn/go-sqlite3"
 	"snablr/internal/credentialanalysis"
 	"snablr/internal/scanner"
 )
@@ -28,6 +29,19 @@ type Provider struct {
 	path               string
 	hasDisplayIDs      bool
 	hasDerivedFindings bool
+}
+
+var registerFinderSQLite sync.Once
+
+func openFinderSQLite(path string) (*sql.DB, error) {
+	registerFinderSQLite.Do(func() {
+		sql.Register("snablr-findings-sqlite3", &sqlite3.SQLiteDriver{ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+			return conn.RegisterFunc("snablr_contains", func(value, query string) bool {
+				return strings.Contains(strings.ToLower(value), strings.ToLower(query))
+			}, true)
+		}})
+	})
+	return sql.Open("snablr-findings-sqlite3", path)
 }
 
 type Scan struct {
@@ -99,7 +113,7 @@ func Open(path string) (*Provider, error) {
 		return nil, fmt.Errorf("findings database path is a directory: %s", absolute)
 	}
 
-	db, err := sql.Open("sqlite3", "file:"+absolute+"?mode=ro&_query_only=1&_busy_timeout=5000")
+	db, err := openFinderSQLite("file:" + absolute + "?mode=ro&_query_only=1&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("open findings database read-only: %w", err)
 	}

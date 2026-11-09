@@ -24,7 +24,7 @@ GOENV := CGO_ENABLED=$(CGO_ENABLED) GOCACHE=$(GOCACHE)
 ifneq ($(strip $(GOMODCACHE)),)
 GOENV += GOMODCACHE=$(GOMODCACHE)
 endif
-RELEASE_TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
+RELEASE_TARGETS := linux/amd64
 
 .PHONY: build test lint release release-snapshot clean
 
@@ -34,7 +34,7 @@ help:
 	@echo "  make build             Build ./bin/$(APP) and ./bin/$(SEED_APP) with version metadata"
 	@echo "  make test              Run go test ./..."
 	@echo "  make lint              Run go vet ./..."
-	@echo "  make release-snapshot  Build release archives under ./dist"
+	@echo "  make release-snapshot  Build verified Linux/amd64 CGO+SQLite archive and checksum under ./dist"
 
 build:
 	mkdir -p $(BIN_DIR)
@@ -56,27 +56,19 @@ release-snapshot:
 	rm -rf $(DIST_DIR)
 	mkdir -p $(DIST_DIR) $(STAGE_DIR)
 	@set -eu; \
+	: > "$(DIST_DIR)/SHA256SUMS"; \
 	for target in $(RELEASE_TARGETS); do \
 		os="$${target%/*}"; \
 		arch="$${target#*/}"; \
-		ext=""; \
-		archive_ext="tar.gz"; \
-		if [ "$$os" = "windows" ]; then \
-			ext=".exe"; \
-			archive_ext="zip"; \
-		fi; \
 		package_name="$(APP)_$(RELEASE_VERSION)_$${os}_$${arch}"; \
 		stage_path="$(STAGE_DIR)/$$package_name"; \
 		echo "Building $$package_name"; \
 		rm -rf "$$stage_path"; \
 		mkdir -p "$$stage_path"; \
-		GOOS="$$os" GOARCH="$$arch" CGO_ENABLED=0 GOCACHE=$(GOCACHE) $(GO) build -ldflags "$(LDFLAGS)" -o "$$stage_path/$(APP)$$ext" $(CMD); \
-		cp README.md LICENSE "$$stage_path/"; \
-		if [ "$$archive_ext" = "zip" ]; then \
-			( cd "$(STAGE_DIR)" && zip -qr "../$$package_name.zip" "$$package_name" ); \
-		else \
-			tar -C "$(STAGE_DIR)" -czf "$(DIST_DIR)/$$package_name.tar.gz" "$$package_name"; \
-		fi; \
+		GOOS="$$os" GOARCH="$$arch" CGO_ENABLED=1 GOCACHE=$(GOCACHE) $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o "$$stage_path/$(APP)" $(CMD); \
+		cp README.md LICENSE docs/building.md "$$stage_path/"; \
+		tar -C "$(STAGE_DIR)" -czf "$(DIST_DIR)/$$package_name.tar.gz" "$$package_name"; \
+		sha256sum "$(DIST_DIR)/$$package_name.tar.gz" >> "$(DIST_DIR)/SHA256SUMS"; \
 	done; \
 	rm -rf "$(STAGE_DIR)"
 	@echo "Release snapshot archives written to $(DIST_DIR)/"

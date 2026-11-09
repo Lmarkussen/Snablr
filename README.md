@@ -46,14 +46,45 @@ from individual source observations.
 
 ## Build and install
 
-Requirements and platform-specific build instructions are in
-[Getting Started](docs/getting-started.md). The build workflow is documented in
-[Building Snablr](docs/building.md).
+The official prebuilt release currently supports **Linux AMD64**. Its binary is
+built with CGO and SQLite enabled. See [Building Snablr](docs/building.md) for
+release downloads, source builds, verification, and platform requirements.
+
+Download and verify the current release:
 
 ```bash
+mkdir -p snablr-v1.0.1 && cd snablr-v1.0.1
+curl -fLO https://github.com/Lmarkussen/Snablr/releases/download/v1.0.1/snablr_v1.0.1_linux_amd64.tar.gz
+curl -fLO https://github.com/Lmarkussen/Snablr/releases/download/v1.0.1/SHA256SUMS
+sha256sum -c SHA256SUMS
+tar -xzf snablr_v1.0.1_linux_amd64.tar.gz
+./snablr_v1.0.1_linux_amd64/snablr version
+```
+
+To build the latest source from `main`:
+
+```bash
+git clone https://github.com/Lmarkussen/Snablr.git
+cd Snablr
 make build
 ./bin/snablr version
 ```
+
+To build the exact `v1.0.1` source:
+
+```bash
+git clone https://github.com/Lmarkussen/Snablr.git
+cd Snablr
+git checkout --detach v1.0.1
+make build VERSION=v1.0.1
+./bin/snablr version
+```
+
+If `snablr` resolves to an unexpected executable, inspect all PATH matches with
+`type -a snablr`, then invoke the verified binary by its explicit path (for
+example, `./bin/snablr version`).
+
+For scanner and Finder build requirements, see [Getting Started](docs/getting-started.md).
 
 For scan options and authentication examples, use the shipped command help:
 

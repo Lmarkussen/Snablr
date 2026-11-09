@@ -1,121 +1,83 @@
-# Build And Release
+# Build, Install, and Release
 
-This guide covers the simplest ways to build, test, and verify Snablr locally.
+## Official prebuilt release
 
-## Build Locally
+Snablr v1.0.1 publishes a prebuilt **Linux AMD64** executable. This is the
+supported release platform because the release binary is built and smoke
+tested with CGO enabled, including a real open of a disposable Snablr SQLite
+database. ARM64, macOS, and Windows release binaries are omitted until their
+CGO builds and SQLite runtime behavior can be verified on those platforms.
 
-Run these commands from the repository root.
+Download the archive and checksum file from the
+[v1.0.1 GitHub release](https://github.com/Lmarkussen/Snablr/releases/tag/v1.0.1):
 
-Linux SQLite support requires a working C compiler and CGO. On Debian/Kali:
+```bash
+mkdir -p snablr-v1.0.1 && cd snablr-v1.0.1
+curl -fLO https://github.com/Lmarkussen/Snablr/releases/download/v1.0.1/snablr_v1.0.1_linux_amd64.tar.gz
+curl -fLO https://github.com/Lmarkussen/Snablr/releases/download/v1.0.1/SHA256SUMS
+sha256sum -c SHA256SUMS
+tar -xzf snablr_v1.0.1_linux_amd64.tar.gz
+./snablr_v1.0.1_linux_amd64/snablr version
+```
+
+The version output includes the embedded commit. Check that it matches the
+commit recorded on the release page. Run the executable from the extracted
+directory or install that exact file into a directory on `PATH`.
+
+## Build the latest `main`
+
+Source builds require Go 1.24 or later. Linux builds that use SQLite require
+CGO and a C compiler. On Debian or Ubuntu:
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y gcc libc6-dev
-```
-
-Quick source build check:
-
-```bash
-go build ./...
-```
-
-Recommended local build with version metadata:
-
-```bash
+git clone https://github.com/Lmarkussen/Snablr.git
+cd Snablr
 make build
-```
-
-The binary is written to:
-
-- `bin/snablr`
-
-`make build` uses `CGO_ENABLED=1` so the Linux operator binary can inspect
-SQLite databases. The cross-platform release matrix builds non-Linux targets
-without CGO, so SQLite content inspection is currently Linux-only.
-
-Windows fallback without `make`:
-
-```powershell
-go build -o bin/snablr.exe ./cmd/snablr
-.\bin\snablr.exe version
-```
-
-## Verify The Binary
-
-Run:
-
-```bash
 ./bin/snablr version
-./bin/snablr --help
 ```
 
-If you moved the binary into your `PATH`, you can run:
+`make build` builds the scanner and seeder with version, commit, and build date
+metadata. To confirm which executable a shell would run, use `type -a snablr`
+and `command -v snablr`. Prefer `./bin/snablr version` while working in the
+checkout so an older installation earlier in `PATH` cannot be mistaken for the
+new build. After replacing an installed binary, run `hash -r` in Bash and check
+`type -a snablr` again.
+
+## Build the exact v1.0.1 source
 
 ```bash
-snablr version
-snablr --help
+git clone https://github.com/Lmarkussen/Snablr.git
+cd Snablr
+git checkout --detach v1.0.1
+make build VERSION=v1.0.1
+./bin/snablr version
 ```
 
-What to look for:
+The version output must show `v1.0.1` and the commit associated with the tag.
+For a release binary, use the official archive and verify `SHA256SUMS` as shown
+above.
 
-- `version` prints a version string
-- `--help` prints the command list
+## Platform and CGO support
 
-If you built with `make build`, version metadata includes version, commit, and build date.
+The official v1.0.1 archive is Linux AMD64 only. SQLite persistence and Finder
+are required functionality; builds with `CGO_ENABLED=0` are not supported and
+are not released. Building on Linux requires a C compiler and libc development
+headers. macOS, Windows, and Linux ARM64 source builds may require platform
+specific CGO toolchains; they are not official v1.0.1 release targets and have
+not been runtime verified for this release.
 
-## Run Tests
+## Local release checks
 
-Standard local verification:
+Run the same checks used by the release workflow:
 
 ```bash
-go test ./...
+go test ./... -count=1
+go test -race ./internal/findings -count=1
 go vet ./...
-make test
-make lint
+make release-snapshot VERSION=v1.0.1
 ```
 
-## Release Binaries
-
-The tagged GitHub Actions workflow is configured to build release archives for:
-
-- `linux/amd64`
-- `linux/arm64`
-- `darwin/amd64`
-- `darwin/arm64`
-- `windows/amd64`
-
-When a tagged release has actually been published, artifact names follow this pattern:
-
-- `snablr_vX.Y.Z_linux_amd64.tar.gz`
-- `snablr_vX.Y.Z_windows_amd64.zip`
-
-## How Releases Are Produced
-
-Release automation runs in GitHub Actions when a tag matching `v*` is pushed.
-This repository does not promise that a release asset exists for every commit;
-check GitHub Releases for the current published assets.
-
-Example:
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-That workflow:
-
-1. runs tests
-2. builds the release matrix
-3. injects version metadata
-4. packages the archives
-5. uploads them to the GitHub release
-
-## Version Metadata
-
-For version metadata to appear correctly in the binary, use one of:
-
-- `make build`
-- `make release-snapshot`
-- a GitHub release build
-
-Plain ad-hoc `go build` is useful for development, but typically reports `dev` / `unknown` metadata unless ldflags are supplied manually.
+The release snapshot target builds a CGO-enabled Linux AMD64 archive and writes
+its SHA-256 digest to `dist/SHA256SUMS`. It does not publish a release.

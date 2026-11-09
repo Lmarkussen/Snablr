@@ -34,6 +34,7 @@ The tool is intended for:
 ## Requirements
 
 - Go `1.24+`
+- Linux source builds: CGO enabled, a C compiler, and libc development headers
 - network access to target SMB hosts on TCP `445`
 - valid SMB credentials for the target environment
 - LDAP access and credentials if you want automatic domain discovery
@@ -57,6 +58,9 @@ Verify the build:
 ./bin/snablr --help
 ```
 
+For the official Linux AMD64 release download, checksum verification, or an
+exact `v1.0.1` source build, follow [Build and Release](building.md).
+
 Alternative build:
 
 ```bash
@@ -65,16 +69,11 @@ go build -o bin/snablr ./cmd/snablr
 
 If `make` is not available, `go build ./...` is the simplest fallback build check.
 
-Windows fallback:
-
-```powershell
-go build -o bin/snablr.exe ./cmd/snablr
-.\bin\snablr.exe version
-```
-
 Note:
 - `make build` injects version metadata.
 - plain `go build` is fine for development, but usually reports `dev` / `unknown` metadata unless you provide ldflags.
+- Do not disable CGO: SQLite persistence and Finder are required. Official
+  release binaries currently support Linux AMD64 only.
 
 ## Verify Installation
 

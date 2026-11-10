@@ -263,10 +263,14 @@ func runScan(args []string) error {
 
 	var username string
 	var password string
+	var passwordFile string
+	var passwordPrompt bool
 	fs.StringVar(&username, "username", "", "Username for SMB and LDAP authentication")
 	fs.StringVar(&username, "user", "", "Alias for --username")
 	fs.StringVar(&password, "password", "", "Password for SMB and LDAP authentication")
 	fs.StringVar(&password, "pass", "", "Alias for --password")
+	fs.StringVar(&passwordFile, "password-file", "", "Read authentication password from a local file")
+	fs.BoolVar(&passwordPrompt, "password-prompt", false, "Prompt securely for the authentication password")
 
 	var shareFilters multiValueFlag
 	var excludeShareFilters multiValueFlag
@@ -347,6 +351,10 @@ func runScan(args []string) error {
 	if *helpAdvanced {
 		printScanAdvancedUsage(fs)
 		return nil
+	}
+	password, err := resolveCLIAuthPassword(password, passwordFile, passwordPrompt, username != "" && *smbAuthMode != "kerberos" && *authMode != "kerberos", fs, os.Stdin, os.Stderr)
+	if err != nil {
+		return err
 	}
 	if fs.Lookup("dbname") != nil {
 		seenDBName, seenFlushDB := false, false
@@ -442,10 +450,14 @@ func runDiscover(args []string) error {
 
 	var username string
 	var password string
+	var passwordFile string
+	var passwordPrompt bool
 	fs.StringVar(&username, "username", "", "Username for LDAP and reachability discovery")
 	fs.StringVar(&username, "user", "", "Alias for --username")
 	fs.StringVar(&password, "password", "", "Password for LDAP discovery")
 	fs.StringVar(&password, "pass", "", "Alias for --password")
+	fs.StringVar(&passwordFile, "password-file", "", "Read authentication password from a local file")
+	fs.BoolVar(&passwordPrompt, "password-prompt", false, "Prompt securely for the authentication password")
 
 	domain := fs.String("domain", "", "Domain name override for LDAP discovery")
 	noLDAP := fs.Bool("no-ldap", false, "Disable LDAP discovery")
@@ -460,6 +472,10 @@ func runDiscover(args []string) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
+		return err
+	}
+	password, err := resolveCLIAuthPassword(password, passwordFile, passwordPrompt, username != "" && *authMode != "kerberos", fs, os.Stdin, os.Stderr)
+	if err != nil {
 		return err
 	}
 

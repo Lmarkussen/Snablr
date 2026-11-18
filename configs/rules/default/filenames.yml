@@ -38,7 +38,7 @@ rules:
     category: credentials
     enabled: true
     include_paths: []
-    exclude_paths: [passordpolicy, passordpolitikk, passordkrav, passordrutine, passordregel, veiledning, cache, temp, tmp]
+    exclude_paths: ['*passordpolicy*', '*passordpolitikk*', '*passordkrav*', '*passordrutine*', '*passordregel*', '*veiledning*', cache, temp, tmp]
     file_extensions: []
     max_file_size: 0
     action: report
@@ -57,7 +57,7 @@ rules:
     category: credentials
     enabled: true
     include_paths: []
-    exclude_paths: [passordpolicy, passordpolitikk, passordkrav, passordrutine, passordregel, veiledning, cache, temp, tmp]
+    exclude_paths: ['*passordpolicy*', '*passordpolitikk*', '*passordkrav*', '*passordrutine*', '*passordregel*', '*veiledning*', cache, temp, tmp]
     file_extensions: []
     max_file_size: 0
     action: report

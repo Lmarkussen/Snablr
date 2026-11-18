@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+
+	"snablr/internal/officefixture"
 )
 
 // generateCredentialCorpusV2 creates an independent, deterministic corpus for
@@ -117,7 +119,7 @@ func generateCredentialCorpusV2(opts GenerateOptions) ([]SeedFile, error) {
 			file.NegativeReason = v2NegativeReason(index)
 			file.Content = v2NegativeContent(index, username, password)
 			if variant.archive {
-				file.Content = v2Archive([]zipEntry{{"nested/negative.txt", string(file.Content)}, {"nested/readme.txt", "No usable credential is present.\n"}})
+				file.Content = v2ArchiveOrOffice(variant.name, "nested/negative.txt", string(file.Content), "No usable credential is present.\n")
 			}
 		default:
 			file.ExpectedClass = "review"
@@ -129,7 +131,7 @@ func generateCredentialCorpusV2(opts GenerateOptions) ([]SeedFile, error) {
 			file.NegativeReason = "explicit fields exist but their relationship is ambiguous"
 			file.Content = v2AmbiguousContent(index, username, password)
 			if variant.archive {
-				file.Content = v2Archive([]zipEntry{{"nested/ambiguous.txt", string(file.Content)}, {"nested/readme.txt", "Relationship intentionally requires review.\n"}})
+				file.Content = v2ArchiveOrOffice(variant.name, "nested/ambiguous.txt", string(file.Content), "Relationship intentionally requires review.\n")
 			}
 		}
 		if variant.archive {
@@ -139,15 +141,13 @@ func generateCredentialCorpusV2(opts GenerateOptions) ([]SeedFile, error) {
 				member = "nested/credentials.ini"
 			case file.ExpectedClass == "review":
 				member = "nested/ambiguous.txt"
-			case variant.name == "docx-member":
-				member = "nested/negative.txt"
-			case variant.name == "xlsx-member":
-				member = "nested/negative.txt"
 			}
-			if file.ExpectedClass == "credential" && variant.name == "docx-member" {
+			// Office variants are real OOXML packages for every class, so the
+			// inspected member is the document part rather than a nested file.
+			switch variant.name {
+			case "docx-member":
 				member = "word/document.xml"
-			}
-			if file.ExpectedClass == "credential" && variant.name == "xlsx-member" {
+			case "xlsx-member":
 				member = "xl/sharedStrings.xml"
 			}
 			file.ExpectedArchive = true
@@ -278,9 +278,13 @@ func v2PositiveContent(g v2Grammar, user, pass string, index int) []byte {
 	case "zip-member", "zip-multi":
 		return v2Archive([]zipEntry{{"nested/credentials.ini", fmt.Sprintf("[service]\nusername=%s\npassword=%s\n", user, pass)}, {"nested/readme.txt", "No credentials in this member.\n"}})
 	case "docx-member":
-		return v2Office("word/document.xml", fmt.Sprintf("<document><p>account=%s password=%s</p></document>", user, pass))
+		// One field per paragraph, as in the other assignment-style variants;
+		// this variant measures Office member extraction, not same-line pairs.
+		return officefixture.DOCX(officefixture.Paragraph("account="+user), officefixture.Paragraph("password="+pass))
 	case "xlsx-member":
-		return v2Office("xl/sharedStrings.xml", fmt.Sprintf("<sst><si><t>%s</t></si><si><t>%s</t></si></sst>", user, pass))
+		// A labelled header row is what makes two cells a credential pair;
+		// unlabelled adjacent strings are not a defensible pair.
+		return officefixture.XLSX([][]string{{"Username", "Password"}, {user, pass}})
 	default:
 		return []byte(fmt.Sprintf("username=%s\npassword=%s\n", user, pass))
 	}
@@ -340,6 +344,25 @@ func v2Archive(entries []zipEntry) []byte {
 	return buffer.Bytes()
 }
 
-func v2Office(member, content string) []byte {
-	return v2Archive([]zipEntry{{"[Content_Types].xml", "<?xml version=\"1.0\"?><Types></Types>"}, {member, content}})
+// v2ArchiveOrOffice wraps non-credential text for an archive variant. ZIP
+// variants keep the nested member layout; DOCX and XLSX variants are built as
+// valid OOXML packages so they exercise the real Office inspection path.
+func v2ArchiveOrOffice(variant, member, content, readme string) []byte {
+	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	switch variant {
+	case "docx-member":
+		paragraphs := make([]string, 0, len(lines))
+		for _, line := range lines {
+			paragraphs = append(paragraphs, officefixture.Paragraph(line))
+		}
+		return officefixture.DOCX(paragraphs...)
+	case "xlsx-member":
+		rows := make([][]string, 0, len(lines))
+		for _, line := range lines {
+			rows = append(rows, []string{line})
+		}
+		return officefixture.XLSX(rows)
+	default:
+		return v2Archive([]zipEntry{{member, content}, {"nested/readme.txt", readme}})
+	}
 }

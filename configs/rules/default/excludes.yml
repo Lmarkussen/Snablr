@@ -23,6 +23,8 @@ rules:
     action: skip
 
   # Safe default: temp directories and browser caches are usually poor review targets.
+  # include_paths match whole path segments, so known cache folder names that only
+  # contain the word "cache" (Firefox cache2, INetCache, GPUCache) are listed explicitly.
   - id: skip.temp_and_browser_cache_paths
     name: Temp And Browser Cache Paths
     description: Skip temp folders, browser caches, and other common low-value caches.
@@ -33,7 +35,7 @@ rules:
     tags: [skip, temp, cache]
     category: exclusions
     enabled: true
-    include_paths: [temp, tmp, cache, appdata/local/temp, chrome/user data/default/cache, edge/user data/default/cache, library/caches, deriveddata, programdata/package cache]
+    include_paths: [temp, tmp, cache, cache2, inetcache, gpucache, code cache, shadercache, grshadercache, appdata/local/temp, chrome/user data/default/cache, edge/user data/default/cache, library/caches, deriveddata, programdata/package cache]
     exclude_paths: []
     file_extensions: []
     max_file_size: 0

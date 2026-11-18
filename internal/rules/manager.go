@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -243,10 +244,10 @@ func ruleEligible(rule Rule, candidate Candidate) bool {
 	if len(rule.FileExtensions) > 0 && !matchExtensionList(candidate.Extension, rule.FileExtensions) {
 		return false
 	}
-	if len(rule.IncludePaths) > 0 && !containsAny(candidate.Path, rule.IncludePaths) {
+	if len(rule.IncludePaths) > 0 && !PathMatchesAny(candidate.Path, rule.IncludePaths) {
 		return false
 	}
-	if len(rule.ExcludePaths) > 0 && containsAny(candidate.Path, rule.ExcludePaths) {
+	if len(rule.ExcludePaths) > 0 && PathMatchesAny(candidate.Path, rule.ExcludePaths) {
 		return false
 	}
 	if rule.Type == RuleTypeContent && candidate.IsDir {
@@ -294,14 +295,70 @@ func matchExtensionList(candidateExt string, ruleExts []string) bool {
 	return false
 }
 
-func containsAny(value string, patterns []string) bool {
-	value = strings.ToLower(NormalizePath(value))
+// PathMatchesAny reports whether any include/exclude path pattern matches the
+// candidate path. Matching is case-insensitive and works on whole path
+// segments: "temp" matches "Temp/x.txt" and "a/temp/b.txt" but not
+// "Templates/x.txt", and "windows/system32/config" must match consecutive
+// segments. A pattern segment may use path.Match globs, so "*passordpolicy*"
+// matches any single segment containing "passordpolicy".
+//
+// Plain substring matching previously made generic location tokens such as
+// "temp", "bin", "vendor" and "dist" silently skip or exclude folders like
+// Templates, Robin, Cabinet, Vendors and Distribution.
+func PathMatchesAny(value string, patterns []string) bool {
+	segments := pathSegments(value)
+	if len(segments) == 0 {
+		return false
+	}
 	for _, pattern := range patterns {
-		if strings.Contains(value, strings.ToLower(filepath.ToSlash(pattern))) {
+		if pathPatternMatches(segments, pathSegments(pattern)) {
 			return true
 		}
 	}
 	return false
+}
+
+func pathSegments(value string) []string {
+	// SMB paths and Windows-style rule patterns may use backslashes on any OS.
+	value = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), `\`, "/"))
+	parts := strings.Split(value, "/")
+	segments := parts[:0]
+	for _, part := range parts {
+		if part != "" && part != "." {
+			segments = append(segments, part)
+		}
+	}
+	return segments
+}
+
+func pathPatternMatches(segments, pattern []string) bool {
+	if len(pattern) == 0 || len(pattern) > len(segments) {
+		return false
+	}
+	for start := 0; start+len(pattern) <= len(segments); start++ {
+		matched := true
+		for offset, want := range pattern {
+			if !pathSegmentMatches(want, segments[start+offset]) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func pathSegmentMatches(pattern, segment string) bool {
+	if !strings.ContainsAny(pattern, `*?[\`) {
+		return pattern == segment
+	}
+	matched, err := path.Match(pattern, segment)
+	if err != nil {
+		return pattern == segment
+	}
+	return matched
 }
 
 func containsString(items []string, target string) bool {

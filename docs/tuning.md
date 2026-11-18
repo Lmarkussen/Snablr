@@ -101,6 +101,8 @@ include_paths: [finance, exports]
 exclude_paths: [cache, temp, archive]
 ```
 
+Path patterns match whole path segments, so `temp` excludes a `Temp` folder but not `Templates`. Use a quoted glob such as `'*archive*'` when a segment should match by containment. See [Rules](rules.md#path-patterns).
+
 This is usually easier to maintain than making the regex more complex.
 
 ## Narrow File Extensions

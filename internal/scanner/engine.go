@@ -913,17 +913,10 @@ func extensionAllowed(ext string, allowed []string) bool {
 	return false
 }
 
+// containsPath applies rule include/exclude path patterns with the same
+// whole-segment semantics as the rule manager (rules.PathMatchesAny).
 func containsPath(path string, patterns []string) bool {
-	path = rules.NormalizePath(path)
-	for _, pattern := range patterns {
-		if pattern == "" {
-			continue
-		}
-		if match, _ := regexp.MatchString("(?i)"+regexp.QuoteMeta(pattern), path); match {
-			return true
-		}
-	}
-	return false
+	return rules.PathMatchesAny(path, patterns)
 }
 
 func buildContentRuleHints(ruleSet []rules.Rule) (map[string]struct{}, bool) {

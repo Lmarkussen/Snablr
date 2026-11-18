@@ -194,9 +194,17 @@ func shouldIncludeRemoteFile(path string, depth int, opts WalkOptions, maxDepth 
 	return false
 }
 
+// normalizeRemotePrefixPath normalizes a path or scope prefix for prefix
+// comparison. Trailing separators are removed so "--path Reports/" and
+// "--path Reports" select the same subtree, matching the planner's
+// normalizePlanPath.
+func normalizeRemotePrefixPath(path string) string {
+	return strings.Trim(normalizeRemotePath(path), "/")
+}
+
 func remoteDirOverlapsPrefix(path, prefix string) bool {
-	path = normalizeRemotePath(path)
-	prefix = normalizeRemotePath(prefix)
+	path = normalizeRemotePrefixPath(path)
+	prefix = normalizeRemotePrefixPath(prefix)
 	if path == "" || prefix == "" {
 		return false
 	}
@@ -206,8 +214,8 @@ func remoteDirOverlapsPrefix(path, prefix string) bool {
 }
 
 func remotePathHasPrefix(path, prefix string) bool {
-	path = normalizeRemotePath(path)
-	prefix = normalizeRemotePath(prefix)
+	path = normalizeRemotePrefixPath(path)
+	prefix = normalizeRemotePrefixPath(prefix)
 	if path == "" || prefix == "" {
 		return false
 	}

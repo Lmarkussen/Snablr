@@ -98,15 +98,26 @@ Important fields:
 - `enabled`
   Controls whether the rule is active
 - `include_paths`
-  Restrict the rule to matching paths
+  Restrict the rule to matching paths (see path patterns below)
 - `exclude_paths`
-  Skip the rule for matching paths
+  Skip the rule for matching paths (see path patterns below)
 - `file_extensions`
   Restrict the rule to certain extensions
 - `max_file_size`
   Skip files larger than this many bytes for the rule
 - `action`
   `report`, `skip`, or `prioritize`
+
+### Path patterns
+
+`include_paths` and `exclude_paths` match whole path segments, case-insensitively:
+
+- `temp` matches `Temp/notes.txt` and `Users/a/AppData/Local/Temp/x.log`, but not `IT/Templates/unattend.xml`
+- `bin` matches `app/bin/app.config`, but not `Users/Robin/passwords.txt`
+- multi-segment patterns such as `windows/system32/config` must match consecutive segments
+- a segment may use glob characters (`*`, `?`, `[...]`): `'*passordpolicy*'` matches any single segment containing `passordpolicy`, such as the file name `passordpolicy-2024.docx`
+
+Quote glob patterns in YAML, because a leading `*` otherwise starts a YAML alias. Plain substring matching is not used, so a generic token never hides an unrelated folder that merely contains it.
 
 ## How Matching Works
 

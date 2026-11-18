@@ -100,16 +100,20 @@ func TestGenerateCredentialCorpusV2LocksActualMembersAndUnsupportedFormats(t *te
 				t.Fatalf("%s expected member = %q, want %q", file.FixtureID, file.ExpectedPath, member)
 			}
 		case "docx-member", "xlsx-member":
-			if file.ExpectedClass == "credential" {
-				member := "word/document.xml"
-				if file.SeedVariant == "xlsx-member" {
-					member = "xl/sharedStrings.xml"
-				}
-				if !strings.HasSuffix(file.ExpectedPath, "!"+member) {
-					t.Fatalf("%s expected member = %q, want %q", file.FixtureID, file.ExpectedPath, member)
-				}
-			} else if !strings.HasSuffix(file.ExpectedPath, "!nested/negative.txt") && !strings.HasSuffix(file.ExpectedPath, "!nested/ambiguous.txt") {
-				t.Fatalf("%s expected unsupported member = %q", file.FixtureID, file.ExpectedPath)
+			// Office variants are valid OOXML packages for every class, so the
+			// expected member is always the document part.
+			member := "word/document.xml"
+			if file.SeedVariant == "xlsx-member" {
+				member = "xl/sharedStrings.xml"
+			}
+			if !strings.HasSuffix(file.ExpectedPath, "!"+member) {
+				t.Fatalf("%s expected member = %q, want %q", file.FixtureID, file.ExpectedPath, member)
+			}
+			if _, err := zip.NewReader(bytes.NewReader(file.Content), int64(len(file.Content))); err != nil {
+				t.Fatalf("%s is not a readable OOXML package: %v", file.FixtureID, err)
+			}
+			if !bytes.Contains(file.Content, []byte("_rels/.rels")) {
+				t.Fatalf("%s lacks the OOXML package relationships part", file.FixtureID)
 			}
 		case "csv-table", "html-form":
 			if file.ExpectedClass != "unsupported" || file.SupportStatus != "unsupported" || file.ExpectedObservations != 0 {

@@ -207,6 +207,14 @@ func correlateGroup(meta FileMetadata, group []Finding) Finding {
 		correlationContribution += 10
 		reasons = append(reasons, "exact backup or restore path matched a known Windows system-state storage family")
 	}
+	// A directly exploitable artifact (private key, SAM/SYSTEM/NTDS, Kerberos
+	// ticket, memory dump, VM disk) is high-impact evidence by itself, even when
+	// only its name is known, so it must not rank below weaker content findings.
+	if groupHasDirectExploitArtifact(group) && score < directExploitConfidenceFloor {
+		correlationContribution += directExploitConfidenceFloor - score
+		score = directExploitConfidenceFloor
+		reasons = append(reasons, "directly exploitable artifact sets a high confidence floor")
+	}
 	if score > 100 {
 		score = 100
 	}
@@ -227,6 +235,19 @@ func correlateGroup(meta FileMetadata, group []Finding) Finding {
 	correlated.ConfidenceBreakdown.FinalScore = correlated.ConfidenceScore
 	correlated.ConfidenceBreakdown.TriageAdjustment = correlated.ConfidenceScore - correlated.ConfidenceBreakdown.BaseScore
 	return correlated
+}
+
+// directExploitConfidenceFloor is the lowest score of the "high" confidence
+// band.
+const directExploitConfidenceFloor = 70
+
+func groupHasDirectExploitArtifact(group []Finding) bool {
+	for _, finding := range group {
+		if isDirectExploitArtifact(finding) {
+			return true
+		}
+	}
+	return false
 }
 
 func allowsContextBoosts(group []Finding) bool {

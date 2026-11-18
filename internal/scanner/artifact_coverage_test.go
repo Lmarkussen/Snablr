@@ -99,3 +99,44 @@ func TestRemoteAccessStorePasswordsAreNeverConfirmed(t *testing.T) {
 		})
 	}
 }
+
+// Directly exploitable artifacts are high-impact even when only their name is
+// known, so they must rank in the high confidence band rather than below
+// weaker content findings.
+func TestDirectExploitArtifactsHaveHighConfidence(t *testing.T) {
+	manager := loadOfficeRules(t)
+	for _, path := range []string{"Backups/Hyper-V/DC01.vhdx", "Users/Admin/tickets/administrator.kirbi", "Users/Admin/Desktop/lsass.dmp", "Backups/Domain/NTDS.dit.bak"} {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			engine := NewEngine(Options{MaxFileSizeBytes: 10 * mib, MaxReadBytes: 10 * mib}, manager, nil, logx.New("error"))
+			evaluation := engine.EvaluateContext(context.Background(), FileMetadata{FilePath: path, Name: filepath.Base(path), Extension: filepath.Ext(path), Size: 900 * mib}, nil)
+			for _, finding := range evaluation.Findings {
+				if isDirectExploitArtifact(finding) || finding.Actionable {
+					if finding.Confidence != "high" || finding.ConfidenceScore < directExploitConfidenceFloor {
+						t.Fatalf("%s confidence=%s score=%d, want high >= %d", finding.RuleID, finding.Confidence, finding.ConfidenceScore, directExploitConfidenceFloor)
+					}
+					return
+				}
+			}
+			t.Fatalf("no direct-exploit finding: %v", ruleIDs(evaluation.Findings))
+		})
+	}
+}
+
+// Files under skip-rule paths are read and harvested; once that is done the
+// file is complete and must not be reported as still needing content, which
+// made every resume re-read it.
+func TestSkipPathFilesAreNotLeftNeedingContent(t *testing.T) {
+	engine := NewEngine(Options{}, loadOfficeRules(t), nil, logx.New("error"))
+	content := "user=svc_synthetic\npassword=Synthetic-Temp-91!\n"
+	meta := FileMetadata{FilePath: "Users/a/AppData/Local/Temp/deploy.txt", Name: "deploy.txt", Extension: ".txt", Size: int64(len(content))}
+	if !engine.NeedsContent(meta) {
+		t.Fatal("skip-path text file should still be read for credential harvesting")
+	}
+	evaluation := engine.EvaluateContext(context.Background(), meta, []byte(content))
+	if !evaluation.Skipped || evaluation.NeedContent {
+		t.Fatalf("skip-path file: skipped=%v needContent=%v, want skipped and not needing content", evaluation.Skipped, evaluation.NeedContent)
+	}
+	if _, ok := confirmedCredentialFinding(evaluation.Findings); !ok {
+		t.Fatalf("credential in skip-path file no longer reported: %v", ruleIDs(evaluation.Findings))
+	}
+}

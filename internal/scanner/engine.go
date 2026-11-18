@@ -173,10 +173,12 @@ func (e *Engine) EvaluateContext(ctx context.Context, meta FileMetadata, content
 		// artifacts: a Kerberos cache in /tmp or an LSASS dump in a Temp folder
 		// is still reported by name.
 		skippedFindings := append(credentialFindings, e.directExploitArtifactFindings(meta)...)
+		// The worker already supplied the content NeedsContent asked for and the
+		// harvester processed it, so the file is complete, not partial; marking
+		// it partial made every resume re-read it.
 		evaluation := Evaluation{
-			Skipped:     true,
-			SkipReason:  "matched skip rule",
-			NeedContent: credentialanalysis.NeedsContent(meta.FilePath, meta.Name, meta.Size),
+			Skipped:    true,
+			SkipReason: "matched skip rule",
 		}
 		if len(skippedFindings) > 0 {
 			evaluation.Findings = correlateFindings(meta, skippedFindings)

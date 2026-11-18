@@ -38,6 +38,10 @@ type Result struct {
 	Metadata   FileMetadata
 	Evaluation Evaluation
 	Err        error
+	// onComplete is invoked by the collector only after the result's findings
+	// were handed to the sink, so a file is never recorded as completed while
+	// its findings can still be dropped by cancellation.
+	onComplete JobCallback
 }
 
 type WorkerPool struct {
@@ -141,8 +145,7 @@ func (p *WorkerPool) runWorker(ctx context.Context, jobs <-chan Job, results cha
 
 func (p *WorkerPool) processJob(ctx context.Context, job Job) (result Result) {
 	meta := job.Metadata.Normalized()
-	result = Result{Metadata: meta}
-	callbackCalled := false
+	result = Result{Metadata: meta, onComplete: job.OnComplete}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err := fmt.Errorf("scanner worker panic for %s: %v", meta.FilePath, recovered)
@@ -153,9 +156,6 @@ func (p *WorkerPool) processJob(ctx context.Context, job Job) (result Result) {
 				SkipReason: "worker panic recovered",
 			}
 			result.Err = err
-			if job.OnComplete != nil && !callbackCalled {
-				p.invokeCompletion(job.OnComplete, meta, result.Evaluation, err)
-			}
 		}
 	}()
 
@@ -208,9 +208,12 @@ func (p *WorkerPool) processJob(ctx context.Context, job Job) (result Result) {
 	if p.recorder != nil && len(evaluation.Findings) > 0 {
 		p.recorder.AddMatchesFound(len(evaluation.Findings))
 	}
-	if job.OnComplete != nil {
-		p.invokeCompletion(job.OnComplete, meta, evaluation, err)
-		callbackCalled = true
+	if err == nil && ctx.Err() != nil {
+		// Cancellation may have cut the evaluation short (for example inside an
+		// archive or WIM image). Keep any findings, but report the file as
+		// interrupted so it is not recorded as completed and is rescanned on
+		// resume.
+		err = ctx.Err()
 	}
 	for _, binary := range evaluation.BinaryArtifacts {
 		_ = binary.Close()
@@ -236,13 +239,15 @@ func (p *WorkerPool) collectResults(ctx context.Context, results <-chan Result) 
 			if !ok {
 				return nil
 			}
-			if p.sink == nil {
-				continue
-			}
-			for _, finding := range result.Evaluation.Findings {
-				if err := p.sink.WriteFinding(finding); err != nil {
-					return err
+			if p.sink != nil {
+				for _, finding := range result.Evaluation.Findings {
+					if err := p.sink.WriteFinding(finding); err != nil {
+						return err
+					}
 				}
+			}
+			if result.onComplete != nil {
+				p.invokeCompletion(result.onComplete, result.Metadata, result.Evaluation, result.Err)
 			}
 		}
 	}

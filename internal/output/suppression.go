@@ -84,7 +84,7 @@ func (s *suppressionWriter) ExportNTDSCurrentHash(domain, account, source string
 }
 
 func (s *suppressionWriter) RecordCredentialCandidate(candidate credentialanalysis.Candidate) error {
-	if recorder, ok := s.inner.(scanner.CredentialCandidateSink); ok {
+	if recorder := CredentialCandidateRecorder(s.inner); recorder != nil {
 		return recorder.RecordCredentialCandidate(candidate)
 	}
 	return nil

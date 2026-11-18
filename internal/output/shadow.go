@@ -133,3 +133,30 @@ func shadowCredential(sink scanner.FindingSink, candidate credentialanalysis.Can
 		_ = value.(*store.SQLiteStore).RecordCredential(candidate)
 	}
 }
+
+// sqliteCandidateRecorder persists harvested credential candidates for a
+// sink that has an attached SQLite store but no candidate handling of its own,
+// such as the console or live TUI writer used alone with --no-outfile.
+type sqliteCandidateRecorder struct {
+	shadow *store.SQLiteStore
+}
+
+func (r sqliteCandidateRecorder) RecordCredentialCandidate(candidate credentialanalysis.Candidate) error {
+	return r.shadow.RecordCredential(candidate)
+}
+
+// CredentialCandidateRecorder returns the recorder that should receive
+// harvested credential candidates for sink. Sinks that record candidates
+// themselves are returned unchanged; otherwise candidates are persisted
+// directly to the sink's attached SQLite store so credential evidence does not
+// depend on which report outputs are enabled. It returns nil when neither is
+// available.
+func CredentialCandidateRecorder(sink scanner.FindingSink) scanner.CredentialCandidateSink {
+	if recorder, ok := sink.(scanner.CredentialCandidateSink); ok {
+		return recorder
+	}
+	if shadow := attachedSQLiteStore(sink); shadow != nil {
+		return sqliteCandidateRecorder{shadow: shadow}
+	}
+	return nil
+}

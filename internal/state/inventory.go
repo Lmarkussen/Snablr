@@ -412,10 +412,13 @@ func (m *InventoryManager) Prepare(observation FileObservation, credentialContex
 	return decision, err
 }
 
+// MarkScanning persists the in-flight status but keeps the active object so
+// the worker's terminal MarkCompleted/MarkFailed/MarkPartial can still update
+// and persist it. Only terminal transitions release the object.
 func (m *InventoryManager) MarkScanning(key string) {
 	if m.Enabled() {
 		m.inventory.MarkScanning(key)
-		m.storeFile(key)
+		m.recordFile(key)
 	}
 }
 
@@ -440,14 +443,21 @@ func (m *InventoryManager) MarkPartial(key string) {
 	}
 }
 
+// storeFile persists a terminal status and releases the active object.
 func (m *InventoryManager) storeFile(key string) {
+	if m.recordFile(key) {
+		m.inventory.release(key)
+	}
+}
+
+// recordFile persists the object's current status without releasing it and
+// reports whether the object was found.
+func (m *InventoryManager) recordFile(key string) bool {
 	object, ok := m.inventory.object(key)
 	if ok && m.store != nil {
 		_ = m.store.RecordFile(object.Key, object.Identity.Server, object.Identity.Share, object.Identity.Path, string(object.Status), object.Semantics, object.Size, object.ModifiedAt, object.FirstSeen, object.LastSeen, object.UpdatedAt)
 	}
-	if ok {
-		m.inventory.release(key)
-	}
+	return ok
 }
 
 func (i *Inventory) object(key string) (ObjectRecord, bool) {

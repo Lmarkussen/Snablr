@@ -158,6 +158,9 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			}
 		}
 	}
+	if err := invalidateDerivedCorrelationsForContinuedScan(shadow, sqliteResume); err != nil {
+		return err
+	}
 	if !opts.NoOutfile {
 		reportPath, reportErr := rawHTMLReportPath(cfg, shadow)
 		if reportErr != nil {
@@ -397,7 +400,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	if exporter, ok := sink.(scanner.SensitiveCredentialExporter); ok {
 		engine.SetCredentialExporter(exporter)
 	}
-	if recorder, ok := sink.(scanner.CredentialCandidateSink); ok {
+	if recorder := output.CredentialCandidateRecorder(sink); recorder != nil {
 		engine.SetCredentialCandidateSink(recorder)
 	}
 	if sqliteResume != nil {
@@ -1257,6 +1260,22 @@ func rawHTMLReportPath(cfg config.Config, shadow *store.SQLiteStore) (string, er
 		}
 		destination = fmt.Sprintf("%s_%d_RAW.html", base, index)
 	}
+}
+
+// invalidateDerivedCorrelationsForContinuedScan discards the published derived
+// correlation generation of a resumed or reused scan. That generation was built
+// from the findings available when the earlier run stopped; leaving it marked
+// complete prevented the end-of-run report path from rebuilding cross-file
+// correlations (for example NTDS + SYSTEM compromise paths) over the findings
+// the continued run adds.
+func invalidateDerivedCorrelationsForContinuedScan(shadow *store.SQLiteStore, resume *store.ResumeState) error {
+	if shadow == nil || resume == nil {
+		return nil
+	}
+	if err := shadow.ResetCorrelationState(); err != nil {
+		return fmt.Errorf("invalidate derived correlations for continued scan: %w", err)
+	}
+	return nil
 }
 
 func shadowID(shadow *store.SQLiteStore) string {

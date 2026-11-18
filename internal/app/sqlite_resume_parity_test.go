@@ -111,6 +111,7 @@ func runDeterministicScanner(t *testing.T, dbPath string, resume bool, stopAfter
 	var completed atomic.Int32
 	go func() {
 		defer close(jobs)
+		dispatched := 0
 		for index := 0; index < 12; index++ {
 			path := fmt.Sprintf("file-%02d.txt", index)
 			if index == 2 {
@@ -153,9 +154,14 @@ func runDeterministicScanner(t *testing.T, dbPath string, resume bool, stopAfter
 				_ = shadow.RecordFile(state.FileKey(meta.Host, meta.Share, meta.FilePath), meta.Host, meta.Share, meta.FilePath, status, "synthetic-semantics", meta.Size, meta.ModifiedAt, time.Now().UTC(), time.Now().UTC(), time.Now().UTC())
 				completed.Add(1)
 			}}
-			if stopAfter > 0 && int(completed.Load()) >= stopAfter {
+			// Interrupt after a fixed number of dispatched jobs. Completion is
+			// reported asynchronously by the worker pool's collector once a
+			// file's findings are written, so racing the completion counter made
+			// the interruption point, and therefore this test, nondeterministic.
+			if stopAfter > 0 && dispatched > stopAfter {
 				break
 			}
+			dispatched++
 			jobs <- job
 		}
 	}()

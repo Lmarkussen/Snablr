@@ -92,6 +92,35 @@ type VerificationReport struct {
 	// NotWrittenEntries counts dry-run manifest entries that were never
 	// written to the target.
 	NotWrittenEntries int `json:"not_written_entries,omitempty"`
+	// NegativeControls are fixtures with no usable credential material; any
+	// actionable finding on them is a false positive.
+	NegativeControls   int                 `json:"negative_controls,omitempty"`
+	NegativeActionable []SeedManifestEntry `json:"negative_actionable,omitempty"`
+	// ReviewMaterial are fixtures with real but unpaired or protected
+	// credential material; surfacing them as findings is the desired outcome.
+	ReviewMaterial int `json:"review_material,omitempty"`
+	ReviewSurfaced int `json:"review_surfaced,omitempty"`
+}
+
+// recordPrecisionControl classifies findings on non-positive fixtures:
+// actionable findings on negative controls are false positives, while
+// findings on review material are expected.
+func recordPrecisionControl(result *VerificationReport, entry SeedManifestEntry, matches []scanner.Finding) {
+	switch normalizeExpectedClass(entry.ExpectedClass) {
+	case "negative":
+		result.NegativeControls++
+		for _, finding := range matches {
+			if finding.Actionable {
+				result.NegativeActionable = append(result.NegativeActionable, entry)
+				return
+			}
+		}
+	case "review":
+		result.ReviewMaterial++
+		if len(matches) > 0 {
+			result.ReviewSurfaced++
+		}
+	}
 }
 
 func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
@@ -192,6 +221,7 @@ func verifyFindings(manifestPath string, findings []scanner.Finding, manifest Ma
 				}
 			} else {
 				result.Unexpected = append(result.Unexpected, matches...)
+				recordPrecisionControl(&result, entry, matches)
 			}
 			continue
 		}
@@ -321,6 +351,9 @@ func verifyFindings(manifestPath string, findings []scanner.Finding, manifest Ma
 		}
 		return result.Found[i].Entry.Category < result.Found[j].Entry.Category
 	})
+	sort.Slice(result.NegativeActionable, func(i, j int) bool {
+		return manifestKey(result.NegativeActionable[i]) < manifestKey(result.NegativeActionable[j])
+	})
 	sort.Slice(result.Missed, func(i, j int) bool {
 		if result.Missed[i].Category == result.Missed[j].Category {
 			if result.Missed[i].Host == result.Missed[j].Host {
@@ -374,6 +407,12 @@ func PrintVerificationReport(report VerificationReport) {
 		fmt.Printf("Filler/noise items: %d (%d matched, %d not matched)\n", report.FillerItems, report.FillerMatchedItems, report.FillerMissedItems)
 	}
 	fmt.Printf("Unexpected findings: %d\n", report.UnexpectedFindings)
+	if report.NegativeControls > 0 {
+		fmt.Printf("Negative controls (no credential material): %d, with actionable findings (false positives): %d\n", report.NegativeControls, len(report.NegativeActionable))
+	}
+	if report.ReviewMaterial > 0 {
+		fmt.Printf("Review material (unpaired or protected credentials): %d, surfaced as findings: %d\n", report.ReviewMaterial, report.ReviewSurfaced)
+	}
 
 	if len(report.Coverage) > 0 {
 		fmt.Println("\nCoverage by category:")
@@ -427,6 +466,13 @@ func PrintVerificationReport(report VerificationReport) {
 			fmt.Printf("- [%s] %s/%s/%s observed=%s confidence=%s correlated=%t reason=%s\n",
 				valueOrDash(item.Entry.ExpectedClass), item.Entry.Host, item.Entry.Share, item.Entry.Path,
 				valueOrDash(item.ObservedTriageClass), valueOrDash(item.ObservedConfidence), item.ObservedCorrelated, item.Reason)
+		}
+	}
+
+	if len(report.NegativeActionable) > 0 {
+		fmt.Println("\nActionable findings on negative controls (false positives):")
+		for _, entry := range report.NegativeActionable {
+			fmt.Printf("- %s/%s/%s reason=%s\n", entry.Host, entry.Share, entry.Path, valueOrDash(entry.NegativeReason))
 		}
 	}
 

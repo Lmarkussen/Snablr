@@ -96,3 +96,27 @@ func TestCountNotWrittenEntries(t *testing.T) {
 		t.Fatalf("not written=%d, want 2", got)
 	}
 }
+
+// Actionable findings on negative controls are false positives; findings on
+// review material (unpaired or protected credentials) are the desired outcome
+// and must not be counted against precision.
+func TestVerifyFindingsSeparatesFalsePositivesFromReviewMaterial(t *testing.T) {
+	manifest := Manifest{Entries: []SeedManifestEntry{
+		{Host: "192.0.2.10", Share: "SyntheticShare", Path: "neg/placeholder.txt", ExpectedClass: "negative", NegativeReason: "placeholder or masked value"},
+		{Host: "192.0.2.10", Share: "SyntheticShare", Path: "neg/policy.txt", ExpectedClass: "negative", NegativeReason: "password policy documentation"},
+		{Host: "192.0.2.10", Share: "SyntheticShare", Path: "review/orphan.txt", ExpectedClass: "review", NegativeReason: "password-only reference"},
+		{Host: "192.0.2.10", Share: "SyntheticShare", Path: "review/silent.txt", ExpectedClass: "review", NegativeReason: "opaque/encrypted material"},
+	}}
+	findings := []scanner.Finding{
+		{RuleID: "synthetic.actionable", Host: "192.0.2.10", Share: "SyntheticShare", FilePath: "neg/placeholder.txt", Actionable: true},
+		{RuleID: "synthetic.weak", Host: "192.0.2.10", Share: "SyntheticShare", FilePath: "neg/policy.txt", Actionable: false},
+		{RuleID: "synthetic.review", Host: "192.0.2.10", Share: "SyntheticShare", FilePath: "review/orphan.txt", Actionable: true},
+	}
+	report := verifyFindings("manifest.json", findings, manifest)
+	if report.NegativeControls != 2 || len(report.NegativeActionable) != 1 || report.NegativeActionable[0].Path != "neg/placeholder.txt" {
+		t.Fatalf("negative controls=%d false positives=%+v", report.NegativeControls, report.NegativeActionable)
+	}
+	if report.ReviewMaterial != 2 || report.ReviewSurfaced != 1 {
+		t.Fatalf("review material=%d surfaced=%d, want 2/1", report.ReviewMaterial, report.ReviewSurfaced)
+	}
+}

@@ -118,6 +118,15 @@ func generateCredentialCorpusV2(opts GenerateOptions) ([]SeedFile, error) {
 			file.ExpectedPairs = 0
 			file.ExpectedObservations = 0
 			file.NegativeReason = v2NegativeReason(index)
+			if v2UnpairedCredentialMaterial(file.NegativeReason) {
+				// Real credential material without a confirmable pair is
+				// review-worthy evidence, not a negative control: surfacing it is
+				// correct, but it must never be confirmed as a pair.
+				file.ExpectedClass = "review"
+				file.ExpectedTriageClass = "review"
+				file.ExpectedConfidence = "low"
+				file.ExpectedSeverity = "low"
+			}
 			file.Content = v2NegativeContent(index, username, password)
 			if variant.archive {
 				file.Content = v2ArchiveOrOffice(variant.name, "nested/negative.txt", string(file.Content), "No usable credential is present.\n")
@@ -281,6 +290,19 @@ func v2NegativeReason(index int) string {
 	// Indexed in step with v2NegativeContent: reason i describes content case i.
 	reasons := []string{"placeholder or masked value", "unresolved variable", "password-only reference", "opaque/encrypted material", "random hex unrelated to credentials", "password policy documentation", "conflicting independent sections", "broken connection string", "empty credential fields"}
 	return reasons[index%len(reasons)]
+}
+
+// v2UnpairedCredentialMaterial reports whether a non-positive fixture still
+// carries real credential material (a plaintext password without an account,
+// or protected material) that a reviewer should see. The remaining reasons
+// describe files with no usable credential at all.
+func v2UnpairedCredentialMaterial(reason string) bool {
+	switch reason {
+	case "password-only reference", "opaque/encrypted material", "conflicting independent sections":
+		return true
+	default:
+		return false
+	}
 }
 
 func v2NegativeContent(index int, user, pass string) []byte {

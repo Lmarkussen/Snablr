@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"regexp"
 	"strings"
 
 	"snablr/internal/credentialanalysis"
@@ -65,6 +66,16 @@ func weakContentSuppression(ruleID string, category string, matchedText string, 
 			return true, "credential-note value looks placeholder-like or low quality"
 		}
 		return false, ""
+	case "content.note_style_credential_pair_indicators":
+		// The rule matches the account line; the paired secret is on the
+		// surrounding lines. When every paired secret value is a placeholder or
+		// an unresolved reference ("CHANGE_ME", "********", "${DEPLOY_PASSWORD}")
+		// there is no credential to report, matching how the credential
+		// harvester treats the same values. Any real secret keeps the finding,
+		// and notes without a visible secret line keep the default handling.
+		if secrets := pairedSecretValues(context); len(secrets) > 0 && allPlaceholderValues(secrets) {
+			return true, "paired secret values are placeholders or unresolved references"
+		}
 	case "content.password_assignment_indicators":
 		// An explicit "<password> = <value>" assignment states a credential
 		// outright. Shortness alone is therefore not enough to withhold the
@@ -91,6 +102,13 @@ func weakContentSuppression(ruleID string, category string, matchedText string, 
 
 	switch strings.ToLower(strings.TrimSpace(category)) {
 	case "credentials", "infrastructure":
+		// Values the credential layer recognises as placeholders or unresolved
+		// references ("CHANGE_ME", "${DEPLOY_PASSWORD}") are not credentials.
+		// Only the matched text is considered, so a real value nearby is never
+		// hidden by this check.
+		if matched := extractedSensitiveValues(matchedText); allPlaceholderValues(matched) {
+			return true, "matched values are placeholders or unresolved references"
+		}
 		if assessExtractedValuesQuality(extractedSensitiveValues(blob)).Weak {
 			return true, "sensitive values look placeholder-like or low quality"
 		}
@@ -225,4 +243,33 @@ func containsAnyToken(value string, parts ...string) bool {
 		}
 	}
 	return false
+}
+
+// pairedSecretLinePattern parses one "key: value" or "key = value" line.
+var pairedSecretLinePattern = regexp.MustCompile(`^\s*([\p{L}][\p{L}\p{N}_. -]{0,63}?)\s*[:=]\s*(.*?)\s*$`)
+
+// pairedSecretValues returns the values of password-role fields in a match
+// context, using the credential harvester's field vocabulary.
+func pairedSecretValues(context string) []string {
+	var values []string
+	for _, line := range strings.Split(context, "\n") {
+		match := pairedSecretLinePattern.FindStringSubmatch(line)
+		if match == nil || credentialanalysis.ClassifyFieldName(match[1]) != credentialanalysis.FieldRolePassword {
+			continue
+		}
+		value := strings.Trim(strings.TrimSpace(match[2]), `"'`)
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+func allPlaceholderValues(values []string) bool {
+	for _, value := range values {
+		if !credentialanalysis.IsPlaceholderValue(value) {
+			return false
+		}
+	}
+	return len(values) > 0
 }

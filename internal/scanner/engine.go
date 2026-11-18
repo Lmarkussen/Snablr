@@ -165,12 +165,20 @@ func (e *Engine) EvaluateContext(ctx context.Context, meta FileMetadata, content
 	}
 
 	if e.shouldSkipByPath(meta) {
-		_ = e.harvestCredentialCandidates(meta, content)
-		return Evaluation{
+		// A skip rule suppresses rule matching, but credentials confirmed by the
+		// harvester are still reported: recovered credentials must never exist
+		// only in persisted evidence without a finding.
+		_, credentialFindings := e.harvestCredentialCandidatesWithOptions(meta, content, false)
+		evaluation := Evaluation{
 			Skipped:     true,
 			SkipReason:  "matched skip rule",
 			NeedContent: credentialanalysis.NeedsContent(meta.FilePath, meta.Name, meta.Size),
 		}
+		if len(credentialFindings) > 0 {
+			evaluation.Findings = correlateFindings(meta, credentialFindings)
+			e.recordValidationFindings(evaluation.Findings)
+		}
+		return evaluation
 	}
 
 	if shouldInspect, skipReason, isArchive := e.archiveDecision(meta); isArchive {
@@ -318,7 +326,9 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 		content = content[:e.opts.MaxReadBytes]
 	}
 	keyMatchesBeforeHarvest := e.keyInspector.InspectContent(keyCandidate(meta), content)
-	evaluation.InspectionFailures = append(evaluation.InspectionFailures, e.harvestCredentialCandidatesWithOptions(meta, content, len(keyMatchesBeforeHarvest) > 0)...)
+	harvestFailures, credentialFindings := e.harvestCredentialCandidatesWithOptions(meta, content, len(keyMatchesBeforeHarvest) > 0)
+	evaluation.InspectionFailures = append(evaluation.InspectionFailures, harvestFailures...)
+	evaluation.Findings = append(evaluation.Findings, credentialFindings...)
 
 	// Content rules operate on human-readable text. Legacy OLE/CFB Office files
 	// are binary containers, so the recovered text is what the rules must see.
@@ -370,19 +380,24 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 }
 
 func (e *Engine) harvestCredentialCandidates(meta FileMetadata, content []byte) []InspectionFailure {
-	return e.harvestCredentialCandidatesWithOptions(meta, content, false)
+	failures, _ := e.harvestCredentialCandidatesWithOptions(meta, content, false)
+	return failures
 }
 
 // harvestCredentialCandidatesWithNotes runs the shared harvester and returns any
 // content-inspection limitations it reported, so the engine can distinguish a
 // file that could not be read from one that was read but not fully parsed.
 func (e *Engine) harvestCredentialCandidatesWithNotes(meta FileMetadata, content []byte) []InspectionFailure {
-	return e.harvestCredentialCandidatesWithOptions(meta, content, false)
+	failures, _ := e.harvestCredentialCandidatesWithOptions(meta, content, false)
+	return failures
 }
 
-func (e *Engine) harvestCredentialCandidatesWithOptions(meta FileMetadata, content []byte, skipPrivateKeys bool) []InspectionFailure {
+// harvestCredentialCandidatesWithOptions records harvested candidates and
+// returns the harvester's inspection failures together with a finding for any
+// confirmed credential material.
+func (e *Engine) harvestCredentialCandidatesWithOptions(meta FileMetadata, content []byte, skipPrivateKeys bool) ([]InspectionFailure, []Finding) {
 	if e == nil || len(content) == 0 {
-		return nil
+		return nil, nil
 	}
 	candidates, notes := credentialanalysis.HarvestWithReport(credentialanalysis.HarvestInput{
 		Content: content, Source: meta.Source, Host: meta.Host, Share: meta.Share,
@@ -396,8 +411,9 @@ func (e *Engine) harvestCredentialCandidatesWithOptions(meta FileMetadata, conte
 			}
 		}
 	}
+	findings := findingsFromConfirmedCredentials(meta, candidates)
 	if len(notes) == 0 {
-		return nil
+		return nil, findings
 	}
 	failures := make([]InspectionFailure, 0, len(notes))
 	for _, note := range notes {
@@ -405,7 +421,7 @@ func (e *Engine) harvestCredentialCandidatesWithOptions(meta FileMetadata, conte
 			Path: meta.FilePath, Parser: note.Parser, Category: note.Category, Detail: note.Detail,
 		})
 	}
-	return failures
+	return failures, findings
 }
 
 func (e *Engine) evaluateLooseBinary(ctx context.Context, meta FileMetadata, content []byte, kind artifact.Kind) Evaluation {

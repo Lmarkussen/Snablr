@@ -37,7 +37,25 @@ func TestEngineDoesNotCreateSCCMCredentialCandidates(t *testing.T) {
 	content := []byte(`<TaskSequence><Name>OSD</Name><Step id="join"><Action>DomainJoin</Action><OSDJoinAccount>synthetic\\join</OSDJoinAccount><OSDJoinPassword>JoinSecret!</OSDJoinPassword></Step></TaskSequence>`)
 	engine := NewEngine(Options{MaxFileSizeBytes: 1024 * 1024, MaxReadBytes: 1024 * 1024}, &rules.Manager{}, nil, logx.New("error"))
 	first := engine.EvaluateContext(context.Background(), FileMetadata{FilePath: "tasksequence.xml", Name: "tasksequence.xml", Extension: ".xml", Size: int64(len(content))}, content)
-	if len(first.Findings) != 1 || first.Findings[0].RuleID != "sccminspect.task_sequence.step" {
-		t.Fatalf("unexpected SCCM task-sequence findings: %#v", first.Findings)
+	// The SCCM inspector itself only records the task-sequence step as a
+	// weak-review contract observation. The explicitly named OSD join account
+	// and password are confirmed by the credential harvester, and every
+	// confirmed credential is reported as its own finding.
+	var step, credential *Finding
+	for i := range first.Findings {
+		switch first.Findings[i].RuleID {
+		case "sccminspect.task_sequence.step":
+			step = &first.Findings[i]
+		case ConfirmedCredentialRuleID:
+			credential = &first.Findings[i]
+		default:
+			t.Fatalf("unexpected SCCM task-sequence finding %s: %#v", first.Findings[i].RuleID, first.Findings)
+		}
+	}
+	if step == nil || step.TriageClass != "weak-review" || step.Actionable {
+		t.Fatalf("SCCM task-sequence step was missing or overstated: %#v", first.Findings)
+	}
+	if credential == nil || !credential.Actionable {
+		t.Fatalf("confirmed OSD join credential was not reported as an actionable finding: %#v", first.Findings)
 	}
 }

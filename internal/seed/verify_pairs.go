@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"snablr/internal/credentialaudit"
 	"snablr/internal/credentialanalysis"
+	"snablr/internal/credentialaudit"
 	"snablr/internal/scanner"
 )
 

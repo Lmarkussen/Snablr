@@ -118,10 +118,13 @@ func TestCredentialCorpusV2FullPairRecallWithoutConfirmedNegatives(t *testing.T)
 		engine := scanner.NewEngine(scanner.Options{}, manager, nil, logx.New("error"))
 		recorder := &v2CandidateRecorder{}
 		engine.SetCredentialCandidateSink(recorder)
-		engine.EvaluateContext(context.Background(), scanner.FileMetadata{
+		evaluation := engine.EvaluateContext(context.Background(), scanner.FileMetadata{
 			Host: "synthetic-host", Share: "SyntheticShare", FilePath: FullPath(file),
 			Name: file.Filename, Extension: filepath.Ext(file.Filename), Size: int64(len(file.Content)),
 		}, file.Content)
+		if len(file.ExpectedPairsDetail) > 0 && !hasActionableFinding(evaluation.Findings) {
+			t.Errorf("%s (%s): recovered credential produced no actionable finding: %v", file.FixtureID, file.SeedVariant, findingSummaries(evaluation.Findings))
+		}
 		for _, candidate := range recorder.candidates {
 			candidate.Host, candidate.Share = "synthetic-host", "SyntheticShare"
 			if candidate.Path == "" {
@@ -140,4 +143,23 @@ func TestCredentialCorpusV2FullPairRecallWithoutConfirmedNegatives(t *testing.T)
 		}
 		t.Fatalf("pair recall %d/%d", report.MatchedPairs, report.ExpectedPairs)
 	}
+}
+
+// hasActionableFinding reports whether a recovered credential is visible as a
+// primary, actionable finding (from the harvester or a specialised inspector).
+func hasActionableFinding(findings []scanner.Finding) bool {
+	for _, finding := range findings {
+		if finding.Actionable {
+			return true
+		}
+	}
+	return false
+}
+
+func findingSummaries(findings []scanner.Finding) []string {
+	out := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		out = append(out, finding.RuleID+"/"+finding.TriageClass)
+	}
+	return out
 }

@@ -28,9 +28,10 @@ type trailingStatusClient struct {
 	files map[string][]byte
 }
 
-func (c *trailingStatusClient) SetMaxReadSize(int64)                   {}
-func (c *trailingStatusClient) Close() error                           { return nil }
-func (c *trailingStatusClient) ConnectWithAuth(string, smb.Auth) error { return nil }
+func (c *trailingStatusClient) SetMaxReadSize(int64)                               {}
+func (c *trailingStatusClient) SetOperationContext(context.Context, time.Duration) {}
+func (c *trailingStatusClient) Close() error                                       { return nil }
+func (c *trailingStatusClient) ConnectWithAuth(string, smb.Auth) error             { return nil }
 func (c *trailingStatusClient) ListShares() ([]smb.ShareInfo, error) {
 	return []smb.ShareInfo{{Name: "share"}}, nil
 }

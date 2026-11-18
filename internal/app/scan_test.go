@@ -166,8 +166,9 @@ type appFakeScanClient struct {
 	changeSecurity bool
 }
 
-func (*appFakeScanClient) SetMaxReadSize(int64)                   {}
-func (*appFakeScanClient) ConnectWithAuth(string, smb.Auth) error { return nil }
+func (*appFakeScanClient) SetMaxReadSize(int64)                               {}
+func (*appFakeScanClient) SetOperationContext(context.Context, time.Duration) {}
+func (*appFakeScanClient) ConnectWithAuth(string, smb.Auth) error             { return nil }
 func (*appFakeScanClient) ListShares() ([]smb.ShareInfo, error) {
 	return []smb.ShareInfo{{Name: "share"}}, nil
 }

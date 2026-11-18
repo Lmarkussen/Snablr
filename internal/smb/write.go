@@ -14,7 +14,7 @@ func (c *Client) WriteFile(share, path string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	defer fs.Umount()
+	defer closeShare(fs)
 
 	normalizedPath, err := sanitizeWritableRemotePath(path)
 	if err != nil {
@@ -38,7 +38,7 @@ func (c *Client) RemoveAll(share, path string) error {
 	if err != nil {
 		return err
 	}
-	defer fs.Umount()
+	defer closeShare(fs)
 
 	normalizedPath, err := sanitizeWritableRemotePath(path)
 	if err != nil {

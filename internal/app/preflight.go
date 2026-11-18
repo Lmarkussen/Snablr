@@ -68,6 +68,7 @@ func (v smbPreflightValidator) Name() string { return "credentials" }
 func (v smbPreflightValidator) Validate(ctx context.Context) error {
 	client := newScanClientFunc()
 	defer client.Close()
+	client.SetOperationContext(ctx, v.config.SMBTimeout())
 	auth, err := smbAuthForHost(v.host, v.config)
 	if err != nil {
 		return err

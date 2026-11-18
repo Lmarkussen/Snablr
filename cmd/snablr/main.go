@@ -306,6 +306,7 @@ func runScan(args []string) error {
 	listShares := fs.Bool("list-shares", false, "List readable shares accessible to the authenticated user and exit")
 	skipReachability := fs.Bool("skip-reachability-check", false, "Skip TCP 445 reachability testing before scanning")
 	reachabilityTimeout := fs.Int("reachability-timeout", 0, "Reachability timeout in seconds")
+	smbTimeout := fs.Int("smb-timeout", 0, "Seconds an SMB operation may make no progress before it is abandoned (default 60)")
 	noTUI := fs.Bool("no-tui", false, "Disable the Bubble Tea live console UI and use plain stdout console output")
 	noColor := fs.Bool("no-color", false, "Disable ANSI colors while preserving status text")
 	noOutfile := fs.Bool("no-outfile", false, "Do not create the automatic RAW HTML report")
@@ -413,6 +414,7 @@ func runScan(args []string) error {
 		ListShares:                 *listShares,
 		SkipReachabilityCheck:      *skipReachability,
 		ReachabilityTimeoutSeconds: *reachabilityTimeout,
+		SMBTimeoutSeconds:          *smbTimeout,
 		NoOutfile:                  *noOutfile,
 		NoTUI:                      *noTUI,
 		NoColor:                    *noColor,
@@ -839,7 +841,7 @@ func scanHelpGroups(advanced bool) []scanHelpGroup {
 		return groups
 	}
 	return append(groups,
-		scanHelpGroup{Title: "Discovery and scheduling", Flags: []string{"config", "profile", "max-depth", "max-file-size", "rules-directory", "base-dn", "discover-dfs", "prioritize-ad-shares", "only-ad-shares", "skip-reachability-check", "reachability-timeout"}},
+		scanHelpGroup{Title: "Discovery and scheduling", Flags: []string{"config", "profile", "max-depth", "max-file-size", "rules-directory", "base-dn", "discover-dfs", "prioritize-ad-shares", "only-ad-shares", "skip-reachability-check", "reachability-timeout", "smb-timeout"}},
 		scanHelpGroup{Title: "Authentication overrides", Flags: []string{"nt-hash", "kerberos-ccache", "smb-hostname", "smb-spn", "ldap-spn"}},
 		scanHelpGroup{Title: "Comparison and diagnostics", Flags: []string{"baseline", "seed-manifest", "validation-mode", "report-backup-artifacts", "log-level"}},
 		scanHelpGroup{Title: "WIM inspection", Flags: []string{"wim-enabled", "wim-auto-max-size", "wim-allow-large", "wim-max-size", "wim-max-members", "wim-max-member-bytes", "wim-max-total-bytes", "wim-max-binary-artifacts", "wim-max-binary-bytes", "wim-max-sam-bytes", "wim-max-system-bytes", "wim-max-security-bytes", "wim-max-ntds-bytes", "wim-max-images"}},

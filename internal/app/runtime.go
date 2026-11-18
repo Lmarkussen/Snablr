@@ -181,6 +181,9 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if opts.ReachabilityTimeoutSeconds > 0 {
 		cfg.Scan.ReachabilityTimeoutSeconds = opts.ReachabilityTimeoutSeconds
 	}
+	if opts.SMBTimeoutSeconds > 0 {
+		cfg.Scan.SMBTimeoutSeconds = opts.SMBTimeoutSeconds
+	}
 	// Scan exports are intentionally owned by the scan lifecycle. Legacy
 	// output settings in YAML must not silently reactivate removed exporters.
 	cfg.Output.Format = "console"

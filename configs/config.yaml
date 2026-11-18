@@ -40,6 +40,8 @@ scan:
   force_rescan: false
   skip_reachability_check: false
   reachability_timeout_seconds: 3
+  # Seconds an SMB operation may make no progress before it is abandoned.
+  smb_timeout_seconds: 60
 
 archives:
   enabled: true

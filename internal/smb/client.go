@@ -1,6 +1,7 @@
 package smb
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -116,6 +117,13 @@ type Client struct {
 
 	conn    net.Conn
 	session *smb2.Session
+
+	// baseCtx cancels in-flight operations when the scan is interrupted;
+	// opTimeout bounds each operation (idle limit for reads and listings).
+	baseCtx             context.Context
+	opTimeout           time.Duration
+	consecutiveTimeouts int
+	unresponsive        bool
 }
 
 func NewClient() *Client {
@@ -123,6 +131,8 @@ func NewClient() *Client {
 		dialTimeout: defaultDialTimeout,
 		maxDepth:    defaultMaxDepth,
 		maxReadSize: defaultMaxReadSize,
+		baseCtx:     context.Background(),
+		opTimeout:   DefaultOperationTimeout,
 	}
 }
 
@@ -171,7 +181,12 @@ func (c *Client) ConnectWithAuth(host string, auth Auth) error {
 		return fmt.Errorf("%w: SMB Kerberos requires a service principal", ErrInvalidAuth)
 	}
 
-	conn, err := net.DialTimeout("tcp", dialAddr, c.dialTimeout)
+	base := c.baseCtx
+	if base == nil {
+		base = context.Background()
+	}
+	c.unresponsive, c.consecutiveTimeouts = false, 0
+	conn, err := (&net.Dialer{Timeout: c.dialTimeout}).DialContext(base, "tcp", dialAddr)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", dialAddr, err)
 	}
@@ -194,9 +209,20 @@ func (c *Client) ConnectWithAuth(host string, auth Auth) error {
 	}
 	dialer := &smb2.Dialer{Initiator: initiator}
 
-	session, err := dialer.Dial(conn)
+	// Negotiation and session setup are bounded so a host that accepts TCP but
+	// never answers SMB cannot stall the scan.
+	setup := newIdleWatchdog(base, c.opTimeout)
+	session, err := dialer.DialContext(setup.ctx, conn)
+	setup.stop()
 	if err != nil {
 		_ = conn.Close()
+		var contextErr *smb2.ContextError
+		switch {
+		case base.Err() != nil:
+			return fmt.Errorf("authenticate to %s: %w", serverName, base.Err())
+		case errors.As(err, &contextErr):
+			return fmt.Errorf("authenticate to %s: %w after %s without progress", serverName, ErrOperationTimeout, c.opTimeout)
+		}
 		return fmt.Errorf("authenticate to %s: %w", serverName, err)
 	}
 
@@ -231,7 +257,10 @@ func (c *Client) closeLocked() error {
 	var errs []error
 
 	if c.session != nil {
-		if err := c.session.Logoff(); err != nil && !isIgnorableCloseError(err) {
+		ctx, cancel := cleanupContext()
+		err := c.session.WithContext(ctx).Logoff()
+		cancel()
+		if err != nil && !isIgnorableCloseError(err) {
 			errs = append(errs, err)
 		}
 		c.session = nil
@@ -262,6 +291,11 @@ func isIgnorableCloseError(err error) bool {
 	if errors.Is(err, net.ErrClosed) {
 		return true
 	}
+	// A bounded logoff against an unresponsive host is best effort.
+	var contextErr *smb2.ContextError
+	if errors.As(err, &contextErr) {
+		return true
+	}
 
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "use of closed network connection") ||
@@ -289,10 +323,16 @@ func (c *Client) mountShare(share string) (*smb2.Share, error) {
 	}
 
 	mountPath := fmt.Sprintf(`\\%s\%s`, serverName, share)
-	fs, err := session.Mount(mountPath)
+	watchdog, err := c.operationWatchdog()
 	if err != nil {
 		return nil, fmt.Errorf("mount %s: %w", mountPath, err)
 	}
+	defer watchdog.stop()
+	fs, err := session.WithContext(watchdog.ctx).Mount(mountPath)
+	if err != nil {
+		return nil, fmt.Errorf("mount %s: %w", mountPath, c.observe(err))
+	}
+	_ = c.observe(nil)
 	return fs, nil
 }
 

@@ -304,3 +304,23 @@ The scan stops earlier than expected.
 - progress output marks that the time limit was reached
 
 If this is expected, rerun with `--resume` to continue later. If it is not expected, check the loaded config and CLI overrides.
+
+## Host Stops Responding
+
+### Symptom
+
+The log shows `SMB operation timed out after ...s without progress` or `SMB host stopped responding`, and a host or share ends incomplete.
+
+### Common Cause
+
+- the file server, or a VM it runs on, stalled or lost its domain connectivity
+- a network path dropped traffic without closing the connection
+
+### What To Expect
+
+- an SMB operation is abandoned after `scan.smb_timeout_seconds` (default 60, `--smb-timeout`) without progress; slow transfers that keep receiving data are not affected
+- after three consecutive timeouts the host is treated as unresponsive: its remaining files fail fast and the scan continues with the next host
+- affected shares stay incomplete, so `--resume` retries them later
+- Ctrl-C and `--max-scan-time` also stop SMB operations that are in progress
+
+Raise `--smb-timeout` for very slow links if timeouts appear while the server is otherwise healthy.

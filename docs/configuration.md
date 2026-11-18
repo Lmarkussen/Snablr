@@ -192,6 +192,8 @@ These filters are applied early during share selection and file walking so they 
   Skip TCP `445` reachability testing
 - `reachability_timeout_seconds`
   Timeout for SMB reachability checks
+- `smb_timeout_seconds`
+  Seconds a single SMB operation may make no progress before it is abandoned (default `60`, CLI `--smb-timeout`). Reads and directory listings only time out when no data arrives for this long, so slow but progressing transfers continue. After three consecutive timeouts the host is treated as unresponsive: its remaining work fails fast, the affected shares stay incomplete for `--resume`, and the scan continues with the next host
 
 Recommended default:
 - keep reachability enabled for larger scans to reduce wasted SMB connection attempts

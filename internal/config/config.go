@@ -67,6 +67,7 @@ type ScanConfig struct {
 	ForceRescan                bool     `yaml:"force_rescan"`
 	SkipReachabilityCheck      bool     `yaml:"skip_reachability_check"`
 	ReachabilityTimeoutSeconds int      `yaml:"reachability_timeout_seconds"`
+	SMBTimeoutSeconds          int      `yaml:"smb_timeout_seconds"`
 }
 
 type ArchiveConfig struct {
@@ -214,6 +215,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Scan.ReachabilityTimeoutSeconds <= 0 {
 		cfg.Scan.ReachabilityTimeoutSeconds = 3
+	}
+	if cfg.Scan.SMBTimeoutSeconds <= 0 {
+		cfg.Scan.SMBTimeoutSeconds = defaultSMBTimeoutSeconds
 	}
 	if cfg.Archives.AutoZIPMaxSize <= 0 {
 		cfg.Archives.AutoZIPMaxSize = 10 * 1024 * 1024
@@ -465,6 +469,19 @@ func (s ScanConfig) ReachabilityTimeout() time.Duration {
 	timeout := s.ReachabilityTimeoutSeconds
 	if timeout <= 0 {
 		timeout = 3
+	}
+	return time.Duration(timeout) * time.Second
+}
+
+// defaultSMBTimeoutSeconds bounds a single SMB operation; for reads and
+// directory listings it is the time allowed without any progress.
+const defaultSMBTimeoutSeconds = 60
+
+// SMBTimeout returns the SMB operation timeout.
+func (s ScanConfig) SMBTimeout() time.Duration {
+	timeout := s.SMBTimeoutSeconds
+	if timeout <= 0 {
+		timeout = defaultSMBTimeoutSeconds
 	}
 	return time.Duration(timeout) * time.Second
 }

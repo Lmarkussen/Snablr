@@ -12,7 +12,7 @@ func (c *Client) Exists(share, path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer fs.Umount()
+	defer closeShare(fs)
 	normalized, err := sanitizeWritableRemotePath(path)
 	if err != nil {
 		return false, err
@@ -34,7 +34,7 @@ func (c *Client) CreateDirectory(share, path string) error {
 	if err != nil {
 		return err
 	}
-	defer fs.Umount()
+	defer closeShare(fs)
 	normalized, err := sanitizeWritableRemotePath(path)
 	if err != nil {
 		return err
@@ -52,7 +52,7 @@ func (c *Client) CreateFileExclusive(share, path string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	defer fs.Umount()
+	defer closeShare(fs)
 	normalized, err := sanitizeWritableRemotePath(path)
 	if err != nil {
 		return err

@@ -42,6 +42,7 @@ type bundleCandidate struct {
 
 type scanClient interface {
 	SetMaxReadSize(int64)
+	SetOperationContext(context.Context, time.Duration)
 	Close() error
 	ConnectWithAuth(string, smb.Auth) error
 	ListShares() ([]smb.ShareInfo, error)
@@ -690,6 +691,9 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 
 	client := newScanClientFunc()
 	client.SetMaxReadSize(scanReadLimit(cfg))
+	// In-flight SMB operations end on scan interruption or after the SMB
+	// timeout without progress, so an unresponsive host cannot stall the scan.
+	client.SetOperationContext(ctx, cfg.Scan.SMBTimeout())
 	defer client.Close()
 
 	auth, err := smbAuthForHost(host, cfg.Scan)

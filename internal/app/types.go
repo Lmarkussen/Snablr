@@ -42,6 +42,7 @@ type ScanOptions struct {
 	ListShares                 bool
 	SkipReachabilityCheck      bool
 	ReachabilityTimeoutSeconds int
+	SMBTimeoutSeconds          int
 	NoOutfile                  bool
 	NoTUI                      bool
 	NoColor                    bool

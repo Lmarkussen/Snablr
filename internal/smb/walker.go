@@ -1,9 +1,12 @@
 package smb
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/hirochachacha/go-smb2"
@@ -36,7 +39,7 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 	if err != nil {
 		return err
 	}
-	defer fs.Umount()
+	defer closeShare(fs)
 
 	type walkItem struct {
 		path  string
@@ -58,7 +61,7 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 			opts.CurrentDirectory(normalizeRemotePath(item.path))
 		}
 
-		entries, err := fs.ReadDir(item.path)
+		entries, err := c.readDir(fs, item.path)
 		if err != nil {
 			if isPermissionError(err) || os.IsNotExist(err) {
 				continue
@@ -148,10 +151,51 @@ func isPermissionError(err error) bool {
 		strings.Contains(msg, "logon failure")
 }
 
+// closeShare unmounts best-effort within a bounded time, also after the scan
+// was cancelled or the host stopped responding.
 func closeShare(fs *smb2.Share) {
 	if fs != nil {
-		_ = fs.Umount()
+		ctx, cancel := cleanupContext()
+		_ = fs.WithContext(ctx).Umount()
+		cancel()
 	}
+}
+
+// readDirBatchSize is the number of entries read per directory request batch;
+// the idle watchdog is restarted after every batch.
+const readDirBatchSize = 512
+
+// readDir lists a directory like Share.ReadDir (entries sorted by name) but
+// in batches under an idle watchdog, so a huge directory on a slow link keeps
+// going while a directory listing that makes no progress times out.
+func (c *Client) readDir(fs *smb2.Share, dir string) ([]os.FileInfo, error) {
+	watchdog, err := c.operationWatchdog()
+	if err != nil {
+		return nil, err
+	}
+	defer watchdog.stop()
+	f, err := fs.WithContext(watchdog.ctx).Open(dir)
+	if err != nil {
+		return nil, c.observe(err)
+	}
+	defer f.Close()
+	var entries []os.FileInfo
+	for {
+		batch, err := f.Readdir(readDirBatchSize)
+		if len(batch) > 0 {
+			entries = append(entries, batch...)
+			watchdog.touch()
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, c.observe(err)
+		}
+	}
+	_ = c.observe(nil)
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return entries, nil
 }
 
 func shouldDescendRemoteDir(path string, depth int, opts WalkOptions, maxDepth int) bool {

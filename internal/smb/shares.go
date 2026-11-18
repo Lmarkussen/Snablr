@@ -57,10 +57,16 @@ func (c *Client) listShares(ctx context.Context, strict bool) ([]ShareInfo, erro
 		return nil, err
 	}
 
-	shares, err := session.ListSharenames()
+	watchdog, err := c.operationWatchdog()
 	if err != nil {
 		return nil, fmt.Errorf("list shares: %w", err)
 	}
+	shares, err := session.WithContext(watchdog.ctx).ListSharenames()
+	watchdog.stop()
+	if err != nil {
+		return nil, fmt.Errorf("list shares: %w", c.observe(err))
+	}
+	_ = c.observe(nil)
 
 	return filterAccessibleShareNames(ctx, shares, func(share string) error {
 		return c.checkShareAccessContext(ctx, share)
@@ -124,9 +130,9 @@ func (c *Client) checkShareAccessContext(ctx context.Context, share string) erro
 	if err != nil {
 		return err
 	}
-	defer fs.Umount()
+	defer closeShare(fs)
 
-	_, err = fs.ReadDir("")
+	_, err = c.readDir(fs, "")
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}

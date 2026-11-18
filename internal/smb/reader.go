@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/hirochachacha/go-smb2"
 )
 
 func (c *Client) ReadFile(share, path string) ([]byte, error) {
@@ -12,12 +14,22 @@ func (c *Client) ReadFile(share, path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer fs.Umount()
+	defer closeShare(fs)
+
+	// One idle watchdog covers stat, open and the read; it restarts whenever
+	// data arrives, so slow transfers continue and stalled ones time out.
+	watchdog, err := c.operationWatchdog()
+	if err != nil {
+		return nil, fmt.Errorf("read %s on %s: %w", path, share, err)
+	}
+	defer watchdog.stop()
+	fs = fs.WithContext(watchdog.ctx)
 
 	info, err := fs.Stat(path)
 	if err != nil {
-		return nil, fmt.Errorf("stat %s on %s: %w", path, share, err)
+		return nil, fmt.Errorf("stat %s on %s: %w", path, share, c.observe(err))
 	}
+	watchdog.touch()
 	if info.IsDir() {
 		return nil, fmt.Errorf("%s on %s is a directory", path, share)
 	}
@@ -27,17 +39,19 @@ func (c *Client) ReadFile(share, path string) ([]byte, error) {
 
 	file, err := fs.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open %s on %s: %w", path, share, err)
+		return nil, fmt.Errorf("open %s on %s: %w", path, share, c.observe(err))
 	}
 	defer file.Close()
+	watchdog.touch()
 
-	data, err := readFileContent(file, c.maxReadSize)
+	data, err := readFileContent(progressReader{r: file, w: watchdog}, c.maxReadSize)
 	if err != nil {
 		if os.IsPermission(err) {
 			return nil, fmt.Errorf("read %s on %s: permission denied", path, share)
 		}
-		return nil, fmt.Errorf("read %s on %s: %w", path, share, err)
+		return nil, fmt.Errorf("read %s on %s: %w", path, share, c.observe(err))
 	}
+	_ = c.observe(nil)
 
 	if c.maxReadSize > 0 && int64(len(data)) > c.maxReadSize {
 		return nil, fmt.Errorf("%w: %s on %s exceeded the read limit", ErrFileTooLarge, path, share)
@@ -57,21 +71,29 @@ func (c *Client) ReadFilePrefix(share, path string, limit int64) ([]byte, error)
 	if err != nil {
 		return nil, err
 	}
-	defer fs.Umount()
+	defer closeShare(fs)
 
-	file, err := fs.Open(path)
+	watchdog, err := c.operationWatchdog()
 	if err != nil {
-		return nil, fmt.Errorf("open %s on %s: %w", path, share, err)
+		return nil, fmt.Errorf("read %s on %s: %w", path, share, err)
+	}
+	defer watchdog.stop()
+
+	file, err := fs.WithContext(watchdog.ctx).Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open %s on %s: %w", path, share, c.observe(err))
 	}
 	defer file.Close()
+	watchdog.touch()
 
-	data, err := readFileContent(io.LimitReader(file, limit), 0)
+	data, err := readFileContent(progressReader{r: io.LimitReader(file, limit), w: watchdog}, 0)
 	if err != nil {
 		if os.IsPermission(err) {
 			return nil, fmt.Errorf("read %s on %s: permission denied", path, share)
 		}
-		return nil, fmt.Errorf("read %s on %s: %w", path, share, err)
+		return nil, fmt.Errorf("read %s on %s: %w", path, share, c.observe(err))
 	}
+	_ = c.observe(nil)
 	return data, nil
 }
 
@@ -97,8 +119,10 @@ func readFileContent(file io.Reader, maxReadSize int64) ([]byte, error) {
 			}
 			// A non-EOF status after any content was delivered marks
 			// end-of-stream: keep the content. A status before any content is a
-			// genuine failure that must be reported.
-			if len(data) > 0 {
+			// genuine failure that must be reported. A cancelled or timed-out
+			// read is never end-of-stream: the content would be incomplete.
+			var contextErr *smb2.ContextError
+			if len(data) > 0 && !errors.As(err, &contextErr) {
 				return data, nil
 			}
 			return nil, err

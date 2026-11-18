@@ -29,6 +29,7 @@ func Default() Config {
 			ForceRescan:                false,
 			SkipReachabilityCheck:      false,
 			ReachabilityTimeoutSeconds: 3,
+			SMBTimeoutSeconds:          60,
 		},
 		Archives: ArchiveConfig{
 			Enabled:                  true,

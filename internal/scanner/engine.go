@@ -28,6 +28,7 @@ import (
 	"snablr/internal/rules"
 	"snablr/internal/sccminspect"
 	"snablr/internal/sqliteinspect"
+	"snablr/internal/textdecode"
 	"snablr/internal/wiminspect"
 	"snablr/internal/wincredinspect"
 	"snablr/internal/windowsinspect"
@@ -413,6 +414,12 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 				}
 			}
 		}
+	}
+	// Terminal colour and cursor sequences (coloured logs, transcripts, ANSI
+	// art) are removed from the text the content rules match, so an embedded
+	// "\x1b[1m" cannot hide an assignment. Stored evidence is unaffected.
+	if stripped := textdecode.StripTerminalSequences(string(ruleContent)); len(stripped) != len(ruleContent) {
+		ruleContent = []byte(stripped)
 	}
 	// Natural-language credential expressions are normalised into the shared
 	// assignment form so the existing content findings apply to them too, for

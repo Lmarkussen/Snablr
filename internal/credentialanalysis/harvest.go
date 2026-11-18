@@ -236,7 +236,9 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 		harvestLegacyOffice(content, add, report)
 		return out
 	}
-	textContent := textdecode.Normalize(content)
+	// Terminal colour and cursor sequences in console logs and transcripts are
+	// removed so they cannot split an assignment or end up in a recovered value.
+	textContent := textdecode.StripTerminalSequences(textdecode.Normalize(content))
 	if ext == ".html" || ext == ".htm" {
 		harvestHTMLForms(textContent, add)
 		textContent = htmlCredentialText(textContent)

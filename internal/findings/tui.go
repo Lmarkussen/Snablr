@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"snablr/internal/credentialanalysis"
 	"snablr/internal/scanner"
+	"snablr/internal/termsafe"
 )
 
 type screen int
@@ -767,7 +768,8 @@ func buildCategoriesWithAccounting(scanID string, credentials []Credential, find
 			result = append(result, *group)
 		}
 	}
-	return result, auditProjection(scanID, credentials, findings, correlations, result)
+	audit := auditProjection(scanID, credentials, findings, correlations, result)
+	return safeCategories(result), audit
 }
 
 func applicationCloudFinding(f scanner.Finding) bool {
@@ -1109,7 +1111,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			if len(msg.results) > 0 {
 				backward := msg.pageIndex < m.globalSearchPageIndex
-				m.globalSearchResults = msg.results
+				m.globalSearchResults = safeGlobalSearchResults(msg.results)
 				m.globalSearchSelected = 0
 				if backward {
 					m.globalSearchSelected = len(msg.results) - 1
@@ -2154,7 +2156,7 @@ func (m *model) fetchEvidence(ref string) evidenceCacheItem {
 	if item.finding == nil && item.candidate == nil && item.correlation == "" {
 		item.key = ""
 	}
-	return item
+	return safeEvidenceItem(item)
 }
 
 func (m *model) cachedEvidence(key string) (evidenceCacheItem, bool) {
@@ -2313,7 +2315,7 @@ func correlationEvidenceText(d discovery) string {
 	if d.CorrelationConfidenceRationale != "" {
 		fmt.Fprintf(&b, "\n%s\n%s\n", evidenceSection("RELATIONSHIP EVIDENCE"), d.CorrelationConfidenceRationale)
 	}
-	fmt.Fprintf(&b, "\n%s\nCorrelation key: %s\n", evidenceSection("RAW RECORD"), firstNonEmpty(d.CorrelationKey, "not persisted"))
+	fmt.Fprintf(&b, "\n%s\nCorrelation key: %s\n", evidenceSection("RAW RECORD"), termsafe.Text(firstNonEmpty(d.CorrelationKey, "not persisted")))
 	if d.CorrelationParsed {
 		var pretty bytes.Buffer
 		if err := json.Indent(&pretty, []byte(d.Value), "", "  "); err == nil {
@@ -2450,9 +2452,9 @@ func (m *model) View() string {
 	if displayID == "" {
 		displayID = scan.ID
 	}
-	header := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render("SNABLR // FINDINGS") + "  " + displayID + "  " + displayScanStatus(scan.Status)
+	header := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render("SNABLR // FINDINGS") + "  " + termsafe.Text(displayID) + "  " + displayScanStatus(scan.Status)
 	if scan.Targets != "" {
-		header += "  " + scan.Targets
+		header += "  " + termsafe.Text(scan.Targets)
 	}
 	if m.selectingScan {
 		return m.frame(header, "", "Scans", m.list.View(), "", m.preview.View())
@@ -2520,7 +2522,7 @@ func scanList(scans []Scan, selected int) string {
 		if displayID == "" {
 			displayID = scan.ID
 		}
-		lines = append(lines, marker+displayID+"  "+displayScanStatus(scan.Status)+"  "+scan.Targets+fmt.Sprintf("  %d findings", scan.FindingCount))
+		lines = append(lines, marker+termsafe.Text(displayID)+"  "+displayScanStatus(scan.Status)+"  "+termsafe.Text(scan.Targets)+fmt.Sprintf("  %d findings", scan.FindingCount))
 	}
 	return strings.Join(lines, "\n")
 }

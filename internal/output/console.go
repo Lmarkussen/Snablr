@@ -10,6 +10,7 @@ import (
 	"snablr/internal/metrics"
 	"snablr/internal/scanner"
 	"snablr/internal/store"
+	"snablr/internal/termsafe"
 )
 
 type ConsoleWriter struct {
@@ -66,6 +67,9 @@ func (c *ConsoleWriter) AttachSQLiteStore(shadow *store.SQLiteStore) {
 }
 
 func (c *ConsoleWriter) writeFindingLocked(f scanner.Finding) error {
+	// Console output goes to an interactive terminal: show untrusted text
+	// without letting it execute terminal control sequences.
+	f = termsafe.Finding(f)
 	if _, err := fmt.Fprintf(c.w, "[%s] %s\n", strings.ToUpper(f.Severity), f.RuleID); err != nil {
 		return err
 	}

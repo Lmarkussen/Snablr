@@ -32,6 +32,15 @@ func Decode(content []byte) (string, bool) {
 		return normalizeString(text), true
 	}
 
+	// Coloured console logs and transcripts are text, but their escape bytes
+	// can push them below the printable-text threshold. Decode them with the
+	// terminal sequences removed; the result contains no ESC, so this runs once.
+	if bytes.IndexByte(content, 0x1b) >= 0 {
+		if stripped := StripTerminalSequences(string(content)); len(stripped) < len(content) {
+			return Decode([]byte(stripped))
+		}
+	}
+
 	if utf8.Valid(content) {
 		if !looksUTF8Text(s) {
 			return "", false

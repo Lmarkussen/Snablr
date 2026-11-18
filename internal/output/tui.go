@@ -21,6 +21,7 @@ import (
 	"snablr/internal/metrics"
 	"snablr/internal/scanner"
 	"snablr/internal/store"
+	"snablr/internal/termsafe"
 )
 
 const (
@@ -1310,7 +1311,7 @@ func (m tuiModel) bookmarkView() string {
 			if index == m.bookmarkSelected {
 				prefix = "> "
 			}
-			line := fmt.Sprintf("%s[FILE] %s | %s / %s", prefix, pathLeaf(bookmark.Path), valueOrDash(bookmark.Host), valueOrDash(bookmark.Share))
+			line := fmt.Sprintf("%s[FILE] %s | %s / %s", prefix, termsafe.Text(pathLeaf(bookmark.Path)), valueOrDash(termsafe.Text(bookmark.Host)), valueOrDash(termsafe.Text(bookmark.Share)))
 			lines = append(lines, truncateDisplayWidth(line, max(1, m.width-4)))
 		}
 	}
@@ -1334,13 +1335,14 @@ func (m tuiModel) bookmarkDetailContent() string {
 	}
 	detail := m.bookmarkDetail
 	lines := []string{
-		"Path: " + valueOrDash(detail.Bookmark.Path),
-		"Host / Share: " + valueOrDash(detail.Bookmark.Host) + " / " + valueOrDash(detail.Bookmark.Share),
-		"File identity: " + valueOrDash(detail.Bookmark.FileKey),
+		"Path: " + valueOrDash(termsafe.Text(detail.Bookmark.Path)),
+		"Host / Share: " + valueOrDash(termsafe.Text(detail.Bookmark.Host)) + " / " + valueOrDash(termsafe.Text(detail.Bookmark.Share)),
+		"File identity: " + valueOrDash(termsafe.Text(detail.Bookmark.FileKey)),
 		"",
 		fmt.Sprintf("Related findings: %d", len(detail.Findings)),
 	}
 	for _, finding := range detail.Findings {
+		finding = termsafe.Finding(finding)
 		lines = append(lines, fmt.Sprintf("- %s | %s | %s", valueOrDash(finding.RuleID), valueOrDash(finding.Category), strings.ToUpper(valueOrDash(firstNonEmpty(finding.Confidence, finding.Severity)))))
 		for _, evidence := range consoleEvidenceLines(finding) {
 			lines = append(lines, "  "+evidence)
@@ -1348,7 +1350,7 @@ func (m tuiModel) bookmarkDetailContent() string {
 	}
 	lines = append(lines, "", fmt.Sprintf("Credentials: %d", len(detail.Credentials)))
 	for _, credential := range detail.Credentials {
-		lines = append(lines, fmt.Sprintf("- %s | %s | %s", valueOrDash(credential.Identity), valueOrDash(credential.Type), valueOrDash(credential.Value)))
+		lines = append(lines, fmt.Sprintf("- %s | %s | %s", valueOrDash(termsafe.Text(credential.Identity)), valueOrDash(termsafe.Text(credential.Type)), valueOrDash(termsafe.Text(credential.Value))))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -1361,6 +1363,8 @@ func (m tuiModel) searchDetailContent() string {
 		typeLabel = credentialanalysis.CredentialTypeDisplayName(result.Context)
 		classLabel = "\nClass: " + credentialanalysis.CredentialPresentationLabel(result.Context)
 	}
+	safe := safeSearchResult(*result)
+	result = &safe
 	return strings.Join([]string{
 		"Type: " + typeLabel + classLabel,
 		"Title: " + valueOrDash(result.Title),
@@ -1372,19 +1376,30 @@ func (m tuiModel) searchDetailContent() string {
 	}, "\n")
 }
 
-func formatSearchResult(result store.SearchResult) string {
+func formatSearchResult(raw store.SearchResult) string {
+	result := safeSearchResult(raw)
 	switch result.Type {
 	case store.SearchResultFile:
 		return fmt.Sprintf("[FILE] %s | %s | %s", valueOrDash(result.Title), valueOrDash(result.Context), valueOrDash(result.Source))
 	case store.SearchResultFinding:
 		return fmt.Sprintf("[FINDING] %s | %s | %s", valueOrDash(result.Title), valueOrDash(result.Source), valueOrDash(result.Context))
 	case store.SearchResultCredential:
-		return fmt.Sprintf("[%s] %s — %s | %s | %s", credentialanalysis.CredentialPresentationLabel(result.Context), valueOrDash(result.Title), credentialanalysis.CredentialTypeDisplayName(result.Context), valueOrDash(result.Detail), compactCredentialSource(result.Source))
+		return fmt.Sprintf("[%s] %s — %s | %s | %s", termsafe.Text(credentialanalysis.CredentialPresentationLabel(raw.Context)), valueOrDash(result.Title), termsafe.Text(credentialanalysis.CredentialTypeDisplayName(raw.Context)), valueOrDash(result.Detail), compactCredentialSource(result.Source))
 	case store.SearchResultEvidence:
 		return fmt.Sprintf("[EVIDENCE] %s | %s | %s", valueOrDash(result.Title), valueOrDash(result.Source), valueOrDash(result.Detail))
 	default:
 		return fmt.Sprintf("[%s] %s | %s", result.Type, valueOrDash(result.Title), valueOrDash(result.Detail))
 	}
+}
+
+// safeSearchResult returns a display copy of a search result whose free-text
+// fields cannot inject terminal control sequences.
+func safeSearchResult(result store.SearchResult) store.SearchResult {
+	result.Title = termsafe.Text(result.Title)
+	result.Context = termsafe.Text(result.Context)
+	result.Source = termsafe.Text(result.Source)
+	result.Detail = termsafe.Text(result.Detail)
+	return result
 }
 
 func compactCredentialSource(source string) string {
@@ -1587,17 +1602,17 @@ func (m tuiModel) renderHeader() string {
 			headerField("Files:", fmt.Sprintf("%d", m.live.Summary.FilesScanned), m.styles.headerValueGreen) + separator +
 			headerField("Matches:", fmt.Sprintf("%d", m.live.Summary.MatchesFound), m.styles.headerValueGreen) + separator +
 			headerField("Read errors:", fmt.Sprintf("%d", m.live.Summary.ReadErrors), m.styles.headerValueRed),
-		headerField("Host:", valueOrDash(m.live.CurrentHost), m.styles.headerValueWhite) + separator +
+		headerField("Host:", valueOrDash(termsafe.Text(m.live.CurrentHost)), m.styles.headerValueWhite) + separator +
 			headerField("Elapsed:", elapsed.String(), m.styles.headerValueWhite) + separator +
 			headerField("Deferred:", fmt.Sprintf("%d", m.live.ShareQueue.DeferredCount), m.styles.headerValueOrange) + separator +
 			headerField("Skipped:", renderSkippedShares(m.live.ShareQueue.SkippedShares), m.styles.headerValueOrange),
 	}
 	if current := strings.TrimSpace(m.live.ShareQueue.CurrentShare); current != "" {
-		share := fmt.Sprintf("\\\\%s\\%s", m.live.ShareQueue.CurrentHost, current)
+		share := termsafe.Text(fmt.Sprintf("\\\\%s\\%s", m.live.ShareQueue.CurrentHost, current))
 		lines = append(lines, headerField("Current share:", share, m.styles.headerValueWhite))
 	}
 	if directory := strings.TrimSpace(m.live.ShareQueue.CurrentDirectory); directory != "" {
-		folder := fmt.Sprintf("\\\\%s\\%s\\%s", m.live.ShareQueue.CurrentHost, m.live.ShareQueue.CurrentShare, directory)
+		folder := termsafe.Text(fmt.Sprintf("\\\\%s\\%s\\%s", m.live.ShareQueue.CurrentHost, m.live.ShareQueue.CurrentShare, directory))
 		lines = append(lines, headerField("Current folder:", folder, m.styles.headerValueWhite))
 	}
 	if m.completed && m.final != nil {
@@ -1618,7 +1633,7 @@ func renderSkippedShares(shares []string) string {
 	if len(shares) == 0 {
 		return "None"
 	}
-	return strings.Join(shares, ", ")
+	return termsafe.Text(strings.Join(shares, ", "))
 }
 
 func (m tuiModel) renderFooter() string {
@@ -1701,7 +1716,7 @@ func (m tuiModel) renderQueuePane(width, height int) string {
 		if index == m.queueSelected {
 			marker = "> "
 		}
-		lines = append(lines, fmt.Sprintf("%s[%s] \\\\%s\\%s", marker, strings.ToUpper(item.State), item.Host, item.Share))
+		lines = append(lines, fmt.Sprintf("%s[%s] \\\\%s\\%s", marker, strings.ToUpper(item.State), termsafe.Text(item.Host), termsafe.Text(item.Share)))
 	}
 	if len(lines) == 0 {
 		lines = append(lines, "No share queue is available.")
@@ -1836,6 +1851,7 @@ func (m tuiModel) renderPaneTitle(title string, width int) string {
 }
 
 func newTUIFindingRow(f scanner.Finding) tuiFindingRow {
+	f = termsafe.Finding(f)
 	return tuiFindingRow{
 		Severity:    strings.ToUpper(valueOrDash(firstNonEmpty(f.Confidence, f.Severity))),
 		Score:       f.ConfidenceScore,
@@ -1927,6 +1943,7 @@ func buildTUIDetail(f scanner.Finding) string {
 }
 
 func buildTUIDetailWithStyles(f scanner.Finding, styles tuiStyles) string {
+	f = termsafe.Finding(f)
 	lines := []string{
 		fmt.Sprintf("Path: %s", findingDisplayPath(f)),
 		fmt.Sprintf("Host / Share: %s / %s", valueOrDash(f.Host), valueOrDash(f.Share)),

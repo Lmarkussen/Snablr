@@ -351,13 +351,27 @@ func harvestStructuredAssignments(text string, add func(Candidate), toml bool) {
 			propertyScopes[scope][key] = value
 			continue
 		}
-		fields[key] = value
+		fields[key] = tomlAssignmentValue(line, value)
 	}
 	if toml {
 		flush(fields)
 	} else {
 		flushProperties()
 	}
+}
+
+// tomlAssignmentValue decodes a TOML basic (double-quoted) string so escapes
+// such as "DOMAIN\\user" yield DOMAIN\user. Literal (single-quoted) strings
+// and bare values are returned unchanged, as TOML defines no escapes for them.
+func tomlAssignmentValue(line, value string) string {
+	_, rhs, ok := strings.Cut(line, "=")
+	if !ok || !strings.HasPrefix(strings.TrimSpace(rhs), `"`) {
+		return value
+	}
+	if decoded, err := strconv.Unquote(`"` + value + `"`); err == nil {
+		return decoded
+	}
+	return value
 }
 
 // delimitedRecordText renders delimited text as sectioned records using the
@@ -768,6 +782,8 @@ func harvestXMLSecretElement(node *xmlHarvestNode, add func(Candidate)) {
 		// Any element whose terminal token is a password alias behaves like
 		// <Password>, including the Norwegian <Passord>.
 		switch {
+		case ProtectedSecretFieldName(node.name):
+			reasons = append(reasons, protectedSecretReason)
 		case hasPlainText && strings.EqualFold(plainText, "false"):
 			reasons = append(reasons, "plaintext flag is false")
 		case hasPlainText && strings.EqualFold(plainText, "true"):
@@ -797,6 +813,7 @@ func harvestXMLSecretElement(node *xmlHarvestNode, add func(Candidate)) {
 		Value:           value,
 		ValidationBasis: basis,
 		ReviewReasons:   reasons,
+		Encrypted:       ProtectedSecretFieldName(node.name),
 	})
 }
 
@@ -900,6 +917,85 @@ func harvestInlinePairs(text string, add func(Candidate)) {
 	}
 }
 
+// sameLineFieldPattern finds key=value or key: value fields on one line. A
+// field starts at the line start or after whitespace, ';', ',' or '('. Values
+// may be quoted; unquoted values end at whitespace or a field separator.
+var sameLineFieldPattern = regexp.MustCompile(`(?:^|[\s;,(])([\p{L}][\p{L}\p{N}_.-]{0,63})\s*[:=]\s*(?:"([^"]*)"|'([^']*)'|([^\s;,"']+))`)
+
+// sameLineNextField matches the start of another field after a separator,
+// used to end an unquoted password that would otherwise absorb it.
+var sameLineNextField = regexp.MustCompile(`^[;,]\s*[\p{L}][\p{L}\p{N}_.-]{0,63}\s*[:=]`)
+
+// harvestSameLinePairs recognises an identity field immediately followed by
+// a password field on the same line, for example
+// "account=svc_app password=S3cret!" or "user: svc_app; pwd: S3cret!".
+// Field names use the shared credential vocabulary and scope rules, and the
+// values pass through the same placeholder and value-shape filters as every
+// other candidate. It reports whether any pair was recognised.
+func harvestSameLinePairs(line string, add func(Candidate)) bool {
+	matches := sameLineFieldPattern.FindAllStringSubmatchIndex(line, -1)
+	if len(matches) < 2 {
+		return false
+	}
+	found := false
+	for i := 0; i+1 < len(matches); i++ {
+		identityMatch, passwordMatch := matches[i], matches[i+1]
+		identityKey := line[identityMatch[2]:identityMatch[3]]
+		passwordKey := line[passwordMatch[2]:passwordMatch[3]]
+		if ClassifyFieldName(identityKey) != FieldRoleIdentity || !isPasswordKey(passwordKey) {
+			continue
+		}
+		if !compatibleAssignmentScope(normalizeKey(identityKey), normalizeKey(passwordKey)) {
+			continue
+		}
+		// The two fields must be adjacent: only separators between them.
+		if strings.Trim(line[identityMatch[1]:passwordMatch[2]], " \t;,(") != "" {
+			continue
+		}
+		identity := strings.TrimSpace(sameLineFieldValue(line, identityMatch, false))
+		value := strings.TrimSpace(sameLineFieldValue(line, passwordMatch, true))
+		if identity == "" || value == "" || looksReferenceOrTemplate(value) {
+			continue
+		}
+		if ProtectedSecretFieldName(passwordKey) {
+			add(Candidate{Verification: Review, CredentialType: "password", Identity: identity, Value: value, Encrypted: true, ReviewReasons: []string{protectedSecretReason}})
+			found = true
+			continue
+		}
+		if IsPlaceholderIdentity(identity) {
+			add(Candidate{Verification: Review, CredentialType: "password", Identity: identity, Value: value, ReviewReasons: []string{"identity resembles template or variable reference"}})
+			found = true
+			continue
+		}
+		add(Candidate{Verification: Confirmed, CredentialType: "password", Identity: identity, Value: value, ValidationBasis: "explicit same-line credential fields"})
+		found = true
+	}
+	return found
+}
+
+// sameLineFieldValue returns a field value from a sameLineFieldPattern match.
+// An unquoted password extends to the next whitespace so that separators such
+// as ',' or ';' inside the secret are kept, unless they introduce another
+// field.
+func sameLineFieldValue(line string, match []int, password bool) string {
+	for group := 2; group <= 3; group++ {
+		if start := match[group*2]; start >= 0 {
+			return line[start:match[group*2+1]]
+		}
+	}
+	start, end := match[8], match[9]
+	if !password {
+		return line[start:end]
+	}
+	for end < len(line) && !unicode.IsSpace(rune(line[end])) {
+		if sameLineNextField.MatchString(line[end:]) {
+			break
+		}
+		end++
+	}
+	return strings.TrimRight(line[start:end], ";,")
+}
+
 func decodeInlineValue(value string) string {
 	value = strings.TrimSpace(value)
 	if decoded, err := strconv.Unquote(`"` + value + `"`); err == nil {
@@ -934,6 +1030,7 @@ func harvestLines(text string, add func(Candidate)) {
 			continue
 		}
 		line = normalizeAssignmentLine(line)
+		harvestSameLinePairs(line, add)
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			previousTopLevel = nil
 			section = strings.ToLower(strings.TrimSpace(line[1 : len(line)-1]))
@@ -956,7 +1053,7 @@ func harvestLines(text string, add func(Candidate)) {
 		if section == "" {
 			current := &struct{ key, value string }{key: key, value: value}
 			_, sccmPasswordField := sccmPasswordAccounts[key]
-			if previousTopLevel != nil && ClassifyFieldName(previousTopLevel.key) == FieldRoleIdentity && isPasswordKey(key) && compatibleAssignmentScope(previousTopLevel.key, key) && !sccmPasswordField && !looksReferenceOrTemplate(value) {
+			if previousTopLevel != nil && ClassifyFieldName(previousTopLevel.key) == FieldRoleIdentity && isPasswordKey(key) && !ProtectedSecretFieldName(key) && compatibleAssignmentScope(previousTopLevel.key, key) && !sccmPasswordField && !looksReferenceOrTemplate(value) {
 				identity := strings.TrimSpace(previousTopLevel.value)
 				if identity != "" && !IsPlaceholderIdentity(identity) {
 					add(Candidate{Verification: Confirmed, CredentialType: "password", Identity: identity, Value: value, ValidationBasis: "explicit adjacent credential fields"})
@@ -993,6 +1090,10 @@ func harvestLines(text string, add func(Candidate)) {
 				continue
 			}
 			candidate := Candidate{Verification: Review, CredentialType: credentialType(key), Value: value, ReviewReasons: []string{"credential-like value requires semantic review"}}
+			if ProtectedSecretFieldName(key) {
+				candidate.Encrypted = true
+				candidate.ReviewReasons = append(candidate.ReviewReasons, protectedSecretReason)
+			}
 			if looksReferenceOrTemplate(value) {
 				candidate.ReviewReasons = append(candidate.ReviewReasons, "value resembles template or variable reference")
 			}
@@ -1028,8 +1129,12 @@ func harvestScopedFields(fields map[string]string, add func(Candidate), basis st
 		case "account_name":
 			scope, field = "account", "username"
 		}
+		// "encrypted_password" must not become scope "encrypted" + plain
+		// "password": that drops the qualifier and would confirm protected
+		// material as a plaintext credential.
+		protected := ProtectedSecretFieldName(key)
 		for _, suffix := range []string{"username", "userid", "user", "account", "password", "passwd", "pwd", "passord", "secret", "token", "domain"} {
-			if scope != "" {
+			if scope != "" || protected {
 				break
 			}
 			marker := "_" + suffix
@@ -1286,7 +1391,12 @@ func harvestFieldsMode(fields map[string]string, add func(Candidate), basis stri
 			}
 		}
 		candidate := Candidate{Verification: Review, CredentialType: credType, Identity: identity, Domain: domain, Value: value, ReviewReasons: []string{"credential-like value requires semantic review"}}
-		if (identity != "" && !identityPlaceholder && (isPasswordKey(key) || explicitAccountSecret) && compatibleAssignmentScope(identityKey, key) || strongAPI || strongClient) && !looksReferenceOrTemplate(value) {
+		protected := ProtectedSecretFieldName(key)
+		if protected {
+			candidate.Encrypted = true
+			candidate.ReviewReasons = append(candidate.ReviewReasons, protectedSecretReason)
+		}
+		if !protected && (identity != "" && !identityPlaceholder && (isPasswordKey(key) || explicitAccountSecret) && compatibleAssignmentScope(identityKey, key) || strongAPI || strongClient) && !looksReferenceOrTemplate(value) {
 			candidate.Verification = Confirmed
 			candidate.ValidationBasis = basis
 			candidate.ReviewReasons = nil

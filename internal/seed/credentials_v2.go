@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
+	"html"
 	"math/rand"
 	"strings"
 
@@ -104,7 +105,7 @@ func generateCredentialCorpusV2(opts GenerateOptions) ([]SeedFile, error) {
 				})
 				file.ExpectedPairs = 2
 				file.ExpectedObservations = 2
-				file.Content = append(file.Content, []byte(fmt.Sprintf("\nsecondary_username=%s\nsecondary_password=%s\n", secondUser, secondPassword))...)
+				file.Content = v2AppendSecondPair(variant.name, file.Content, secondUser, secondPassword)
 			}
 			if variant.archive {
 				file.ExpectedArchive = true
@@ -152,23 +153,6 @@ func generateCredentialCorpusV2(opts GenerateOptions) ([]SeedFile, error) {
 			}
 			file.ExpectedArchive = true
 			file.ExpectedPath = joinSeedPath(file.RelativePath, file.Filename) + "!" + member
-		}
-		if variant.name == "csv-table" || variant.name == "html-form" {
-			file.ExpectedClass = "unsupported"
-			file.ExpectedTriageClass = "supporting"
-			file.ExpectedConfidence = "none"
-			file.ExpectedSeverity = "informational"
-			file.ExpectedPairs = 0
-			file.ExpectedObservations = 0
-			file.ExpectedUsername = ""
-			file.ExpectedPassword = ""
-			file.ExpectedPairing = ""
-			file.ExpectedOrigin = ""
-			file.ExpectedPairsDetail = nil
-			file.ExpectedInspectable = false
-			file.SupportStatus = "unsupported"
-			file.ExpectedJustification = "credential-bearing CSV/HTML structures are outside the supported parser contract"
-			file.ExpectedPath = joinSeedPath(file.RelativePath, file.Filename)
 		}
 		files = append(files, file)
 	}
@@ -243,8 +227,10 @@ func v2PositiveContent(g v2Grammar, user, pass string, index int) []byte {
 	switch g.name {
 	case "json-nested", "json-array":
 		return []byte(fmt.Sprintf(`{"services":[{"account":%q,"secret":%q,"endpoint":"svc-%03d.synthetic"}]}`+"\n", user, pass, index))
-	case "yaml-scoped", "toml-table":
+	case "yaml-scoped":
 		return []byte(fmt.Sprintf("service:\n  login: %s\n  passwd: %s\n  endpoint: svc-%03d.synthetic\n", user, pass, index))
+	case "toml-table":
+		return []byte(fmt.Sprintf("[service]\nlogin = %q\npasswd = %q\nendpoint = \"svc-%03d.synthetic\"\n", user, pass, index))
 	case "ini-section", "odbc":
 		return []byte(fmt.Sprintf("[service_%03d]\nuser = %s\npassword = %s\nserver = db-%03d.synthetic\n", index, user, pass, index))
 	case "xml-fields":
@@ -274,7 +260,8 @@ func v2PositiveContent(g v2Grammar, user, pass string, index int) []byte {
 	case "csv-table":
 		return []byte(fmt.Sprintf("account,secret,target\n%s,%s,svc-%03d.synthetic\n", user, pass, index))
 	case "html-form":
-		return []byte(fmt.Sprintf("<form><input name=\"user\" value=%q><input name=\"password\" value=%q></form>\n", user, pass))
+		// HTML attributes use entity escaping, not Go string escaping.
+		return []byte(fmt.Sprintf("<form><input name=\"user\" value=\"%s\"><input name=\"password\" value=\"%s\"></form>\n", html.EscapeString(user), html.EscapeString(pass)))
 	case "zip-member", "zip-multi":
 		return v2Archive([]zipEntry{{"nested/credentials.ini", fmt.Sprintf("[service]\nusername=%s\npassword=%s\n", user, pass)}, {"nested/readme.txt", "No credentials in this member.\n"}})
 	case "docx-member":
@@ -291,7 +278,8 @@ func v2PositiveContent(g v2Grammar, user, pass string, index int) []byte {
 }
 
 func v2NegativeReason(index int) string {
-	reasons := []string{"placeholder or masked value", "unresolved variable", "identity-only reference", "password-only reference", "opaque/encrypted material", "random hex unrelated to credentials", "password policy documentation", "conflicting independent sections", "broken connection string"}
+	// Indexed in step with v2NegativeContent: reason i describes content case i.
+	reasons := []string{"placeholder or masked value", "unresolved variable", "password-only reference", "opaque/encrypted material", "random hex unrelated to credentials", "password policy documentation", "conflicting independent sections", "broken connection string", "empty credential fields"}
 	return reasons[index%len(reasons)]
 }
 
@@ -342,6 +330,25 @@ func v2Archive(entries []zipEntry) []byte {
 	}
 	_ = writer.Close()
 	return buffer.Bytes()
+}
+
+// v2AppendSecondPair adds a second independent credential pair in a form that
+// keeps the fixture valid for its format: a second element under a common
+// root for XML, a separate table for TOML, and scoped assignments otherwise.
+func v2AppendSecondPair(variant string, content []byte, user, pass string) []byte {
+	switch variant {
+	case "xml-fields":
+		second := fmt.Sprintf("<credential><account>%s</account><password>%s</password><scope>secondary</scope></credential>\n", user, pass)
+		return []byte("<credentials>\n" + string(content) + second + "</credentials>\n")
+	case "toml-table":
+		return append(content, []byte(fmt.Sprintf("\n[secondary]\nusername = %q\npassword = %q\n", user, pass))...)
+	case "csv-table":
+		return append(content, []byte(fmt.Sprintf("%s,%s,secondary.synthetic\n", user, pass))...)
+	case "html-form":
+		return append(content, []byte(fmt.Sprintf("<form><input name=\"user\" value=\"%s\"><input name=\"password\" value=\"%s\"></form>\n", html.EscapeString(user), html.EscapeString(pass)))...)
+	default:
+		return append(content, []byte(fmt.Sprintf("\nsecondary_username=%s\nsecondary_password=%s\n", user, pass))...)
+	}
 }
 
 // v2ArchiveOrOffice wraps non-credential text for an archive variant. ZIP

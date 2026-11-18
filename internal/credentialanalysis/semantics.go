@@ -119,6 +119,30 @@ func ClassifyFieldName(key string) FieldRole {
 	return FieldRoleNone
 }
 
+// protectedSecretQualifiers are field-name tokens stating that a password
+// field holds encrypted, hashed or otherwise protected material rather than
+// the plaintext secret.
+var protectedSecretQualifiers = map[string]struct{}{
+	"encrypted": {}, "encrypt": {}, "enc": {}, "crypted": {}, "encoded": {},
+	"hashed": {}, "hash": {}, "cipher": {}, "ciphered": {}, "ciphertext": {},
+	"protected": {}, "dpapi": {}, "obfuscated": {}, "scrambled": {},
+}
+
+// ProtectedSecretFieldName reports whether a password field name qualifies its
+// value as encrypted, hashed or encoded, for example "encryptedPassword",
+// "enc_password" or "password_encrypted". Such values are preserved as review
+// evidence but must never be confirmed as a plaintext credential.
+func ProtectedSecretFieldName(key string) bool {
+	for _, token := range keyTokens(key) {
+		if _, ok := protectedSecretQualifiers[token]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+const protectedSecretReason = "field name marks the value as encrypted, hashed or encoded; plaintext is not recovered"
+
 // SelectFieldValue returns the most specific non-empty value for the requested
 // semantic role. Normalized field names are matched against the role priority
 // list first, then a deterministic scan catches compound aliases such as

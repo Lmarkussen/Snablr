@@ -49,7 +49,9 @@ func TestGenerateCredentialCorpusV2IsDeterministicAndSplit(t *testing.T) {
 			review++
 		}
 	}
-	if positive+negative+review+unsupported != len(first) || unsupported == 0 {
+	// CSV credential tables and HTML login forms are supported parser inputs,
+	// so every fixture carries a real class and none is "unsupported".
+	if positive+negative+review != len(first) || unsupported != 0 {
 		t.Fatalf("unexpected classes: positive=%d negative=%d review=%d unsupported=%d", positive, negative, review, unsupported)
 	}
 	if multiPair == 0 {
@@ -116,8 +118,11 @@ func TestGenerateCredentialCorpusV2LocksActualMembersAndUnsupportedFormats(t *te
 				t.Fatalf("%s lacks the OOXML package relationships part", file.FixtureID)
 			}
 		case "csv-table", "html-form":
-			if file.ExpectedClass != "unsupported" || file.SupportStatus != "unsupported" || file.ExpectedObservations != 0 {
-				t.Fatalf("%s was not bounded as unsupported: %#v", file.FixtureID, file)
+			if file.ExpectedClass == "unsupported" || file.SupportStatus == "unsupported" {
+				t.Fatalf("%s is still labelled unsupported although CSV/HTML credentials are harvested", file.FixtureID)
+			}
+			if file.ExpectedClass == "credential" && len(file.ExpectedPairsDetail) == 0 {
+				t.Fatalf("%s credential fixture lacks expected pairs", file.FixtureID)
 			}
 		}
 	}

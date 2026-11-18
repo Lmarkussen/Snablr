@@ -169,13 +169,17 @@ func (e *Engine) EvaluateContext(ctx context.Context, meta FileMetadata, content
 		// harvester are still reported: recovered credentials must never exist
 		// only in persisted evidence without a finding.
 		_, credentialFindings := e.harvestCredentialCandidatesWithOptions(meta, content, false)
+		// Skip rules exist to cut noise, never to hide directly exploitable
+		// artifacts: a Kerberos cache in /tmp or an LSASS dump in a Temp folder
+		// is still reported by name.
+		skippedFindings := append(credentialFindings, e.directExploitArtifactFindings(meta)...)
 		evaluation := Evaluation{
 			Skipped:     true,
 			SkipReason:  "matched skip rule",
 			NeedContent: credentialanalysis.NeedsContent(meta.FilePath, meta.Name, meta.Size),
 		}
-		if len(credentialFindings) > 0 {
-			evaluation.Findings = correlateFindings(meta, credentialFindings)
+		if len(skippedFindings) > 0 {
+			evaluation.Findings = correlateFindings(meta, skippedFindings)
 			e.recordValidationFindings(evaluation.Findings)
 		}
 		return evaluation
@@ -183,49 +187,109 @@ func (e *Engine) EvaluateContext(ctx context.Context, meta FileMetadata, content
 
 	if shouldInspect, skipReason, isArchive := e.archiveDecision(meta); isArchive {
 		if !shouldInspect {
-			return Evaluation{
-				Skipped:    true,
-				SkipReason: skipReason,
-			}
+			return e.metadataOnlyEvaluation(meta, skipReason)
 		}
 		return e.evaluateArchive(meta, content)
 	}
 	if shouldInspect, skipReason, isWIM := e.wimDecision(meta); isWIM {
 		if !shouldInspect {
-			return Evaluation{
-				Skipped:    true,
-				SkipReason: skipReason,
-			}
+			return e.metadataOnlyEvaluation(meta, skipReason)
 		}
 		return e.evaluateWIM(ctx, meta, content)
 	}
 	if shouldInspect, skipReason, isSQLite := e.sqliteDecision(meta); isSQLite && !shouldInspect {
-		evaluation := e.evaluateStandard(meta, nil, false)
-		evaluation.Skipped = true
-		evaluation.SkipReason = skipReason
-		return evaluation
+		return e.metadataOnlyEvaluation(meta, skipReason)
 	}
 
-	if e.opts.MaxFileSizeBytes > 0 && meta.Size > e.opts.MaxFileSizeBytes {
-		if isRecognizedDatabaseArtifact(meta) {
-			evaluation := e.evaluateStandard(meta, nil, false)
-			evaluation.Skipped = true
-			evaluation.SkipReason = fmt.Sprintf("file exceeds max size limit of %d bytes", e.opts.MaxFileSizeBytes)
-			return evaluation
-		}
-		return Evaluation{
-			Skipped:    true,
-			SkipReason: fmt.Sprintf("file exceeds max size limit of %d bytes", e.opts.MaxFileSizeBytes),
-		}
+	// Loose SAM/SYSTEM/SECURITY/NTDS artifacts have their own size limits and
+	// are routinely larger than the general limit (a SYSTEM hive is often over
+	// 10 MiB), so they are routed before the general size gate.
+	if kind, ok := e.looseBundleKind(meta); ok {
+		return e.evaluateLooseBinary(ctx, meta, content, kind)
 	}
-	if e.bundleCoordinator != nil {
-		if kind, ok := artifact.KindForPath(meta.FilePath); ok && isBundleArtifactKind(kind) {
-			return e.evaluateLooseBinary(ctx, meta, content, kind)
+	if e.opts.MaxFileSizeBytes > 0 && meta.Size > e.opts.MaxFileSizeBytes {
+		if e.PrefixReadLimit(meta) > 0 && len(content) > 0 {
+			return e.evaluatePrefix(meta, content)
 		}
+		return e.metadataOnlyEvaluation(meta, fmt.Sprintf("file exceeds max size limit of %d bytes", e.opts.MaxFileSizeBytes))
 	}
 
 	return e.evaluateStandard(meta, content, false)
 }
+
+// directExploitArtifactFindings returns the filename and extension findings
+// for directly exploitable artifacts (private keys, SAM/SYSTEM/NTDS, Kerberos
+// tickets, memory dumps, VM disks). Used for files under skip-rule paths.
+func (e *Engine) directExploitArtifactFindings(meta FileMetadata) []Finding {
+	candidates := append(e.filenameScanner.Scan(e.filenameRules, meta), e.extensionScanner.Scan(e.extensionRules, meta)...)
+	findings := make([]Finding, 0, len(candidates))
+	for _, finding := range candidates {
+		if isDirectExploitArtifact(finding) {
+			findings = append(findings, finding)
+		}
+	}
+	return findings
+}
+
+// metadataOnlyEvaluation reports filename, extension, path and metadata
+// inspector findings for a file whose content is deliberately not inspected
+// (size limits or container limits). Name-based evidence such as a 4 GiB
+// .vhdx or an oversized lsass.dmp is never dropped just because the file is
+// too large to read. Content is not wanted, so the file is not left partial.
+func (e *Engine) metadataOnlyEvaluation(meta FileMetadata, reason string) Evaluation {
+	evaluation := e.evaluateStandard(meta, nil, false)
+	evaluation.Skipped = true
+	evaluation.SkipReason = reason
+	evaluation.NeedContent = false
+	return evaluation
+}
+
+// prefixReadExtensions are text formats whose leading content is meaningful
+// on its own, so an oversized file is inspected by its first bytes instead of
+// being skipped: SQL dumps, logs, transcripts, scripts and exported configs.
+var prefixReadExtensions = map[string]struct{}{
+	".txt": {}, ".log": {}, ".sql": {}, ".csv": {}, ".tsv": {}, ".json": {}, ".xml": {},
+	".config": {}, ".ini": {}, ".conf": {}, ".cfg": {}, ".yml": {}, ".yaml": {}, ".toml": {},
+	".properties": {}, ".env": {}, ".md": {}, ".ps1": {}, ".psm1": {}, ".bat": {}, ".cmd": {},
+	".sh": {}, ".vbs": {}, ".py": {}, ".html": {}, ".htm": {},
+}
+
+// PrefixReadLimit reports how many leading bytes of an oversized text file
+// should be read and inspected. Zero means the file is either read whole or
+// not read at all.
+func (e *Engine) PrefixReadLimit(meta FileMetadata) int64 {
+	if e == nil {
+		return 0
+	}
+	meta = meta.Normalized()
+	if meta.IsDir || e.opts.MaxFileSizeBytes <= 0 || meta.Size <= e.opts.MaxFileSizeBytes {
+		return 0
+	}
+	if _, ok := prefixReadExtensions[normalizeExtension(meta.Extension)]; !ok {
+		return 0
+	}
+	if e.shouldSkipByPath(meta) {
+		return 0
+	}
+	return e.opts.MaxFileSizeBytes
+}
+
+// evaluatePrefix inspects the leading bytes of an oversized text file. The
+// findings are tagged so reviewers know the rest of the file was not read.
+func (e *Engine) evaluatePrefix(meta FileMetadata, content []byte) Evaluation {
+	if limit := e.PrefixReadLimit(meta); limit > 0 && int64(len(content)) > limit {
+		content = content[:limit]
+	}
+	evaluation := e.evaluateStandard(meta, content, true)
+	for i := range evaluation.Findings {
+		evaluation.Findings[i].Tags = append(evaluation.Findings[i].Tags, PrefixOnlyTag)
+	}
+	return evaluation
+}
+
+// PrefixOnlyTag marks findings produced from only the leading bytes of a file
+// that exceeded the size limit.
+const PrefixOnlyTag = "content:prefix-only"
 
 func (e *Engine) recordValidationFindings(findings []Finding) {
 	if !e.validationMode || e.validationSink == nil || len(findings) == 0 {
@@ -271,13 +335,11 @@ func (e *Engine) NeedsContent(meta FileMetadata) bool {
 	if shouldInspect, _, isSQLite := e.sqliteDecision(meta); isSQLite {
 		return shouldInspect
 	}
-	if e.opts.MaxFileSizeBytes > 0 && meta.Size > e.opts.MaxFileSizeBytes {
-		return false
+	if _, ok := e.looseBundleKind(meta); ok {
+		return true
 	}
-	if e.bundleCoordinator != nil {
-		if kind, ok := artifact.KindForPath(meta.FilePath); ok && isBundleArtifactKind(kind) {
-			return true
-		}
+	if e.opts.MaxFileSizeBytes > 0 && meta.Size > e.opts.MaxFileSizeBytes {
+		return e.PrefixReadLimit(meta) > 0
 	}
 	return e.shouldReadContent(meta, e.contentRules) ||
 		credentialanalysis.NeedsContent(meta.FilePath, meta.Name, meta.Size) ||
@@ -424,6 +486,38 @@ func (e *Engine) harvestCredentialCandidatesWithOptions(meta FileMetadata, conte
 	return failures, findings
 }
 
+// bundleKindLimit returns the size limit for a loose SAM, SYSTEM, SECURITY or
+// NTDS artifact. These hives and databases are routinely larger than the
+// general file size limit and have their own configured bounds.
+func (e *Engine) bundleKindLimit(kind artifact.Kind) int64 {
+	limit := e.samMaxBytes
+	switch kind {
+	case artifact.KindSYSTEM:
+		limit = e.systemMaxBytes
+	case artifact.KindSECURITY:
+		limit = e.securityMaxBytes
+	case artifact.KindNTDS:
+		limit = e.ntdsMaxBytes
+	}
+	if limit <= 0 {
+		limit = 512 * 1024 * 1024
+	}
+	return limit
+}
+
+// looseBundleKind reports whether a file is a loose SAM, SYSTEM, SECURITY or
+// NTDS artifact within its own size limit that the bundle path should read.
+func (e *Engine) looseBundleKind(meta FileMetadata) (artifact.Kind, bool) {
+	if e.bundleCoordinator == nil {
+		return "", false
+	}
+	kind, ok := artifact.KindForPath(meta.FilePath)
+	if !ok || !isBundleArtifactKind(kind) || meta.Size > e.bundleKindLimit(kind) {
+		return "", false
+	}
+	return kind, true
+}
+
 func (e *Engine) evaluateLooseBinary(ctx context.Context, meta FileMetadata, content []byte, kind artifact.Kind) Evaluation {
 	evaluation := Evaluation{}
 	if !meta.BundleDependency {
@@ -432,17 +526,7 @@ func (e *Engine) evaluateLooseBinary(ctx context.Context, meta FileMetadata, con
 	if len(content) == 0 {
 		return evaluation
 	}
-	limit := e.samMaxBytes
-	if kind == artifact.KindSYSTEM {
-		limit = e.systemMaxBytes
-	} else if kind == artifact.KindSECURITY {
-		limit = e.securityMaxBytes
-	} else if kind == artifact.KindNTDS {
-		limit = e.ntdsMaxBytes
-	}
-	if limit <= 0 {
-		limit = 512 * 1024 * 1024
-	}
+	limit := e.bundleKindLimit(kind)
 	binary, err := artifact.NewTempFile(os.TempDir(), kind, artifact.Origin{
 		Host: meta.Host, Share: meta.Share, ContainerPath: meta.FilePath, ContainerType: "loose",
 	})
@@ -698,19 +782,6 @@ func (e *Engine) sqliteDecision(meta FileMetadata) (bool, string, bool) {
 		return shouldInspect, reason, true
 	default:
 		return false, "", false
-	}
-}
-
-func isRecognizedDatabaseArtifact(meta FileMetadata) bool {
-	switch normalizeExtension(meta.Extension) {
-	case ".db", ".db3", ".sqlite", ".sqlite3",
-		".mdb", ".accdb",
-		".mdf", ".ndf", ".ldf",
-		".dbf", ".fdb",
-		".bacpac", ".dacpac":
-		return true
-	default:
-		return false
 	}
 }
 

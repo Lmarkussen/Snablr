@@ -136,6 +136,7 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 		Expanded:            opts.Expanded,
 		Credentials:         opts.Credentials,
 		CredentialsV2:       opts.CredentialsV2,
+		Artifacts:           opts.Artifacts,
 	})
 	if err != nil {
 		return Manifest{}, err
@@ -163,6 +164,9 @@ func Seed(ctx context.Context, opts WriteOptions) (Manifest, error) {
 	}
 	if opts.CredentialsV2 {
 		manifest.FixtureVersion = "credentials-finder-v2"
+	}
+	if opts.Artifacts {
+		manifest.FixtureVersion = "high-value-artifacts-v1"
 	}
 	stats := newSeedRunStats(len(files))
 	pool := newSeedClientPool(opts)

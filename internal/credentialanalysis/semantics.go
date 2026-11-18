@@ -1,6 +1,7 @@
 package credentialanalysis
 
 import (
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -139,6 +140,30 @@ func ProtectedSecretFieldName(key string) bool {
 		}
 	}
 	return false
+}
+
+// ProtectedCredentialStore names the application whose credential store
+// format keeps saved passwords encrypted or encoded (with static or
+// user-bound keys), or returns "" for other files.
+func ProtectedCredentialStore(path string) string {
+	name := strings.ToLower(filepath.Base(strings.ReplaceAll(strings.TrimSpace(path), `\`, "/")))
+	if index := strings.LastIndex(name, "!"); index >= 0 {
+		name = filepath.Base(name[index+1:])
+	}
+	switch {
+	case name == "confcons.xml":
+		return "mRemoteNG"
+	case strings.HasSuffix(name, ".rdg"):
+		return "RDCMan"
+	case name == "winscp.ini":
+		return "WinSCP"
+	case name == "sitemanager.xml", name == "recentservers.xml", name == "filezilla.xml":
+		return "FileZilla"
+	case strings.HasSuffix(name, ".rdp"):
+		return "RDP connection file"
+	default:
+		return ""
+	}
 }
 
 const protectedSecretReason = "field name marks the value as encrypted, hashed or encoded; plaintext is not recovered"

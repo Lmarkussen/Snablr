@@ -47,6 +47,7 @@ type scanClient interface {
 	ListShares() ([]smb.ShareInfo, error)
 	WalkShareWithOptions(string, smb.WalkOptions, func(smb.RemoteFile) error) error
 	ReadFile(string, string) ([]byte, error)
+	ReadFilePrefix(string, string, int64) ([]byte, error)
 }
 
 func bundleKind(remote smb.RemoteFile) (artifact.Kind, bool) {
@@ -861,11 +862,16 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 					meta.DFSLinkPath = dfsHint.LinkPath
 				}
 				remotePath := remote.Path
-				job := scanner.Job{Metadata: meta, LoadContent: func(ctx context.Context, _ scanner.FileMetadata) ([]byte, error) {
+				job := scanner.Job{Metadata: meta, LoadContent: func(ctx context.Context, jobMeta scanner.FileMetadata) ([]byte, error) {
 					select {
 					case <-ctx.Done():
 						return nil, ctx.Err()
 					default:
+					}
+					// Oversized text files are inspected by their leading bytes
+					// instead of being skipped.
+					if limit := engine.PrefixReadLimit(jobMeta); limit > 0 {
+						return client.ReadFilePrefix(shareName, strings.ReplaceAll(remotePath, "/", `\`), limit)
 					}
 					return client.ReadFile(shareName, strings.ReplaceAll(remotePath, "/", `\`))
 				}, OnComplete: func(meta scanner.FileMetadata, evaluation scanner.Evaluation, err error) {
@@ -1343,6 +1349,13 @@ func scanReadLimit(cfg config.Config) int64 {
 		}
 		if cfg.WIM.AllowLargeWIMs && cfg.WIM.MaxWIMSize > limit {
 			limit = cfg.WIM.MaxWIMSize
+		}
+	}
+	// Loose SAM/SYSTEM/SECURITY/NTDS artifacts are read up to their own limits
+	// by the offline bundle path, which are larger than the general limit.
+	for _, artifactLimit := range []int64{cfg.WIM.MaxSAMBytes, cfg.WIM.MaxSYSTEMBytes, cfg.WIM.MaxSECURITYBytes, cfg.WIM.MaxNTDSBytes} {
+		if artifactLimit > limit {
+			limit = artifactLimit
 		}
 	}
 	if cfg.SQLite.Enabled {

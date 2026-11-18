@@ -45,6 +45,14 @@ func (c *trailingStatusClient) WalkShareWithOptions(_ string, _ smb.WalkOptions,
 	}
 	return nil
 }
+func (c *trailingStatusClient) ReadFilePrefix(share, path string, limit int64) ([]byte, error) {
+	data, err := c.ReadFile(share, path)
+	if int64(len(data)) > limit {
+		data = data[:limit]
+	}
+	return data, err
+}
+
 func (c *trailingStatusClient) ReadFile(_ string, path string) ([]byte, error) {
 	key := strings.ReplaceAll(path, `\`, "/")
 	if _, ok := c.files[key]; !ok {

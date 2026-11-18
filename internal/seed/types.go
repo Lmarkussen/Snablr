@@ -113,6 +113,7 @@ type GenerateOptions struct {
 	Expanded            bool
 	Credentials         bool
 	CredentialsV2       bool
+	Artifacts           bool
 }
 
 type WriteOptions struct {
@@ -139,6 +140,7 @@ type WriteOptions struct {
 	Expanded            bool
 	Credentials         bool
 	CredentialsV2       bool
+	Artifacts           bool
 	RequireGroundTruth  bool
 }
 

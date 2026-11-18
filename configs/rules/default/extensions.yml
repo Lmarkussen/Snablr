@@ -109,3 +109,63 @@ rules:
     file_extensions: []
     max_file_size: 0
     action: prioritize
+
+  # High value: virtual disks and VM memory/state files can be mounted or read offline
+  # to extract SAM/SYSTEM/NTDS or LSASS secrets. Reported by name; content is not read.
+  - id: extension.virtual_disk_and_memory_images
+    name: Virtual Disk And VM Memory Images
+    description: Report virtual machine disks and VM memory or saved-state files that may contain offline-extractable credential stores.
+    type: extension
+    pattern: '^(\.vhd|\.vhdx|\.avhd|\.avhdx|\.vmdk|\.vdi|\.qcow2|\.ova|\.ovf|\.vmem|\.vmsn|\.vmss)$'
+    case_sensitive: false
+    severity: high
+    confidence: high
+    explanation: Virtual disk and VM memory images can be copied and mounted offline to extract local SAM, SYSTEM and NTDS data or LSASS memory without touching the original host.
+    remediation: Remove virtual disk and VM memory images from shared locations or restrict access to backup administrators, and treat credentials on the imaged systems as exposed.
+    tags: [backups, vm-disks, offline-extraction, extensions]
+    category: backup-exposure
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: report
+
+  # Review: optical and raw disk images are usually installation media, but deployment
+  # and boot media can embed task-sequence or answer-file credentials.
+  - id: extension.optical_disk_images
+    name: Optical And Raw Disk Images
+    description: Report ISO and raw disk images that may be deployment or boot media containing embedded configuration.
+    type: extension
+    pattern: '^(\.iso|\.img)$'
+    case_sensitive: false
+    severity: medium
+    explanation: Deployment and boot media images can contain answer files, task-sequence variables or other embedded credentials.
+    remediation: Confirm whether the image is deployment or boot media and restrict access if it embeds credentials or configuration.
+    tags: [backups, disk-images, deployment, extensions]
+    category: backup-exposure
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: report
+
+  # Review: mailbox stores often contain credentials, password resets and internal access details.
+  - id: extension.mail_store_archives
+    name: Mail Store Archives
+    description: Report Outlook PST and OST mailbox stores on shares.
+    type: extension
+    pattern: '^(\.pst|\.ost)$'
+    case_sensitive: false
+    severity: medium
+    explanation: Mailbox archives frequently contain credentials sent by email, password reset messages and other sensitive correspondence.
+    remediation: Remove mailbox archives from shared locations or restrict access to the mailbox owner.
+    tags: [mail, business-data, extensions]
+    category: business-data
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: report

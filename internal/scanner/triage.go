@@ -103,7 +103,10 @@ func isDirectExploitArtifact(f Finding) bool {
 		"filename.secret_store_artifacts",
 		"filename.windows_hive_artifacts",
 		"filename.ad_database_backup_artifacts",
-		"filename.windows_hive_backup_artifacts":
+		"filename.windows_hive_backup_artifacts",
+		"filename.kerberos_ticket_artifacts",
+		"filename.memory_dump_artifacts",
+		"extension.virtual_disk_and_memory_images":
 		return true
 	default:
 		return false

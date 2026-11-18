@@ -50,6 +50,7 @@ func run(args []string) error {
 	expanded := fs.Bool("expanded", false, "Generate the deterministic recursive lab corpus")
 	credentials := fs.Bool("credentials", false, "Generate the dedicated credential-pair audit corpus")
 	credentialsV2 := fs.Bool("credentials-v2", false, "Generate the independent randomized credential acceptance corpus")
+	artifacts := fs.Bool("artifacts", false, "Generate the high-value artifact coverage corpus (disk/memory images, tickets, remote-access stores, oversized files)")
 	requireGroundTruth := fs.Bool("require-ground-truth", false, "Reject incomplete or contradictory acceptance expectations before SMB seeding")
 	depth := fs.Int("depth", 1, "Additional nested directory depth to add under each base path")
 	sharesPerTarget := fs.Int("shares-per-target", 0, "Maximum number of shares to seed per target; 0 uses all accessible shares")
@@ -75,6 +76,9 @@ func run(args []string) error {
 	}
 	if *credentialsV2 && *expanded {
 		return fmt.Errorf("--credentials-v2 and --expanded are mutually exclusive")
+	}
+	if *artifacts && (*credentials || *credentialsV2 || *expanded) {
+		return fmt.Errorf("--artifacts cannot be combined with --credentials, --credentials-v2 or --expanded")
 	}
 
 	targetList, err := loadTargets(*targets, *targetsFile)
@@ -114,6 +118,7 @@ func run(args []string) error {
 		Expanded:            *expanded,
 		Credentials:         *credentials,
 		CredentialsV2:       *credentialsV2,
+		Artifacts:           *artifacts,
 		RequireGroundTruth:  *requireGroundTruth,
 		Logf:                logger.Infof,
 		Warnf:               logger.Warnf,

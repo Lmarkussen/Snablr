@@ -39,6 +39,9 @@ var exactArtifactSeedNames = map[string]struct{}{
 }
 
 func Generate(opts GenerateOptions) ([]SeedFile, error) {
+	if opts.Artifacts {
+		return generateArtifactCorpus(opts)
+	}
 	if opts.CredentialsV2 {
 		return generateCredentialCorpusV2(opts)
 	}

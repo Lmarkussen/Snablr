@@ -200,9 +200,17 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 		return candidate
 	}
 	var out []Candidate
+	protectedStore := ProtectedCredentialStore(input.Path)
 	add := func(candidate Candidate) {
 		if len(out) >= maxHarvestItems || strings.TrimSpace(candidate.Value) == "" {
 			return
+		}
+		// Remote-access client stores keep saved passwords encrypted or encoded.
+		// The material is preserved for review but never confirmed as plaintext.
+		if protectedStore != "" && strings.EqualFold(candidate.CredentialType, "password") {
+			candidate.Verification = Review
+			candidate.Encrypted = true
+			candidate.ReviewReasons = []string{protectedStore + " stores this password encrypted or encoded; plaintext is not recovered"}
 		}
 		// Recognised placeholders and templates are not credential material and
 		// are excluded from every credential output, never reported for review.

@@ -75,15 +75,17 @@ rules:
     max_file_size: 0
     action: skip
 
-  # Safe default: large archives and VM images are often expensive and noisy for first-pass triage.
+  # Safe default: archive formats the scanner cannot open are expensive and noisy for first-pass triage.
+  # Virtual disk, VM memory and optical images are not skipped: they are reported by name
+  # (extension.virtual_disk_and_memory_images, extension.optical_disk_images) without being read.
   - id: skip.large_archive_and_vm_extensions
-    name: Large Archive And VM Extensions
-    description: Skip large archive and virtual disk formats by default; .zip, .tar, .tar.gz, and .tgz files are handled separately by the archive inspector.
+    name: Unsupported Archive Extensions
+    description: Skip archive formats the scanner does not open; .zip, .tar, .tar.gz, and .tgz files are handled separately by the archive inspector.
     type: extension
-    pattern: '^(\.7z|\.gz|\.iso|\.ova|\.ovf|\.rar|\.vhd|\.vhdx|\.vmdk)$'
+    pattern: '^(\.7z|\.gz|\.rar)$'
     case_sensitive: false
     severity: low
-    tags: [skip, archives, vm-disks]
+    tags: [skip, archives]
     category: exclusions
     enabled: true
     include_paths: []

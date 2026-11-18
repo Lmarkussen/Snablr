@@ -202,3 +202,46 @@ rules:
     file_extensions: [.cfg, .ini, .xml]
     max_file_size: 524288
     action: prioritize
+
+  # High value: saved passwords in remote-access client stores. The values are encrypted or
+  # encoded with static or user-bound keys; they are reported with the original material and
+  # never decoded (mRemoteNG Password attribute, RDCMan <password>, WinSCP Password=,
+  # FileZilla <Pass>, RDP "password 51:b:").
+  - id: content.remote_access_saved_password
+    name: Remote Access Saved Password
+    description: Detect saved passwords in mRemoteNG, RDCMan, WinSCP, FileZilla and RDP connection files.
+    type: content
+    pattern: '(?im)(<Node\b[^>]*\bPassword="[^"]{8,}"|<password>[^<]{8,}</password>|^\s*Password=[0-9A-F]{16,}\s*$|<Pass\b[^>]*>[^<]{4,}</Pass>|^\s*password 51:b:[0-9A-F]{16,})'
+    case_sensitive: false
+    severity: high
+    confidence: high
+    explanation: Remote-access clients store saved passwords encrypted or encoded with static or user-bound keys. Anyone who can read the file can usually recover the password offline.
+    remediation: Remove the saved password from the connection file, delete exported connection files from shared locations, and rotate the affected credentials.
+    tags: [remote-access, saved-passwords, credentials]
+    category: remote-access
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: [.xml, .rdg, .ini, .rdp]
+    max_file_size: 2097152
+    action: report
+
+  # High value: a WireGuard interface private key authenticates the peer to the VPN.
+  - id: content.wireguard_private_key
+    name: WireGuard Private Key
+    description: Detect WireGuard interface private keys in configuration files.
+    type: content
+    pattern: '(?m)^\s*PrivateKey\s*=\s*[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=\s*$'
+    case_sensitive: true
+    severity: high
+    confidence: high
+    explanation: A WireGuard interface private key lets anyone holding the file join the VPN as that peer.
+    remediation: Remove the configuration from shared locations, generate a new key pair for the peer and revoke the exposed public key on the server.
+    tags: [remote-access, vpn, wireguard, crypto]
+    category: remote-access
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: [.conf]
+    max_file_size: 65536
+    action: report

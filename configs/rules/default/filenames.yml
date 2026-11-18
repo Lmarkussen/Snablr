@@ -285,3 +285,65 @@ rules:
     file_extensions: []
     max_file_size: 0
     action: prioritize
+
+  # High value: Kerberos tickets and keytabs are directly usable for pass-the-ticket or
+  # offline key use. Reported by name; tickets are binary.
+  - id: filename.kerberos_ticket_artifacts
+    name: Kerberos Ticket And Keytab Artifacts
+    description: Report exported Kerberos tickets, credential caches and keytab files.
+    type: filename
+    pattern: '(?i)(\.kirbi$|\.ccache$|^krb5cc(_.*)?$|\.keytab$)'
+    case_sensitive: false
+    severity: high
+    confidence: high
+    explanation: Exported Kerberos tickets and credential caches can be replayed to authenticate as the ticket owner, and keytabs contain long-term service keys.
+    remediation: Remove ticket and keytab files from shared locations, rotate the affected account or service keys, and purge active tickets.
+    tags: [credentials, kerberos, tickets, filenames]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: []
+    file_extensions: []
+    max_file_size: 0
+    action: report
+
+  # High value: LSASS dumps, hibernation files and full memory dumps contain credential
+  # material in memory.
+  - id: filename.memory_dump_artifacts
+    name: Credential-Bearing Memory Dumps
+    description: Report LSASS process dumps, hibernation files and full system memory dumps.
+    type: filename
+    pattern: '(?i)^(lsass[^\\/]*\.(dmp|bin)|hiberfil\.sys|memory\.dmp)$'
+    case_sensitive: false
+    severity: high
+    confidence: high
+    explanation: LSASS dumps, hibernation files and full memory dumps can contain logon credentials, Kerberos tickets and hashes recoverable offline.
+    remediation: Delete memory dumps from shared locations, investigate how they were created, and rotate credentials of accounts logged on to the affected host.
+    tags: [credentials, memory-dumps, offline-extraction, filenames]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: []
+    file_extensions: []
+    max_file_size: 0
+    action: report
+
+  # Review: remote-access client configuration commonly stores saved connections and
+  # encrypted or encoded passwords (mRemoteNG, RDCMan, WinSCP, FileZilla, RDP).
+  - id: filename.remote_access_client_configs
+    name: Remote Access Client Configurations
+    description: Report mRemoteNG, RDCMan, WinSCP, FileZilla and RDP connection files.
+    type: filename
+    pattern: '(?i)(^confcons\.xml$|\.rdg$|^winscp\.ini$|^sitemanager\.xml$|^recentservers\.xml$|^filezilla\.xml$|\.rdp$)'
+    case_sensitive: false
+    severity: medium
+    explanation: Remote-access client configuration files list target hosts and accounts and often store saved passwords protected only by a static or user-bound key.
+    remediation: Remove exported connection files from shared locations and rotate any saved credentials they contain.
+    tags: [remote-access, saved-connections, filenames]
+    category: remote-access
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: []
+    max_file_size: 0
+    action: report

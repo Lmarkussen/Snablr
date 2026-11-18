@@ -46,6 +46,35 @@ func (c *Client) ReadFile(share, path string) ([]byte, error) {
 	return data, nil
 }
 
+// ReadFilePrefix reads at most limit leading bytes of a remote file. Unlike
+// ReadFile it does not reject files larger than the limit: it is used to
+// inspect the beginning of oversized text files.
+func (c *Client) ReadFilePrefix(share, path string, limit int64) ([]byte, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("read prefix of %s on %s: limit must be positive", path, share)
+	}
+	fs, err := c.mountShare(share)
+	if err != nil {
+		return nil, err
+	}
+	defer fs.Umount()
+
+	file, err := fs.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open %s on %s: %w", path, share, err)
+	}
+	defer file.Close()
+
+	data, err := readFileContent(io.LimitReader(file, limit), 0)
+	if err != nil {
+		if os.IsPermission(err) {
+			return nil, fmt.Errorf("read %s on %s: permission denied", path, share)
+		}
+		return nil, fmt.Errorf("read %s on %s: %w", path, share, err)
+	}
+	return data, nil
+}
+
 // readFileContent reads a remote file to completion. It collects bytes as they
 // arrive and only surfaces an error when a read fails before producing any
 // data. SMB servers commonly return the last chunk of a file together with a

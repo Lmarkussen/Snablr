@@ -186,6 +186,14 @@ func (c *appFakeScanClient) WalkShareWithOptions(_ string, _ smb.WalkOptions, fn
 	}
 	return nil
 }
+func (c *appFakeScanClient) ReadFilePrefix(share, path string, limit int64) ([]byte, error) {
+	data, err := c.ReadFile(share, path)
+	if int64(len(data)) > limit {
+		data = data[:limit]
+	}
+	return data, err
+}
+
 func (c *appFakeScanClient) ReadFile(_ string, path string) ([]byte, error) {
 	if c.failSystem && path == `Windows\System32\config\SYSTEM` {
 		return nil, os.ErrPermission

@@ -86,6 +86,12 @@ type VerificationReport struct {
 	PromotedActionable   []ClassVerificationItem `json:"promoted_actionable,omitempty"`
 	PromotedCorrelated   []ClassVerificationItem `json:"promoted_correlated,omitempty"`
 	ClassMismatches      []ClassVerificationItem `json:"class_mismatches,omitempty"`
+	// HostFallback is true when no manifest host appeared among the finding
+	// hosts and matching fell back to share+path identity.
+	HostFallback bool `json:"host_fallback,omitempty"`
+	// NotWrittenEntries counts dry-run manifest entries that were never
+	// written to the target.
+	NotWrittenEntries int `json:"not_written_entries,omitempty"`
 }
 
 func Verify(manifestPath, resultsPath string) (VerificationReport, error) {
@@ -121,7 +127,11 @@ func verifyFindings(manifestPath string, findings []scanner.Finding, manifest Ma
 		PromotedActionable:   make([]ClassVerificationItem, 0),
 		PromotedCorrelated:   make([]ClassVerificationItem, 0),
 		ClassMismatches:      make([]ClassVerificationItem, 0),
+		NotWrittenEntries:    countNotWrittenEntries(manifest),
 	}
+	var hostsMatched bool
+	findings, hostsMatched = alignVerificationHosts(&manifest, findings)
+	result.HostFallback = !hostsMatched
 
 	manifestByKey := make(map[string]SeedManifestEntry, len(manifest.Entries))
 	coverage := make(map[string]*CoverageSummary)
@@ -351,6 +361,12 @@ func verifyFindings(manifestPath string, findings []scanner.Finding, manifest Ma
 
 func PrintVerificationReport(report VerificationReport) {
 	fmt.Println("Snablr Seeder Verification")
+	if report.HostFallback {
+		fmt.Println("Note: no manifest host matched a scanned host; matching by share and path only.")
+	}
+	if report.NotWrittenEntries > 0 {
+		fmt.Printf("Warning: %d manifest entries are dry-run (never written); their results reflect pre-existing share content.\n", report.NotWrittenEntries)
+	}
 	fmt.Printf("Expected items: %d\n", report.ExpectedItems)
 	fmt.Printf("Expected items found: %d\n", report.FoundItems)
 	fmt.Printf("Expected items missed: %d\n", report.MissedItems)

@@ -8,6 +8,9 @@ import (
 	"os"
 	"strings"
 
+	"snablr/internal/credentialanalysis"
+	"snablr/internal/findings"
+	"snablr/internal/scanner"
 	"snablr/internal/seed"
 	"snablr/internal/version"
 	"snablr/pkg/logx"
@@ -138,6 +141,8 @@ func runVerify(args []string) error {
 
 	manifestPath := fs.String("manifest", "", "Path to the seeder manifest JSON file")
 	resultsPath := fs.String("results", "", "Path to the Snablr JSON scan result file")
+	dbPath := fs.String("db", "", "Path to a Snablr SQLite scan database (opened read-only); also verifies credential pairs")
+	scanID := fs.String("scan-id", "", "Persisted scan ID or display ID to verify when --db holds several scans")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -149,16 +154,111 @@ func runVerify(args []string) error {
 	if strings.TrimSpace(*manifestPath) == "" {
 		return fmt.Errorf("missing manifest path: pass --manifest")
 	}
-	if strings.TrimSpace(*resultsPath) == "" {
-		return fmt.Errorf("missing results path: pass --results")
+	hasResults := strings.TrimSpace(*resultsPath) != ""
+	hasDB := strings.TrimSpace(*dbPath) != ""
+	if hasResults == hasDB {
+		return fmt.Errorf("pass exactly one of --results or --db")
+	}
+	if !hasDB && strings.TrimSpace(*scanID) != "" {
+		return fmt.Errorf("--scan-id requires --db")
 	}
 
-	report, err := seed.Verify(*manifestPath, *resultsPath)
+	if hasResults {
+		report, err := seed.Verify(*manifestPath, *resultsPath)
+		if err != nil {
+			return err
+		}
+		seed.PrintVerificationReport(report)
+		return nil
+	}
+	return verifyDatabase(context.Background(), *manifestPath, *dbPath, *scanID)
+}
+
+// verifyDatabase verifies a manifest against a persisted scan through the
+// read-only Finder provider, including expected credential pairs.
+func verifyDatabase(ctx context.Context, manifestPath, dbPath, requestedScan string) error {
+	manifest, err := seed.LoadManifest(manifestPath)
 	if err != nil {
 		return err
 	}
+	provider, err := findings.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer provider.Close()
+
+	scan, err := selectVerifyScan(ctx, provider, requestedScan)
+	if err != nil {
+		return err
+	}
+
+	observed := make([]scanner.Finding, 0)
+	var afterFinding int64
+	for {
+		page, err := provider.FindingsAfter(ctx, scan.ID, afterFinding, findings.PageSize)
+		if err != nil {
+			return err
+		}
+		for _, item := range page {
+			// Derived rows share the ordered keyset at an offset ID base, so the
+			// cursor advances over both populations.
+			observed = append(observed, item.Finding)
+			afterFinding = item.ID
+		}
+		if len(page) < findings.PageSize {
+			break
+		}
+	}
+
+	credentials := make([]credentialanalysis.Candidate, 0)
+	var afterCredential int64
+	for {
+		page, err := provider.CredentialsAfter(ctx, scan.ID, afterCredential, findings.PageSize)
+		if err != nil {
+			return err
+		}
+		for _, item := range page {
+			credentials = append(credentials, item.Candidate)
+			afterCredential = item.ID
+		}
+		if len(page) < findings.PageSize {
+			break
+		}
+	}
+
+	report, err := seed.VerifyFindings(manifestPath, observed)
+	if err != nil {
+		return err
+	}
+	report.ResultsPath = provider.Path()
+	fmt.Printf("Scan: %s (%s) status=%s findings=%d credentials=%d\n", scan.DisplayID, scan.ID, scan.Status, len(observed), len(credentials))
 	seed.PrintVerificationReport(report)
+	seed.PrintPairVerificationReport(seed.VerifyCredentialPairs(manifest, credentials, !report.HostFallback))
 	return nil
+}
+
+func selectVerifyScan(ctx context.Context, provider *findings.Provider, requested string) (findings.Scan, error) {
+	scans, err := provider.ListScans(ctx)
+	if err != nil {
+		return findings.Scan{}, err
+	}
+	requested = strings.TrimSpace(requested)
+	if requested != "" {
+		for _, scan := range scans {
+			if scan.ID == requested || scan.DisplayID == requested {
+				return scan, nil
+			}
+		}
+		return findings.Scan{}, fmt.Errorf("scan %q was not found in %s", requested, provider.Path())
+	}
+	switch len(scans) {
+	case 0:
+		return findings.Scan{}, fmt.Errorf("no persisted scans in %s", provider.Path())
+	case 1:
+		return scans[0], nil
+	default:
+		return findings.Scan{}, fmt.Errorf("multiple scans in %s; pass --scan-id", provider.Path())
+	}
 }
 
 func loadTargets(targets, targetsFile string) ([]string, error) {
@@ -224,11 +324,14 @@ func printUsage(fs *flag.FlagSet) {
 func printVerifyUsage(fs *flag.FlagSet) {
 	fmt.Printf("Snablr Seeder %s\n\n", version.Short())
 	fmt.Println("Usage:")
+	fmt.Println("  snablr-seed verify --manifest seed-manifest.json --db scan.db [--scan-id ID]")
 	fmt.Println("  snablr-seed verify --manifest seed-manifest.json --results results.json")
 	fmt.Println()
 	fmt.Println("Description:")
-	fmt.Println("  Compares a synthetic manifest to a Snablr JSON scan result and reports expected items found,")
-	fmt.Println("  expected items missed, unexpected findings, and coverage by category.")
+	fmt.Println("  Compares a synthetic manifest to a Snablr scan and reports expected items found,")
+	fmt.Println("  expected items missed, unexpected findings, and coverage by category. With --db the")
+	fmt.Println("  scan database is opened read-only and expected username/password pairs are verified")
+	fmt.Println("  against recovered credential material.")
 	fmt.Println()
 	fmt.Println("Flags:")
 	fs.PrintDefaults()

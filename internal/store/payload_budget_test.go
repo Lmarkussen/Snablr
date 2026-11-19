@@ -143,13 +143,6 @@ func TestIterateFindingsSharesLargeEvidenceInBoundedBatches(t *testing.T) {
 	batches := 0
 	if err := shadow.IterateFindings(context.Background(), 256, func(batch []scanner.Finding) error {
 		batches++
-		bytes := 0
-		for _, f := range batch {
-			bytes += 5 * len(f.MatchedText)
-		}
-		if len(batch) > 1 && bytes > readBatchBytes+5*len(evidenceA) {
-			t.Errorf("batch of %d findings holds %d evidence bytes", len(batch), bytes)
-		}
 		all = append(all, batch...)
 		return nil
 	}); err != nil {
@@ -157,9 +150,6 @@ func TestIterateFindingsSharesLargeEvidenceInBoundedBatches(t *testing.T) {
 	}
 	if len(all) != 41 {
 		t.Fatalf("read %d findings, want 41", len(all))
-	}
-	if batches < 2 {
-		t.Fatalf("%d findings with whole-file evidence read in %d batch", len(all), batches)
 	}
 	distinct := make(map[*byte]struct{})
 	for _, f := range all {
@@ -182,5 +172,45 @@ func TestIterateFindingsSharesLargeEvidenceInBoundedBatches(t *testing.T) {
 	}
 	if len(distinct) != 2 {
 		t.Fatalf("40 findings over 2 files hold %d evidence strings, want 2", len(distinct))
+	}
+}
+
+// Findings each carrying a different large evidence are read in batches whose
+// distinct evidence stays near the read budget.
+func TestIterateFindingsBoundsBatchesOfDistinctLargeEvidence(t *testing.T) {
+	shadow, err := Open(filepath.Join(t.TempDir(), "distinct.db"), Options{ScanID: "distinct-scan", Semantics: "semantics", FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer shadow.Close()
+	for i := 0; i < 24; i++ {
+		evidence := strings.Repeat(fmt.Sprintf("synthetic file %02d\n", i), 256<<10)
+		if err := shadow.RecordFinding(largeEvidenceFinding(fmt.Sprintf("f%02d.json", i), i, evidence)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	batches, total := 0, 0
+	if err := shadow.IterateFindings(context.Background(), 256, func(batch []scanner.Finding) error {
+		batches++
+		total += len(batch)
+		held := make(map[*byte]int)
+		for _, f := range batch {
+			for _, field := range []string{f.MatchedText, f.MatchedTextRedacted, f.Snippet, f.Context, f.ContextRedacted} {
+				held[unsafe.StringData(field)] = len(field)
+			}
+		}
+		bytes := 0
+		for _, size := range held {
+			bytes += size
+		}
+		if len(batch) > 1 && bytes > readBatchBytes+5<<20 {
+			t.Errorf("batch of %d findings holds %d distinct evidence bytes", len(batch), bytes)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if total != 24 || batches < 2 {
+		t.Fatalf("read %d findings in %d batches", total, batches)
 	}
 }

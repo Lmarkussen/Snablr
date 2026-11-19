@@ -815,51 +815,67 @@ func (s *SQLiteStore) IterateFindings(ctx context.Context, batchSize int, visit 
 	if err := s.Flush(); err != nil {
 		return err
 	}
+	// Rows are read compact and their evidence is put back from the evidence
+	// table, decoding each evidence text once instead of rebuilding and
+	// parsing a payload that may hold a whole file for every finding.
+	type storedRow struct {
+		id      int64
+		payload []byte
+		refs    sql.NullString
+	}
 	var after int64
 	var sharer evidenceSharer
+	var decoder evidenceDecoder
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		rows, err := s.db.QueryContext(ctx, `SELECT id,payload FROM findings WHERE scan_id=? AND id>? ORDER BY id LIMIT ?`, s.scanID, after, batchSize)
+		rows, err := s.db.QueryContext(ctx, `SELECT id,payload,evidence_refs FROM finding_rows WHERE scan_id=? AND id>? ORDER BY id LIMIT ?`, s.scanID, after, batchSize)
 		if err != nil {
 			return err
 		}
-		batch := make([]scanner.Finding, 0, batchSize)
-		var last int64
-		batchBytes := 0
+		stored := make([]storedRow, 0, batchSize)
 		for rows.Next() {
-			var id int64
-			var payload []byte
-			if err := rows.Scan(&id, &payload); err != nil {
+			var row storedRow
+			if err := rows.Scan(&row.id, &row.payload, &row.refs); err != nil {
 				_ = rows.Close()
 				return err
 			}
-			var finding scanner.Finding
-			if err := json.Unmarshal(payload, &finding); err != nil {
-				_ = rows.Close()
-				return fmt.Errorf("decode persisted finding %d: %w", id, err)
-			}
-			sharer.finding(&finding)
-			batch = append(batch, finding)
-			last = id
-			batchBytes += len(payload)
-			if batchBytes >= readBatchBytes {
-				break
-			}
+			stored = append(stored, row)
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
 			return err
 		}
 		_ = rows.Close()
-		if len(batch) == 0 {
+		if len(stored) == 0 {
 			return nil
+		}
+		batch := make([]scanner.Finding, 0, len(stored))
+		batchBytes := 0
+		for _, row := range stored {
+			var finding scanner.Finding
+			if err := json.Unmarshal(row.payload, &finding); err != nil {
+				return fmt.Errorf("decode persisted finding %d: %w", row.id, err)
+			}
+			if row.refs.Valid {
+				read, err := decoder.restore(ctx, s.db, &finding, row.refs.String)
+				if err != nil {
+					return fmt.Errorf("decode persisted finding %d: %w", row.id, err)
+				}
+				batchBytes += read
+			}
+			sharer.finding(&finding)
+			batch = append(batch, finding)
+			after = row.id
+			batchBytes += len(row.payload)
+			if batchBytes >= readBatchBytes {
+				break
+			}
 		}
 		if err := visit(batch); err != nil {
 			return err
 		}
-		after = last
 	}
 }
 func (s *SQLiteStore) RecordCredential(c credentialanalysis.Candidate) error {

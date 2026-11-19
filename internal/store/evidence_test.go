@@ -150,3 +150,70 @@ func TestFindingsViewAcceptsDirectWrites(t *testing.T) {
 		t.Fatalf("rows after delete=%d err=%v", count, err)
 	}
 }
+
+// Reading findings from their compact rows gives exactly what decoding the
+// rebuilt payloads gives, for rows with shared evidence, inline rows and rows
+// written directly through the view.
+func TestIterateFindingsMatchesRebuiltPayloads(t *testing.T) {
+	state, err := Open(filepath.Join(t.TempDir(), "equal.db"), Options{ScanID: "equal-scan", Semantics: "semantics", FlushEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	fileA := strings.Repeat("{\"Server\": \"a<&>.example.test\"}\n", 4096)
+	fileB := strings.Repeat("password = \"B-Synthetic\" æøå\n", 4096)
+	for i := 0; i < 12; i++ {
+		file := fileA
+		if i%3 == 0 {
+			file = fileB
+		}
+		f := scanner.Finding{RuleID: "synthetic.rule", FilePath: fmt.Sprintf("f%d.json", i), Match: fmt.Sprintf("m%d", i), MatchedText: file, Snippet: file[:100], Context: file, ContextRedacted: strings.ToUpper(file), Tags: []string{"x"}}
+		if err := state.RecordFinding(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.RecordFinding(scanner.Finding{RuleID: "synthetic.small", FilePath: "s.txt", Match: "s", MatchedText: "short"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.db.Exec(`INSERT INTO findings(scan_id,fingerprint,payload,path,rule_id,category) VALUES('equal-scan','direct',?,'d.txt','direct.rule','x')`, `{"rule_id":"direct.rule","matched_text":"`+strings.Repeat("d", 9000)+`"}`); err != nil {
+		t.Fatal(err)
+	}
+
+	var want []scanner.Finding
+	rows, err := state.db.Query(`SELECT payload FROM findings WHERE scan_id='equal-scan' ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			t.Fatal(err)
+		}
+		var f scanner.Finding
+		if err := json.Unmarshal(payload, &f); err != nil {
+			t.Fatal(err)
+		}
+		want = append(want, f)
+	}
+	_ = rows.Close()
+	var got []scanner.Finding
+	if err := state.IterateFindings(context.Background(), 5, func(batch []scanner.Finding) error {
+		got = append(got, batch...)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(want) || len(got) != 14 {
+		t.Fatalf("read %d findings, rebuilt payloads %d", len(got), len(want))
+	}
+	for i := range want {
+		a, _ := json.Marshal(want[i])
+		b, _ := json.Marshal(got[i])
+		if string(a) != string(b) {
+			t.Fatalf("finding %d differs from its rebuilt payload", i)
+		}
+	}
+}

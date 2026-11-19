@@ -1,10 +1,12 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"sync"
 
 	"snablr/internal/scanner"
@@ -62,17 +64,25 @@ func (s storedFinding) size() int64 {
 
 // compactFinding prepares f for storage. Its stored payload decodes to the
 // same finding once the evidence is put back.
-func compactFinding(f scanner.Finding) (storedFinding, error) {
-	fields := []struct {
-		name  string
-		value *string
-	}{
+type evidenceField struct {
+	name  string
+	value *string
+}
+
+// evidenceFields lists the fields of f that may be stored in the evidence
+// table, by their JSON names.
+func evidenceFields(f *scanner.Finding) []evidenceField {
+	return []evidenceField{
 		{"matched_text", &f.MatchedText},
 		{"matched_text_redacted", &f.MatchedTextRedacted},
 		{"snippet", &f.Snippet},
 		{"context", &f.Context},
 		{"context_redacted", &f.ContextRedacted},
 	}
+}
+
+func compactFinding(f scanner.Finding) (storedFinding, error) {
+	fields := evidenceFields(&f)
 	stored := storedFinding{}
 	refs := map[string]string{}
 	encoded := map[string]string{}
@@ -154,4 +164,61 @@ func writeEvidence(tx *sql.Tx, bodies map[string][]byte) error {
 		}
 	}
 	return nil
+}
+
+type decodedEvidence struct {
+	digest string
+	value  string
+}
+
+// evidenceDecoder puts stored evidence back into findings read from their
+// compact rows. Each evidence text is decoded once while it is recent, and
+// findings that carry it share the decoded string.
+type evidenceDecoder struct {
+	recent []decodedEvidence
+}
+
+// restore replaces the placeholders listed in refs with their evidence text.
+// It returns the bytes of evidence text it had to read.
+func (d *evidenceDecoder) restore(ctx context.Context, db *sql.DB, f *scanner.Finding, refs string) (int, error) {
+	var byField map[string]string
+	if err := json.Unmarshal([]byte(refs), &byField); err != nil {
+		return 0, err
+	}
+	read := 0
+	for _, field := range evidenceFields(f) {
+		digest, ok := byField[field.name]
+		if !ok {
+			continue
+		}
+		value, size, err := d.text(ctx, db, digest)
+		if err != nil {
+			return read, fmt.Errorf("read evidence %s: %w", digest, err)
+		}
+		*field.value = value
+		read += size
+	}
+	return read, nil
+}
+
+func (d *evidenceDecoder) text(ctx context.Context, db *sql.DB, digest string) (string, int, error) {
+	for _, cached := range d.recent {
+		if cached.digest == digest {
+			return cached.value, 0, nil
+		}
+	}
+	var body []byte
+	if err := db.QueryRowContext(ctx, `SELECT body FROM evidence WHERE digest=?`, digest).Scan(&body); err != nil {
+		return "", 0, err
+	}
+	var value string
+	if err := json.Unmarshal(body, &value); err != nil {
+		return "", 0, err
+	}
+	if len(d.recent) == sharedEvidenceRecent {
+		copy(d.recent, d.recent[1:])
+		d.recent = d.recent[:sharedEvidenceRecent-1]
+	}
+	d.recent = append(d.recent, decodedEvidence{digest: digest, value: value})
+	return value, len(body), nil
 }

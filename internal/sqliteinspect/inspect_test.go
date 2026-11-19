@@ -98,3 +98,30 @@ func buildSQLiteFixture(t *testing.T, statements []string) []byte {
 	}
 	return content
 }
+
+// Inspecting a database leaves nothing behind in the temp directory: not the
+// copy and not the -shm/-wal files SQLite creates next to a WAL database even
+// for a read-only connection. Those files hold copies of scanned content.
+func TestInspectContentLeavesNoTemporaryFiles(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	content := buildSQLiteFixture(t, []string{
+		`PRAGMA journal_mode=WAL`,
+		`CREATE TABLE users (id INTEGER, username TEXT, password TEXT)`,
+		`INSERT INTO users VALUES (1, 'svc_finance', 'Synthet!cPass2025')`,
+	})
+	matches := New(Options{Enabled: true}).InspectContent(Candidate{
+		FilePath: "Apps/finance.sqlite", Name: "finance.sqlite", Extension: ".sqlite", Size: int64(len(content)),
+	}, content)
+	if len(matches) == 0 {
+		t.Fatal("expected the WAL database to be inspected")
+	}
+	entries, err := os.ReadDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		t.Errorf("left behind in temp dir: %s", entry.Name())
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -28,12 +29,19 @@ func (i Inspector) InspectContent(candidate Candidate, content []byte) []Match {
 		return nil
 	}
 
-	tmpFile, err := os.CreateTemp("", "snablr-sqlite-*.db")
+	// SQLite creates -shm and -wal files next to the database, even for a
+	// read-only connection, and cannot remove them afterwards. The copy lives
+	// in its own private directory so everything is removed with it.
+	tmpDir, err := os.MkdirTemp("", "snablr-sqlite-*")
+	if err != nil {
+		return nil
+	}
+	defer os.RemoveAll(tmpDir)
+	tmpFile, err := os.OpenFile(filepath.Join(tmpDir, "inspect.db"), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return nil
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
 
 	if _, err := tmpFile.Write(content); err != nil {
 		_ = tmpFile.Close()

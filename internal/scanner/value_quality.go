@@ -91,7 +91,14 @@ func assessFindingValueQuality(f Finding) valueQuality {
 	}
 }
 
+// assessConnectionStringQuality is a pure function of blob. Large blobs are
+// shared by many findings (one structured file can yield hundreds of findings
+// that all carry the file as context), so its result is cached per blob.
 func assessConnectionStringQuality(blob string) valueQuality {
+	return largeBlobQualityCache.connectionQuality(blob, assessConnectionStringQualityUncached)
+}
+
+func assessConnectionStringQualityUncached(blob string) valueQuality {
 	lower := strings.ToLower(strings.TrimSpace(blob))
 	if lower == "" {
 		return valueQuality{}
@@ -237,6 +244,10 @@ func assessSensitiveValueQuality(value string) valueQuality {
 }
 
 func looksLikeConnectionMaterial(value string) bool {
+	return largeBlobQualityCache.connectionMaterial(value, looksLikeConnectionMaterialUncached)
+}
+
+func looksLikeConnectionMaterialUncached(value string) bool {
 	lower := strings.ToLower(strings.TrimSpace(value))
 	return containsAnyToken(lower,
 		"server=", "host=", "data source=", "datasource=", "initial catalog=", "database=",

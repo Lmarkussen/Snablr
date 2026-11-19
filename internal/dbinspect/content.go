@@ -73,6 +73,10 @@ func inspectStructuredDatabaseConfig(candidate Candidate, raw []byte, text strin
 	if !hasDatabaseStructuredContext(context) {
 		return nil
 	}
+	// Every finding below carries the whole file as evidence; one shared
+	// string keeps a structured file with many endpoints from holding a copy
+	// of itself per finding and field.
+	rawText := string(raw)
 	var matches []Match
 	for index, fields := range structuredDatabaseGroups(text) {
 		endpoint := firstNonEmpty(fields["server"], fields["host"], fields["hostname"], fields["datasource"])
@@ -99,11 +103,11 @@ func inspectStructuredDatabaseConfig(candidate Candidate, raw []byte, text strin
 			Confidence:          "high",
 			Category:            "database-infrastructure",
 			Match:               summarizeStructuredFields(fields),
-			MatchedText:         string(raw),
-			MatchedTextRedacted: string(raw),
-			Snippet:             string(raw),
-			Context:             string(raw),
-			ContextRedacted:     string(raw),
+			MatchedText:         rawText,
+			MatchedTextRedacted: rawText,
+			Snippet:             rawText,
+			Context:             rawText,
+			ContextRedacted:     rawText,
 			ObservationID:       fmt.Sprintf("structured:%d:%s", index, strings.ToLower(summarizeStructuredFields(fields))),
 			Explanation:         "This finding is based on endpoint and database fields in structured configuration; it does not assert reachability or authentication success.",
 			Remediation:         "Review the configured database endpoint and protect any associated credentials or configuration file.",

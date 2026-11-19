@@ -119,7 +119,7 @@ func TestContentCredentialsSurviveTrailingSMBStatus(t *testing.T) {
 		t.Fatal("output writer does not accept credential candidates")
 	}
 
-	if err := scanHost(context.Background(), "fileserver.example.test", "test", nil, nil, nil, "ctx", "semantics", false, recorder, cfg, engine, sink, logx.New("error")); err != nil {
+	if err := scanHost(context.Background(), "fileserver.example.test", "test", nil, nil, nil, "ctx", "semantics", false, recorder, cfg, engine, sink, nil, logx.New("error")); err != nil {
 		t.Fatalf("scanHost: %v", err)
 	}
 	if err := sink.Close(); err != nil {

@@ -411,8 +411,10 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	if observer, ok := sink.(scanner.ValidationObserver); ok {
 		engine.SetValidationObserver(observer)
 	}
+	var replayed *replayedFindings
 	if sqliteResume != nil {
-		if err := replaySQLiteState(sink, *sqliteResume); err != nil {
+		replayed, err = replaySQLiteState(sink, *sqliteResume)
+		if err != nil {
 			return fmt.Errorf("rehydrate SQLite findings: %w", err)
 		}
 	}
@@ -514,7 +516,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		if progress != nil {
 			progress.SetCurrentHost(target.Host)
 		}
-		if err := scanHost(scanCtx, target.Host, target.Source, resolvedTargets.DFSTargets, stateManager, inventory, credentialContextID, semantics, cfg.Scan.ForceRescan, recorder, cfg, engine, sink, logger); err != nil {
+		if err := scanHost(scanCtx, target.Host, target.Source, resolvedTargets.DFSTargets, stateManager, inventory, credentialContextID, semantics, cfg.Scan.ForceRescan, recorder, cfg, engine, sink, replayed, logger); err != nil {
 			if failure := authorityFailure(); failure != nil {
 				return failure
 			}
@@ -665,31 +667,33 @@ func (r sqliteResumeReader) IsScopeExcluded(kind, host, share, path string) (boo
 	return r.shadow.IsScopeExcluded(kind, host, share, path)
 }
 
-func replaySQLiteState(sink scanner.FindingSink, resume store.ResumeState) error {
+func replaySQLiteState(sink scanner.FindingSink, resume store.ResumeState) (*replayedFindings, error) {
+	replayed := newReplayedFindings()
 	for _, finding := range resume.Findings {
 		if !resume.FileWasCompleted(finding.Host, finding.Share, finding.FilePath) && finding.FilePath != "" {
 			continue
 		}
 		if err := sink.WriteFinding(finding); err != nil {
-			return err
+			return nil, err
 		}
+		replayed.add(finding)
 	}
 	recorder, ok := sink.(scanner.CredentialCandidateSink)
 	if !ok {
-		return nil
+		return replayed, nil
 	}
 	for _, candidate := range resume.Credentials {
 		if candidate.Path != "" && !resume.FileWasCompleted(candidate.Host, candidate.Share, candidate.Path) {
 			continue
 		}
 		if err := recorder.RecordCredentialCandidate(candidate); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return replayed, nil
 }
 
-func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.DFSTarget, stateManager *state.Manager, inventory *state.InventoryManager, credentialContextID, semantics string, forceRescan bool, recorder metrics.Recorder, cfg config.Config, engine *scanner.Engine, sink scanner.FindingSink, logger *logx.Logger) error {
+func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.DFSTarget, stateManager *state.Manager, inventory *state.InventoryManager, credentialContextID, semantics string, forceRescan bool, recorder metrics.Recorder, cfg config.Config, engine *scanner.Engine, sink scanner.FindingSink, replayed *replayedFindings, logger *logx.Logger) error {
 	logger.Infof("scanning host %s", host)
 	if observer, ok := sink.(scanner.ScanObserver); ok {
 		observer.RecordHost(host)
@@ -815,7 +819,7 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 	defer cancel()
 
 	go func() {
-		poolErrCh <- scanner.NewWorkerPool(engine, sink, logger, recorder, cfg.Scan.WorkerCount).Scan(poolCtx, jobs)
+		poolErrCh <- scanner.NewWorkerPool(engine, replayed.filter(sink), logger, recorder, cfg.Scan.WorkerCount).Scan(poolCtx, jobs)
 	}()
 
 	var walkErrs []error

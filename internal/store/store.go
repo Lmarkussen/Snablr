@@ -537,10 +537,22 @@ func (s *SQLiteStore) RecordMember(parent, member, kind, memberPath, status, pro
 		return err
 	})
 }
+
+// FindingFingerprint is the identity a finding is stored under: findings with
+// the same fingerprint are one row.
+func FindingFingerprint(f scanner.Finding) string {
+	payload, _ := json.Marshal(f)
+	return payloadFingerprint(payload)
+}
+
+func payloadFingerprint(payload []byte) string {
+	digest := sha256.Sum256(payload)
+	return fmt.Sprintf("%x", digest[:])
+}
+
 func (s *SQLiteStore) RecordFinding(f scanner.Finding) error {
 	payload, _ := json.Marshal(f)
-	digest := sha256.Sum256(payload)
-	fingerprint := fmt.Sprintf("%x", digest[:])
+	fingerprint := payloadFingerprint(payload)
 	return s.enqueue(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO findings(scan_id,fingerprint,host,share,path,rule_id,category,payload) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(scan_id,fingerprint) DO UPDATE SET payload=excluded.payload`, s.scanID, fingerprint, f.Host, f.Share, f.FilePath, f.RuleID, f.Category, payload)
 		return err

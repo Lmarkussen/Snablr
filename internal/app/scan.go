@@ -521,7 +521,12 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		if progress != nil {
 			progress.SetCurrentHost(target.Host)
 		}
-		if err := scanHost(scanCtx, target.Host, target.Source, resolvedTargets.DFSTargets, stateManager, inventory, credentialContextID, semantics, cfg.Scan.ForceRescan, recorder, cfg, engine, sink, replayed, logger); err != nil {
+		hostErr := scanHost(scanCtx, target.Host, target.Source, resolvedTargets.DFSTargets, stateManager, inventory, credentialContextID, semantics, cfg.Scan.ForceRescan, recorder, cfg, engine, sink, replayed, logger)
+		// Bundle keys include the host, so no partner of a bundle still
+		// incomplete can arrive once the host is done: release its artifacts
+		// now instead of keeping them on disk for the rest of the scan.
+		bundles.Flush()
+		if err := hostErr; err != nil {
 			if failure := authorityFailure(); failure != nil {
 				return failure
 			}

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"snablr/internal/app"
@@ -376,7 +377,10 @@ func runScan(args []string) error {
 			return fmt.Errorf("--flushdb requires an explicit SQLite database path")
 		}
 	}
-	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt)
+	// Termination and hangup (timeout, kill, a closed terminal or SSH
+	// session) stop the scan like Ctrl-C, so state is finalized and temporary
+	// files are removed.
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stopSignals()
 	return app.RunScan(ctx, app.ScanOptions{
 		ConfigPath:                 *configPath,

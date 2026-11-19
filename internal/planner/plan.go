@@ -152,9 +152,11 @@ func normalizePlanPath(path string) string {
 	return strings.Trim(path, "/")
 }
 
+// hasPathPrefix compares case-insensitively because SMB paths are
+// case-insensitive.
 func hasPathPrefix(path, prefix string) bool {
-	path = normalizePlanPath(path)
-	prefix = normalizePlanPath(prefix)
+	path = strings.ToLower(normalizePlanPath(path))
+	prefix = strings.ToLower(normalizePlanPath(prefix))
 	if path == "" || prefix == "" {
 		return false
 	}

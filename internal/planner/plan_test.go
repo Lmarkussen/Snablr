@@ -85,3 +85,20 @@ func TestPlanFiltersLimitSharesAndPaths(t *testing.T) {
 		t.Fatalf("unexpected filtered file plan: %#v", filePlan)
 	}
 }
+
+// SMB paths are case-insensitive; "--path finance" must select "Finance".
+func TestPlanPathFiltersAreCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	filePlan := PlanFiles([]FileInput{
+		{Host: "fs01", Share: "Data", Path: "Finance/Exports/q1.xlsx", Extension: ".xlsx"},
+		{Host: "fs01", Share: "Data", Path: "Finance/Archive/q0.xlsx", Extension: ".xlsx"},
+		{Host: "fs01", Share: "Data", Path: "HR/staff.xlsx", Extension: ".xlsx"},
+	}, FilterOptions{
+		IncludePaths: []string{"finance"},
+		ExcludePaths: []string{"FINANCE/archive"},
+	})
+	if len(filePlan) != 1 || filePlan[0].Path != "Finance/Exports/q1.xlsx" {
+		t.Fatalf("unexpected filtered file plan: %#v", filePlan)
+	}
+}

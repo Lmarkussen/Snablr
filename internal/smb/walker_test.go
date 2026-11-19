@@ -56,3 +56,19 @@ func TestWalkerDynamicDescentPredicateIsRecheckedAtBoundary(t *testing.T) {
 		t.Fatal("dynamic skip predicate still allowed descent")
 	}
 }
+
+// SMB paths are case-insensitive; "--path finance" must select "Finance"
+// instead of silently scanning nothing.
+func TestWalkerScopePrefixesAreCaseInsensitive(t *testing.T) {
+	include := WalkOptions{IncludePaths: []string{"finance/EXPORTS"}}
+	if !shouldDescendRemoteDir("Finance", 1, include, 64) || !shouldDescendRemoteDir("Finance/Exports", 2, include, 64) {
+		t.Fatal("did not descend into a differently cased include path")
+	}
+	if !shouldIncludeRemoteFile("Finance/Exports/q1.xlsx", 2, include, 64) {
+		t.Fatal("rejected a file under a differently cased include path")
+	}
+	exclude := WalkOptions{ExcludePaths: []string{"FINANCE"}}
+	if shouldDescendRemoteDir("Finance", 1, exclude, 64) || shouldIncludeRemoteFile("finance/a.txt", 1, exclude, 64) {
+		t.Fatal("differently cased exclude path was ignored")
+	}
+}

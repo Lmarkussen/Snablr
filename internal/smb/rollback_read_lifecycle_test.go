@@ -50,6 +50,46 @@ func TestSMBOperationsAreNotDetachedFromCaller(t *testing.T) {
 	}
 }
 
+// TestGoroutinesOnlyInWaitedDirectoryPrefetch narrows the guard above to its
+// one exception: the walk lists directories ahead in parallel, and every such
+// listing is waited for before the walk returns and its share connection is
+// closed. No other file in the package may start a goroutine, anywhere in a
+// function body.
+func TestGoroutinesOnlyInWaitedDirectoryPrefetch(t *testing.T) {
+	t.Parallel()
+
+	const allowed = "walk_prefetch.go"
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+	fset := token.NewFileSet()
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == allowed {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			if goStmt, ok := n.(*ast.GoStmt); ok {
+				t.Errorf("%s:%d starts a goroutine; only %s may, and only for listings the walk waits for", name, fset.Position(goStmt.Pos()).Line, allowed)
+			}
+			return true
+		})
+	}
+
+	src, err := os.ReadFile("walker.go")
+	if err != nil {
+		t.Fatalf("read walker.go: %v", err)
+	}
+	if !strings.Contains(string(src), "defer prefetcher.wait()") {
+		t.Fatal("walker.go no longer waits for directory listings started ahead")
+	}
+}
+
 func fileHasSMBOperation(fset *token.FileSet, file *ast.File) bool {
 	found := false
 	ast.Inspect(file, func(n ast.Node) bool {

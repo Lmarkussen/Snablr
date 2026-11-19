@@ -41,27 +41,41 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 	}
 	defer closeShare(fs)
 
-	type walkItem struct {
-		path  string
-		depth int
-	}
-
-	stack := []walkItem{{path: "", depth: 0}}
 	maxDepth := opts.MaxDepth
 	if maxDepth <= 0 {
 		maxDepth = c.maxDepth
 	}
+	list := func(dir string) ([]os.FileInfo, error) { return c.readDir(fs, dir) }
+	return c.walkTree(share, opts, maxDepth, list, dirPrefetchInFlight, fn)
+}
+
+type walkItem struct {
+	path  string
+	depth int
+}
+
+// walkTree walks the directory tree depth-first in name order. Directories
+// next on the stack are listed ahead in parallel (up to prefetch at a time);
+// entries are still taken and reported strictly in walk order, so callbacks,
+// operator actions and output order are the same as without prefetching. All
+// listings started ahead have ended when walkTree returns.
+func (c *Client) walkTree(share string, opts WalkOptions, maxDepth int, list func(string) ([]os.FileInfo, error), prefetch int, fn func(RemoteFile) error) error {
+	prefetcher := newDirPrefetcher(list, prefetch)
+	defer prefetcher.wait()
+
+	stack := []walkItem{{path: "", depth: 0}}
 	for len(stack) > 0 {
 		item := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		if item.path != "" && opts.ShouldDescend != nil && !opts.ShouldDescend(normalizeRemotePath(item.path)) {
+			prefetcher.discard(item.path)
 			continue
 		}
 		if opts.CurrentDirectory != nil {
 			opts.CurrentDirectory(normalizeRemotePath(item.path))
 		}
 
-		entries, err := c.readDir(fs, item.path)
+		entries, err := prefetcher.take(item.path)
 		if err != nil {
 			if isPermissionError(err) || os.IsNotExist(err) {
 				continue
@@ -116,6 +130,13 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 
 			if err := fn(file); err != nil {
 				return err
+			}
+		}
+		// List the directories the walk reaches next while this one's
+		// entries are processed.
+		for index := len(stack) - 1; index >= 0; index-- {
+			if !prefetcher.start(stack[index].path) {
+				break
 			}
 		}
 	}

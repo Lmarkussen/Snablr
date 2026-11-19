@@ -574,9 +574,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiFinalizeEvent:
 		m.completed = true
 		m.final = &msg
+		anchor, anchored := m.selectionAnchor()
 		m.findings = cloneFindings(msg.Findings)
 		if len(m.findings) == 0 {
 			m.selected = -1
+		} else if index, ok := m.findingIndex(anchor, anchored); ok {
+			m.selected = index
 		} else if m.selected < 0 || m.selected >= len(m.findings) {
 			m.selected = max(0, len(m.findings)-1)
 		}
@@ -1452,6 +1455,7 @@ func (m *tuiModel) moveSelection(delta int) {
 
 func (m *tuiModel) syncLiveState(state tuiLiveState) {
 	previousSelected := m.selected
+	anchor, anchored := m.selectionAnchor()
 	m.live = state
 	if len(m.live.ShareQueue.Items) == 0 {
 		m.queueSelected, m.queueViewport = 0, 0
@@ -1473,11 +1477,40 @@ func (m *tuiModel) syncLiveState(state tuiLiveState) {
 	if m.followTail {
 		m.selected = len(m.findings) - 1
 	}
+	if index, ok := m.findingIndex(anchor, anchored); ok {
+		m.selected = index
+	}
 	if m.selected >= len(m.findings) {
 		m.selected = len(m.findings) - 1
 	}
 	m.ensureSelectionVisible()
-	m.refreshDetailContent(previousSelected != m.selected)
+	changed := previousSelected != m.selected
+	if anchored {
+		changed = reportFindingDedupKey(m.findings[m.selected]) != anchor
+	}
+	m.refreshDetailContent(changed)
+}
+
+// selectionAnchor identifies the finding the operator selected away from the
+// tail, so the selection stays on that finding when the list shifts (the live
+// list keeps only the newest rows) or is replaced by the final list.
+func (m *tuiModel) selectionAnchor() (string, bool) {
+	if m.followTail || m.selected < 0 || m.selected >= len(m.findings) {
+		return "", false
+	}
+	return reportFindingDedupKey(m.findings[m.selected]), true
+}
+
+func (m *tuiModel) findingIndex(key string, ok bool) (int, bool) {
+	if !ok {
+		return 0, false
+	}
+	for index, finding := range m.findings {
+		if reportFindingDedupKey(finding) == key {
+			return index, true
+		}
+	}
+	return 0, false
 }
 
 func (m *tuiModel) ensureQueueSelectionVisible() {

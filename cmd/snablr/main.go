@@ -380,8 +380,9 @@ func runScan(args []string) error {
 	// Termination and hangup (timeout, kill, a closed terminal or SSH
 	// session) stop the scan like Ctrl-C, so state is finalized and temporary
 	// files are removed.
-	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
+	defer forwardHangupAsTermination()()
 	return app.RunScan(ctx, app.ScanOptions{
 		ConfigPath:                 *configPath,
 		Targets:                    parseTargets(*targets),
@@ -721,6 +722,29 @@ func runRules(args []string) error {
 	default:
 		printRulesUsage()
 		return fmt.Errorf("unknown rules subcommand %q", args[0])
+	}
+}
+
+// forwardHangupAsTermination passes a hangup on to the process as SIGTERM,
+// so it ends the scan the way termination does. The live TUI quits on
+// SIGTERM but not on a hangup; without this it would keep waiting for a
+// terminal that is gone. The returned function stops forwarding.
+func forwardHangupAsTermination() func() {
+	hangup := make(chan os.Signal, 1)
+	stop := make(chan struct{})
+	signal.Notify(hangup, syscall.SIGHUP)
+	go func() {
+		select {
+		case <-hangup:
+			if self, err := os.FindProcess(os.Getpid()); err == nil {
+				_ = self.Signal(syscall.SIGTERM)
+			}
+		case <-stop:
+		}
+	}()
+	return func() {
+		signal.Stop(hangup)
+		close(stop)
 	}
 }
 

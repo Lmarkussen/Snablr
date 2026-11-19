@@ -119,6 +119,11 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	scanCtx, scanCancel := context.WithCancel(scanCtx)
 	defer scanCancel()
 	operatorInterrupted := false
+	// interruptedWhenScanEnded records whether the scan was interrupted at the
+	// moment its work ended, before outputs close. The live TUI stays open
+	// after a finished scan; a signal that only closes it does not interrupt
+	// the scan.
+	var interruptedWhenScanEnded *bool
 
 	manager, err := loadRuleManager(cfg, logger)
 	if err != nil {
@@ -269,9 +274,13 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			if stateManager != nil {
 				completedShares, skippedShares, _ = stateManager.ShareOutcome()
 			}
+			interrupted := operatorInterrupted || errors.Is(scanCtx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.Canceled) || output.WasCanceledByUser(sink)
+			if interruptedWhenScanEnded != nil {
+				interrupted = *interruptedWhenScanEnded
+			}
 			status := classifyScanStatus(
 				errors.Is(scanCtx.Err(), context.DeadlineExceeded),
-				operatorInterrupted || errors.Is(scanCtx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.Canceled) || output.WasCanceledByUser(sink),
+				interrupted,
 				shadow.Failure() != nil,
 				err != nil,
 				completedShares,
@@ -431,6 +440,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		}
 		output.SetMetricsSnapshot(sink, recorder.Snapshot())
 		wasInterrupted := operatorInterrupted || errors.Is(scanCtx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.Canceled) || output.WasCanceledByUser(sink)
+		interruptedWhenScanEnded = &wasInterrupted
 		if wasInterrupted {
 			output.SetScanInterrupted(sink, "operator interruption")
 		}
@@ -1208,7 +1218,7 @@ func scanSemanticsFingerprint(cfg config.Config, manager *rules.Manager) string 
 func scanSemanticsFingerprintWithVersion(cfg config.Config, manager *rules.Manager, version string) string {
 	ruleFingerprint := ""
 	if manager != nil {
-		ruleFingerprint = state.SemanticsFingerprint(manager.EnabledRules())
+		ruleFingerprint = state.SemanticsFingerprint(locationIndependentRules(manager.EnabledRules()))
 	}
 	return state.SemanticsFingerprint(scanSemantics{
 		SchemaVersion:    1,
@@ -1234,6 +1244,18 @@ func scanSemanticsFingerprintWithVersion(cfg config.Config, manager *rules.Manag
 		SQLite:           cfg.SQLite,
 		RulesFingerprint: ruleFingerprint,
 	})
+}
+
+// locationIndependentRules leaves out where each rule file was loaded from,
+// so the same rules in another checkout or directory still match a scan
+// started there and resume does not rescan everything.
+func locationIndependentRules(enabled []rules.Rule) []rules.Rule {
+	out := make([]rules.Rule, len(enabled))
+	for index, rule := range enabled {
+		rule.SourceFile = ""
+		out[index] = rule
+	}
+	return out
 }
 
 func sortedScanScope(values []string) []string {

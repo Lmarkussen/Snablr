@@ -119,3 +119,41 @@ type trailerStatusReader struct{}
 func (trailerStatusReader) Read([]byte) (int, error) {
 	return 0, errors.New("STATUS_END_OF_FILE style trailer")
 }
+
+// Once the host is marked unresponsive, operations still waiting on it end at
+// once instead of each waiting out its own timeout. A new connection starts
+// with a fresh signal.
+func TestUnresponsiveHostEndsOperationsInFlight(t *testing.T) {
+	client := NewClient()
+	client.SetOperationContext(context.Background(), time.Minute)
+	inFlight, err := client.operationWatchdog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inFlight.stop()
+
+	for i := 0; i < unresponsiveAfterTimeouts; i++ {
+		_ = client.observe(contextError())
+	}
+	select {
+	case <-inFlight.ctx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("operation in flight kept waiting after the host was marked unresponsive")
+	}
+	if err := client.observe(contextError()); !errors.Is(err, ErrHostUnresponsive) {
+		t.Fatalf("ended operation not reported as unresponsive host: %v", err)
+	}
+
+	client.mu.Lock()
+	client.unresponsive, client.consecutiveTimeouts = false, 0
+	client.resetHostDownLocked()
+	client.mu.Unlock()
+	fresh, err := client.operationWatchdog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fresh.stop()
+	if fresh.ctx.Err() != nil {
+		t.Fatal("operation on a new connection started cancelled")
+	}
+}

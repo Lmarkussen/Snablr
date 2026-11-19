@@ -40,10 +40,11 @@ var (
 // for timeout. Operations stay on the caller's goroutine; the watchdog only
 // cancels their context, which go-smb2 honours for every request it waits on.
 type idleWatchdog struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	timer   *time.Timer
-	timeout time.Duration
+	ctx      context.Context
+	cancel   context.CancelFunc
+	timer    *time.Timer
+	timeout  time.Duration
+	stopDown func() bool
 }
 
 func newIdleWatchdog(parent context.Context, timeout time.Duration) *idleWatchdog {
@@ -65,6 +66,9 @@ func (w *idleWatchdog) touch() {
 func (w *idleWatchdog) stop() {
 	if w.timer != nil {
 		w.timer.Stop()
+	}
+	if w.stopDown != nil {
+		w.stopDown()
 	}
 	w.cancel()
 }
@@ -114,6 +118,10 @@ func (c *Client) operationSettings() (context.Context, time.Duration) {
 func (c *Client) operationWatchdog() (*idleWatchdog, error) {
 	c.mu.Lock()
 	unresponsive := c.unresponsive
+	if c.hostDown == nil {
+		c.resetHostDownLocked()
+	}
+	hostDown := c.hostDown
 	c.mu.Unlock()
 	if unresponsive {
 		return nil, ErrHostUnresponsive
@@ -122,7 +130,18 @@ func (c *Client) operationWatchdog() (*idleWatchdog, error) {
 	if err := base.Err(); err != nil {
 		return nil, err
 	}
-	return newIdleWatchdog(base, timeout), nil
+	w := newIdleWatchdog(base, timeout)
+	w.stopDown = context.AfterFunc(hostDown, w.cancel)
+	return w, nil
+}
+
+// resetHostDownLocked starts a new host-down signal for a new connection.
+// The caller holds c.mu.
+func (c *Client) resetHostDownLocked() {
+	if c.markHostDown != nil {
+		c.markHostDown()
+	}
+	c.hostDown, c.markHostDown = context.WithCancel(context.Background())
 }
 
 // observe classifies the result of an SMB operation. A request cancelled by
@@ -144,8 +163,12 @@ func (c *Client) observe(err error) error {
 	}
 	c.mu.Lock()
 	c.consecutiveTimeouts++
-	if c.consecutiveTimeouts >= unresponsiveAfterTimeouts {
+	if c.consecutiveTimeouts >= unresponsiveAfterTimeouts && !c.unresponsive {
 		c.unresponsive = true
+		// Operations still waiting on the host end now.
+		if c.markHostDown != nil {
+			c.markHostDown()
+		}
 	}
 	unresponsive := c.unresponsive
 	c.mu.Unlock()

@@ -129,6 +129,11 @@ type Client struct {
 	opTimeout           time.Duration
 	consecutiveTimeouts int
 	unresponsive        bool
+	// hostDown is cancelled when the host is marked unresponsive, which ends
+	// operations still waiting on it instead of letting each wait out its
+	// own timeout.
+	hostDown     context.Context
+	markHostDown context.CancelFunc
 }
 
 func NewClient() *Client {
@@ -198,6 +203,7 @@ func (c *Client) ConnectWithAuth(host string, auth Auth) error {
 		base = context.Background()
 	}
 	c.unresponsive, c.consecutiveTimeouts = false, 0
+	c.resetHostDownLocked()
 	conn, err := (&net.Dialer{Timeout: c.dialTimeout}).DialContext(base, "tcp", dialAddr)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", dialAddr, err)

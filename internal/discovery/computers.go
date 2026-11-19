@@ -6,6 +6,7 @@ import (
 	"net"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
@@ -45,6 +46,7 @@ func queryComputerObjects(conn *ldap.Conn, baseDN string, pageSize uint32, logge
 	}
 
 	hosts = deduplicateHosts(hosts)
+	resolveDiscoveredIPs(hosts)
 	sort.Slice(hosts, func(i, j int) bool {
 		return preferredName(hosts[i]) < preferredName(hosts[j])
 	})
@@ -62,7 +64,6 @@ func discoveredHostFromEntry(entry *ldap.Entry) DiscoveredHost {
 	return DiscoveredHost{
 		Hostname:          name,
 		DNSHostname:       dnsHost,
-		IP:                lookupIP(dnsHost, name),
 		OperatingSystem:   strings.TrimSpace(entry.GetAttributeValue("operatingSystem")),
 		DistinguishedName: strings.TrimSpace(entry.GetAttributeValue("distinguishedName")),
 		Source:            "ldap",
@@ -106,6 +107,30 @@ func preferredName(host DiscoveredHost) string {
 		return strings.ToLower(host.DNSHostname)
 	}
 	return strings.ToLower(host.Hostname)
+}
+
+// discoveryDNSWorkers bounds concurrent DNS lookups for discovered computers.
+// Each lookup can wait up to its timeout, so resolving a large domain one
+// host at a time delayed the scan by minutes.
+const discoveryDNSWorkers = 16
+
+var lookupIPFunc = lookupIP
+
+// resolveDiscoveredIPs fills in each host's IP address, resolving up to
+// discoveryDNSWorkers hosts at a time. Every host keeps its position.
+func resolveDiscoveredIPs(hosts []DiscoveredHost) {
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, discoveryDNSWorkers)
+	for index := range hosts {
+		wg.Add(1)
+		slots <- struct{}{}
+		go func(host *DiscoveredHost) {
+			defer wg.Done()
+			defer func() { <-slots }()
+			host.IP = lookupIPFunc(host.DNSHostname, host.Hostname)
+		}(&hosts[index])
+	}
+	wg.Wait()
 }
 
 func lookupIP(candidates ...string) string {

@@ -56,7 +56,8 @@ SMB transport and file access.
 
 Responsibilities:
 
-- authenticate with username and password
+- authenticate with a password, a precomputed NT hash (`--smb-auth ntlm-hash`), or Kerberos (`--smb-auth kerberos`)
+- bound every SMB operation with an idle timeout so an unresponsive host cannot stall a scan (`--smb-timeout`)
 - enumerate shares
 - collect share metadata
 - walk directories

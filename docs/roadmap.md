@@ -21,8 +21,8 @@ recovery without actual plaintext extraction.
 4. Kali Deployment and Manual Operator Acceptance — completed.
 5. CLI Command Audit, Help Redesign, and Developer Mode — implemented.
 6. NTLM/SCCM Hash Detection and Rule Expansion — implemented through SCCM plaintext coverage.
-7. P7 HTML Report Themes — current implementation milestone.
-8. P8 Offline SQLite Findings Engine — planned after operator approval of P7.
+7. P7 HTML Report Themes — implemented.
+8. P8 Offline SQLite Findings Engine — implemented as the Finder (`snablr find --db`).
 9. Larger future Snablr development work.
 
 ## Intelligent Resume/Rescan (implemented and validated)
@@ -85,7 +85,7 @@ for operator-driven TUI testing.
 Hash detection remains a later phase after resume/skip validation, recursive
 seeding, and manual acceptance; it is not part of the current implementation.
 
-## CLI Command Audit, Help Redesign, and Developer Mode (planned)
+## CLI Command Audit, Help Redesign, and Developer Mode (implemented)
 
 This milestone follows recursive lab seeding and operator acceptance. It must
 not interrupt the current Skip Folder / Skip Share work or alter scanner
@@ -225,7 +225,7 @@ through the real HTML reporting pipeline and made available for operator
 browser review on Kali. P7 stops after deployment and mock-report generation;
 operator approval is required before P8 begins.
 
-## P8 Offline SQLite Findings Engine (planned; do not implement during P7)
+## P8 Offline SQLite Findings Engine (implemented as `snablr find`)
 
 After P7 operator approval, audit and then add an offline investigation mode
 tentatively invoked as `snablr find --db snablr.db`. The exact spelling remains

@@ -57,6 +57,41 @@ including logical pair counts, synthetic identities, pairing scope, origin
 context, and archive provenance. The generated values are deliberately fake;
 the manifest is test ground truth, not proof that a credential is valid.
 
+## Other corpora
+
+- `--expanded` writes the deterministic recursive lab corpus (deep folder
+  trees, archives, and the full template set).
+- `--credentials-v2` writes an independent, randomized credential acceptance
+  corpus with positive, review, and negative-control files. Its manifest
+  records the expected username/password pairs for each file.
+- `--artifacts` writes the high-value artifact corpus: disk and memory images,
+  Kerberos tickets, LSASS dumps, remote-access stores, and files larger than the
+  scanner read limit.
+- `--clean-prefix` removes previously seeded content under `--seed-prefix`
+  before writing, so a corpus can be re-seeded in place.
+
+WIM templates need the external `wimlib-imagex` executable. When it is not on
+`PATH`, the generator skips WIM templates and leaves them out of the manifest.
+
+## Verifying a scan against a manifest
+
+`snablr-seed verify` compares a scan with a manifest. Pass exactly one of
+`--results` (a JSON scan result) or `--db` (a Snablr SQLite scan database,
+opened read-only). With `--db`, it also checks the persisted credential pairs.
+Use `--scan-id` when the database holds several scans.
+
+```text
+snablr scan --targets fileserver.example.test --username test_operator \
+  --password SYNTHETIC_PASSWORD --share SyntheticShare \
+  --path Credentials-Finder-V2 --dbname credentials-v2.db --no-outfile
+snablr-seed verify --manifest credentials-finder-v2.json --db credentials-v2.db
+```
+
+The report lists expected items found and missed per category and class,
+mismatched triage classes, and matched credential pairs. It also reports
+negative controls that produced actionable findings (false positives) and
+review material that surfaced as findings.
+
 Generated files are synthetic regression material. Do not place live data,
 real credentials, customer names, or local workstation paths in fixtures,
 manifests, documentation, or commits.

@@ -11,32 +11,20 @@ import (
 
 func (c *Client) ReadFile(share, path string) ([]byte, error) {
 	maxReadSize := c.readLimit()
-	fs, err := c.mountShare(share)
-	if err != nil {
-		return nil, err
-	}
-	defer closeShare(fs)
+	return c.withReadShare(share, func(fs *smb2.Share) ([]byte, error) {
+		return c.readFile(fs, share, path, maxReadSize)
+	})
+}
 
-	// One idle watchdog covers stat, open and the read; it restarts whenever
-	// data arrives, so slow transfers continue and stalled ones time out.
+func (c *Client) readFile(fs *smb2.Share, share, path string, maxReadSize int64) ([]byte, error) {
+	// One idle watchdog covers open and the read; it restarts whenever data
+	// arrives, so slow transfers continue and stalled ones time out.
 	watchdog, err := c.operationWatchdog()
 	if err != nil {
 		return nil, fmt.Errorf("read %s on %s: %w", path, share, err)
 	}
 	defer watchdog.stop()
 	fs = fs.WithContext(watchdog.ctx)
-
-	info, err := fs.Stat(path)
-	if err != nil {
-		return nil, fmt.Errorf("stat %s on %s: %w", path, share, c.observe(err))
-	}
-	watchdog.touch()
-	if info.IsDir() {
-		return nil, fmt.Errorf("%s on %s is a directory", path, share)
-	}
-	if maxReadSize > 0 && info.Size() > maxReadSize {
-		return nil, fmt.Errorf("%w: %s on %s is %d bytes, limit is %d", ErrFileTooLarge, path, share, info.Size(), maxReadSize)
-	}
 
 	file, err := fs.Open(path)
 	if err != nil {
@@ -45,10 +33,20 @@ func (c *Client) ReadFile(share, path string) ([]byte, error) {
 	defer file.Close()
 	watchdog.touch()
 
-	data, err := readFileContent(progressReader{r: file, w: watchdog}, maxReadSize)
+	// The open response carries size and attributes, so no separate stat
+	// request is needed.
+	info := file.OpenStat()
+	if info.IsDir() {
+		return nil, fmt.Errorf("%s on %s %w", path, share, errIsDirectory)
+	}
+	if maxReadSize > 0 && info.Size() > maxReadSize {
+		return nil, fmt.Errorf("%w: %s on %s is %d bytes, limit is %d", ErrFileTooLarge, path, share, info.Size(), maxReadSize)
+	}
+
+	data, err := readFileContent(progressReader{r: knownSizeReader(file, info.Size()), w: watchdog}, maxReadSize)
 	if err != nil {
 		if os.IsPermission(err) {
-			return nil, fmt.Errorf("read %s on %s: permission denied", path, share)
+			return nil, fmt.Errorf("read %s on %s: %w", path, share, os.ErrPermission)
 		}
 		return nil, fmt.Errorf("read %s on %s: %w", path, share, c.observe(err))
 	}
@@ -61,6 +59,16 @@ func (c *Client) ReadFile(share, path string) ([]byte, error) {
 	return data, nil
 }
 
+// knownSizeReader stops reading at the size reported when the file was
+// opened, which saves the extra request that only returns end-of-file. A
+// reported size of zero is not trusted: such a file is read to end-of-file.
+func knownSizeReader(file io.Reader, size int64) io.Reader {
+	if size <= 0 {
+		return file
+	}
+	return io.LimitReader(file, size)
+}
+
 // ReadFilePrefix reads at most limit leading bytes of a remote file. Unlike
 // ReadFile it does not reject files larger than the limit: it is used to
 // inspect the beginning of oversized text files.
@@ -68,12 +76,12 @@ func (c *Client) ReadFilePrefix(share, path string, limit int64) ([]byte, error)
 	if limit <= 0 {
 		return nil, fmt.Errorf("read prefix of %s on %s: limit must be positive", path, share)
 	}
-	fs, err := c.mountShare(share)
-	if err != nil {
-		return nil, err
-	}
-	defer closeShare(fs)
+	return c.withReadShare(share, func(fs *smb2.Share) ([]byte, error) {
+		return c.readFilePrefix(fs, share, path, limit)
+	})
+}
 
+func (c *Client) readFilePrefix(fs *smb2.Share, share, path string, limit int64) ([]byte, error) {
 	watchdog, err := c.operationWatchdog()
 	if err != nil {
 		return nil, fmt.Errorf("read %s on %s: %w", path, share, err)
@@ -90,7 +98,7 @@ func (c *Client) ReadFilePrefix(share, path string, limit int64) ([]byte, error)
 	data, err := readFileContent(progressReader{r: io.LimitReader(file, limit), w: watchdog}, 0)
 	if err != nil {
 		if os.IsPermission(err) {
-			return nil, fmt.Errorf("read %s on %s: permission denied", path, share)
+			return nil, fmt.Errorf("read %s on %s: %w", path, share, os.ErrPermission)
 		}
 		return nil, fmt.Errorf("read %s on %s: %w", path, share, c.observe(err))
 	}

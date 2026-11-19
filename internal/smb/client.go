@@ -104,6 +104,8 @@ type SMBClient interface {
 
 type Client struct {
 	mu sync.Mutex
+	// mountMu serializes mounting the reused read tree connections.
+	mountMu sync.Mutex
 
 	host       string
 	serverName string
@@ -117,6 +119,9 @@ type Client struct {
 
 	conn    net.Conn
 	session *smb2.Session
+	// readShares holds one tree connection per share for file reads; logoff
+	// ends them, so they are only forgotten when the session closes.
+	readShares map[string]*smb2.Share
 
 	// baseCtx cancels in-flight operations when the scan is interrupted;
 	// opTimeout bounds each operation (idle limit for reads and listings).
@@ -262,6 +267,7 @@ func (c *Client) Close() error {
 
 func (c *Client) closeLocked() error {
 	var errs []error
+	c.readShares = nil
 
 	if c.session != nil {
 		ctx, cancel := cleanupContext()

@@ -1369,6 +1369,13 @@ func (f *File) seek(offset int64, whence int) (ret int64, err error) {
 	return f.offset, nil
 }
 
+// OpenStat returns the file information the server sent in its response
+// when the file was opened. It makes no request: size, times and attributes
+// are as of the open.
+func (f *File) OpenStat() os.FileInfo {
+	return f.fileStat
+}
+
 func (f *File) Stat() (os.FileInfo, error) {
 	fi, err := f.stat()
 	if err != nil {

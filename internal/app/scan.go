@@ -408,6 +408,9 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	if recorder := output.CredentialCandidateRecorder(sink); recorder != nil {
 		engine.SetCredentialCandidateSink(recorder)
 	}
+	if observer, ok := sink.(scanner.ValidationObserver); ok {
+		engine.SetValidationObserver(observer)
+	}
 	if sqliteResume != nil {
 		if err := replaySQLiteState(sink, *sqliteResume); err != nil {
 			return fmt.Errorf("rehydrate SQLite findings: %w", err)

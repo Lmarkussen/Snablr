@@ -101,6 +101,16 @@ func (e *Engine) SetCredentialCandidateSink(sink CredentialCandidateSink) {
 	}
 }
 
+// SetValidationObserver attaches the validation-mode observer once the output
+// sink exists; RunScan builds the engine before its sink. Call it before
+// scanning starts.
+func (e *Engine) SetValidationObserver(observer ValidationObserver) {
+	if e != nil {
+		e.validationSink = observer
+		e.contentScanner.observer = observer
+	}
+}
+
 func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx.Logger) *Engine {
 	opts.Workers = ResolveWorkerCount(opts.Workers)
 	if opts.SnippetBytes <= 0 {

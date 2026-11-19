@@ -2,7 +2,6 @@ package output
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -100,8 +99,8 @@ func closeMarkdownSQLiteStreaming(m *MarkdownWriter, shadow *store.SQLiteStore) 
 				_ = rows.Close()
 				return err
 			}
-			var finding scanner.Finding
-			if err := json.Unmarshal(payload, &finding); err != nil {
+			finding, err := state.payloads.decode(ctx, state.db, payload)
+			if err != nil {
 				_ = rows.Close()
 				return err
 			}

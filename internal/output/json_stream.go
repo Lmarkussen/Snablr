@@ -20,6 +20,7 @@ type jsonSQLiteState struct {
 	db       *sql.DB
 	path     string
 	rawCount int
+	payloads *reportPayloads
 }
 
 func newJSONSQLiteState() (*jsonSQLiteState, error) {
@@ -37,12 +38,12 @@ func newJSONSQLiteState() (*jsonSQLiteState, error) {
 		_ = os.Remove(path)
 		return nil, err
 	}
-	if _, err := db.Exec(`CREATE TABLE report_findings (dedup_key TEXT PRIMARY KEY, severity INTEGER NOT NULL, host TEXT NOT NULL, share TEXT NOT NULL, file_path TEXT NOT NULL, rule_id TEXT NOT NULL, payload BLOB NOT NULL); CREATE TABLE report_fingerprints (fingerprint TEXT PRIMARY KEY, payload BLOB NOT NULL); CREATE TABLE access_paths (score INTEGER NOT NULL, severity INTEGER NOT NULL, related INTEGER NOT NULL, host TEXT NOT NULL, share TEXT NOT NULL, primary_path TEXT NOT NULL, rule_id TEXT NOT NULL, payload BLOB NOT NULL)`); err != nil {
+	if _, err := db.Exec(reportEvidenceTableSQL + `; CREATE TABLE report_findings (dedup_key TEXT PRIMARY KEY, severity INTEGER NOT NULL, host TEXT NOT NULL, share TEXT NOT NULL, file_path TEXT NOT NULL, rule_id TEXT NOT NULL, payload BLOB NOT NULL); CREATE TABLE report_fingerprints (fingerprint TEXT PRIMARY KEY, payload BLOB NOT NULL); CREATE TABLE access_paths (score INTEGER NOT NULL, severity INTEGER NOT NULL, related INTEGER NOT NULL, host TEXT NOT NULL, share TEXT NOT NULL, primary_path TEXT NOT NULL, rule_id TEXT NOT NULL, payload BLOB NOT NULL)`); err != nil {
 		_ = db.Close()
 		_ = os.Remove(path)
 		return nil, err
 	}
-	return &jsonSQLiteState{db: db, path: path}, nil
+	return &jsonSQLiteState{db: db, path: path, payloads: newReportPayloads()}, nil
 }
 
 func (s *jsonSQLiteState) close() error {
@@ -62,7 +63,7 @@ func (s *jsonSQLiteState) ingest(ctx context.Context, finding scanner.Finding) e
 	}
 	s.rawCount++
 	key := reportFindingDedupKey(finding)
-	payload, err := json.Marshal(finding)
+	payload, err := s.payloads.encode(ctx, s.db, finding)
 	if err != nil {
 		return err
 	}
@@ -77,13 +78,13 @@ func (s *jsonSQLiteState) ingest(ctx context.Context, finding scanner.Finding) e
 	if err != nil {
 		return err
 	}
-	var existing scanner.Finding
-	if err := json.Unmarshal(existingPayload, &existing); err != nil {
+	existing, err := s.payloads.decode(ctx, s.db, existingPayload)
+	if err != nil {
 		return err
 	}
 	preferred := betterReportFinding(existing, finding)
 	if reportFindingDedupKey(preferred) == key {
-		payload, err = json.Marshal(preferred)
+		payload, err = s.payloads.encode(ctx, s.db, preferred)
 		if err != nil {
 			return err
 		}
@@ -117,8 +118,8 @@ func (s *jsonSQLiteState) classificationDistribution(ctx context.Context) ([]dif
 		if err := rows.Scan(&payload); err != nil {
 			return nil, err
 		}
-		var finding scanner.Finding
-		if err := json.Unmarshal(payload, &finding); err != nil {
+		finding, err := s.payloads.decode(ctx, s.db, payload)
+		if err != nil {
 			return nil, err
 		}
 		class := strings.ToLower(strings.TrimSpace(finding.TriageClass))
@@ -155,8 +156,8 @@ func (s *jsonSQLiteState) categorySummaries(ctx context.Context) ([]categorySumm
 		if err := rows.Scan(&payload); err != nil {
 			return nil, err
 		}
-		var finding scanner.Finding
-		if err := json.Unmarshal(payload, &finding); err != nil {
+		finding, err := s.payloads.decode(ctx, s.db, payload)
+		if err != nil {
 			return nil, err
 		}
 		category := strings.TrimSpace(finding.Category)
@@ -219,8 +220,8 @@ func (s *jsonSQLiteState) prepareAccessPaths(ctx context.Context) error {
 			return err
 		}
 		after = key
-		var finding scanner.Finding
-		if err := json.Unmarshal(payload, &finding); err != nil {
+		finding, err := s.payloads.decode(ctx, s.db, payload)
+		if err != nil {
 			return err
 		}
 		item, ok := classifyAccessPath(finding)
@@ -294,8 +295,8 @@ func (s *jsonSQLiteState) writeFindings(ctx context.Context, w io.Writer, pretty
 		if err := rows.Scan(&payload); err != nil {
 			return err
 		}
-		var finding scanner.Finding
-		if err := json.Unmarshal(payload, &finding); err != nil {
+		finding, err := s.payloads.decode(ctx, s.db, payload)
+		if err != nil {
 			return err
 		}
 		if !first {
@@ -425,8 +426,8 @@ func closeJSONSQLiteStreamingWithBaseline(j *JSONWriter, shadow *store.SQLiteSto
 				_ = rows.Close()
 				return err
 			}
-			var finding scanner.Finding
-			if err := json.Unmarshal(payload, &finding); err != nil {
+			finding, err := state.payloads.decode(ctx, state.db, payload)
+			if err != nil {
 				_ = rows.Close()
 				return err
 			}

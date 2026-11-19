@@ -2,8 +2,9 @@ package output
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
-	"encoding/json"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -20,6 +21,7 @@ type HTMLReportIndex struct {
 	db          *sql.DB
 	path        string
 	diffEnabled bool
+	payloads    *reportPayloads
 }
 
 type HTMLReportGroup struct {
@@ -58,7 +60,7 @@ func BuildHTMLReportIndex(ctx context.Context, iterator HTMLReportFindingIterato
 		_ = os.RemoveAll(dir)
 		return nil, err
 	}
-	index := &HTMLReportIndex{db: db, path: path}
+	index := &HTMLReportIndex{db: db, path: path, payloads: newReportPayloads()}
 	if err := index.initialize(); err != nil {
 		_ = index.Close()
 		return nil, err
@@ -75,7 +77,7 @@ func BuildHTMLReportIndex(ctx context.Context, iterator HTMLReportFindingIterato
 }
 
 func (i *HTMLReportIndex) initialize() error {
-	_, err := i.db.Exec(`
+	_, err := i.db.Exec(reportEvidenceTableSQL + `;
 CREATE TABLE observations (
   seq INTEGER PRIMARY KEY,
   group_key TEXT NOT NULL,
@@ -120,6 +122,21 @@ CREATE INDEX canonical_category_idx ON canonical(actionable, severity_rank DESC,
 	return err
 }
 
+// indexedGroupKeyMax bounds the duplicate-group keys the index stores. A key
+// built from evidence can be as long as the file the evidence came from, and
+// the index keeps each key in its table, two indexes and the canonical table.
+const indexedGroupKeyMax = 512
+
+// indexedGroupKey keeps a long key's first indexedGroupKeyMax bytes and a
+// digest of all of it, so keys stay equal exactly when the full keys are.
+func indexedGroupKey(key string) string {
+	if len(key) <= indexedGroupKeyMax {
+		return key
+	}
+	sum := sha256.Sum256([]byte(key))
+	return key[:indexedGroupKeyMax] + "|sha256:" + hex.EncodeToString(sum[:])
+}
+
 func (i *HTMLReportIndex) ingest(ctx context.Context, iterator reportFindingIterator) error {
 	tx, err := i.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -135,7 +152,7 @@ func (i *HTMLReportIndex) ingest(ctx context.Context, iterator reportFindingIter
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		payload, err := json.Marshal(finding)
+		payload, err := i.payloads.encode(ctx, tx, finding)
 		if err != nil {
 			return err
 		}
@@ -144,7 +161,7 @@ func (i *HTMLReportIndex) ingest(ctx context.Context, iterator reportFindingIter
 		if category == "" {
 			category = "uncategorized"
 		}
-		_, err = stmt.ExecContext(ctx, seq, reportDuplicateGroupKey(finding), category,
+		_, err = stmt.ExecContext(ctx, seq, indexedGroupKey(reportDuplicateGroupKey(finding)), category,
 			boolInt(finding.Actionable), boolInt(finding.Correlated), finding.ConfidenceScore,
 			severityRank(finding.Severity), len(strings.TrimSpace(finding.Context)), reportPathPreference(finding),
 			uncPath(finding), finding.Host, finding.Share, finding.FilePath, normalizedSourceLabel(finding.Source), primarySignal(finding), boolInt(finding.FromSYSVOL), boolInt(finding.FromNETLOGON), reportLocationKey(finding), findingAnchor(finding), diffFingerprintKey(finding), boolInt(isCredentialRelatedFinding(finding)),
@@ -174,7 +191,7 @@ FROM (
   SELECT o.*, row_number() OVER (
     PARTITION BY group_key
     ORDER BY actionable DESC, correlated DESC, confidence DESC, severity_rank DESC,
-      context_len DESC, path_preference DESC, length(unc_path) ASC, seq ASC
+      context_len DESC, path_preference DESC, length(unc_path) ASC, unc_path ASC, fingerprint ASC, seq ASC
   ) AS position
   FROM observations o
 )
@@ -254,7 +271,7 @@ func (i *HTMLReportIndex) ForEachGroup(ctx context.Context, primary bool, visit 
 	if visit == nil {
 		return errors.New("HTML report group visitor is nil")
 	}
-	rows, err := i.db.QueryContext(ctx, `WITH category_order AS (SELECT category,MAX(severity_rank) AS category_severity,COUNT(*) AS category_count FROM canonical WHERE actionable=? GROUP BY category) SELECT c.group_key,c.category,c.actionable,c.seq,COUNT(DISTINCT o.location_key)-1 FROM canonical c JOIN observations o ON o.group_key=c.group_key JOIN category_order co ON co.category=c.category WHERE c.actionable=? GROUP BY c.seq,c.group_key,c.category,c.actionable ORDER BY co.category_severity DESC,co.category_count DESC,c.category,c.severity_rank DESC,c.host,c.share,c.file_path`, boolInt(primary), boolInt(primary))
+	rows, err := i.db.QueryContext(ctx, `WITH category_order AS (SELECT category,MAX(severity_rank) AS category_severity,COUNT(*) AS category_count FROM canonical WHERE actionable=? GROUP BY category) SELECT c.group_key,c.category,c.actionable,c.seq,COUNT(DISTINCT o.location_key)-1 FROM canonical c JOIN observations o ON o.group_key=c.group_key JOIN category_order co ON co.category=c.category WHERE c.actionable=? GROUP BY c.seq,c.group_key,c.category,c.actionable ORDER BY co.category_severity DESC,co.category_count DESC,c.category,c.severity_rank DESC,c.host,c.share,c.file_path,c.group_key`, boolInt(primary), boolInt(primary))
 	if err != nil {
 		return err
 	}
@@ -281,8 +298,8 @@ func (i *HTMLReportIndex) GroupMetadata(ctx context.Context, groupKey string) (s
 	if err != nil {
 		return "", "", err
 	}
-	var finding scanner.Finding
-	if err := json.Unmarshal(payload, &finding); err != nil {
+	finding, err := i.payloads.decode(ctx, i.db, payload)
+	if err != nil {
 		return "", "", err
 	}
 	search := strings.TrimSpace(findingSearchText(finding, nil, "") + " " + string(paths))
@@ -366,7 +383,7 @@ func (i *HTMLReportIndex) TopAccessPaths(ctx context.Context, limit int) ([]acce
 	if limit <= 0 {
 		return nil, nil
 	}
-	rows, err := i.db.QueryContext(ctx, `SELECT o.payload FROM observations o JOIN canonical c ON c.seq=o.seq WHERE o.correlated=1 ORDER BY o.severity_rank DESC,o.seq`)
+	rows, err := i.db.QueryContext(ctx, `SELECT o.payload FROM observations o JOIN canonical c ON c.seq=o.seq WHERE o.correlated=1 ORDER BY o.severity_rank DESC,o.unc_path,o.fingerprint,o.seq`)
 	if err != nil {
 		return nil, err
 	}
@@ -377,8 +394,8 @@ func (i *HTMLReportIndex) TopAccessPaths(ctx context.Context, limit int) ([]acce
 		if err := rows.Scan(&payload); err != nil {
 			return nil, err
 		}
-		var finding scanner.Finding
-		if err := json.Unmarshal(payload, &finding); err != nil {
+		finding, err := i.payloads.decode(ctx, i.db, payload)
+		if err != nil {
 			return nil, err
 		}
 		item, ok := classifyAccessPath(finding)
@@ -429,8 +446,8 @@ func (i *HTMLReportIndex) Canonical(ctx context.Context, groupKey string) (scann
 	if err != nil {
 		return scanner.Finding{}, err
 	}
-	var finding scanner.Finding
-	if err := json.Unmarshal(payload, &finding); err != nil {
+	finding, err := i.payloads.decode(ctx, i.db, payload)
+	if err != nil {
 		return scanner.Finding{}, fmt.Errorf("decode canonical HTML finding: %w", err)
 	}
 	return finding, nil
@@ -444,14 +461,18 @@ func (i *HTMLReportIndex) ForEachDuplicate(ctx context.Context, groupKey string,
 	// Only row numbers go through the grouping and sort; a payload can be a
 	// whole file, and sorting payloads held every duplicate's in memory at
 	// once. Each selected row's payload is read afterwards.
-	rows, err := i.db.QueryContext(ctx, `SELECT o.seq FROM observations o JOIN canonical c ON c.group_key=o.group_key WHERE o.group_key=? AND o.seq<>c.seq GROUP BY o.location_key ORDER BY o.unc_path,o.seq`, groupKey)
+	// Each location is represented by its observation with the lowest
+	// fingerprint, so the choice does not depend on the order findings were
+	// stored in.
+	rows, err := i.db.QueryContext(ctx, `SELECT o.seq, MIN(o.fingerprint) FROM observations o JOIN canonical c ON c.group_key=o.group_key WHERE o.group_key=? AND o.seq<>c.seq GROUP BY o.location_key ORDER BY o.unc_path,o.location_key`, groupKey)
 	if err != nil {
 		return err
 	}
 	var seqs []int64
 	for rows.Next() {
 		var seq int64
-		if err := rows.Scan(&seq); err != nil {
+		var fingerprint string
+		if err := rows.Scan(&seq, &fingerprint); err != nil {
 			_ = rows.Close()
 			return err
 		}
@@ -470,8 +491,8 @@ func (i *HTMLReportIndex) ForEachDuplicate(ctx context.Context, groupKey string,
 		if err := i.db.QueryRowContext(ctx, `SELECT payload FROM observations WHERE seq=?`, seq).Scan(&payload); err != nil {
 			return err
 		}
-		var finding scanner.Finding
-		if err := json.Unmarshal(payload, &finding); err != nil {
+		finding, err := i.payloads.decode(ctx, i.db, payload)
+		if err != nil {
 			return err
 		}
 		if err := visit(finding); err != nil {
@@ -503,7 +524,7 @@ JOIN observations canonical_observation ON canonical_observation.seq=canonical_g
 WHERE candidate.credential_related=1 AND lower(trim(candidate.host))=lower(trim(?))
   AND lower(trim(candidate.share))=lower(trim(?))
   AND replace(lower(trim(candidate.file_path)),'\\','/')=replace(lower(trim(?)),'\\','/')
-ORDER BY candidate.seq LIMIT 1`, host, share, path).Scan(&anchor)
+ORDER BY candidate.unc_path, candidate.fingerprint, candidate.seq LIMIT 1`, host, share, path).Scan(&anchor)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}

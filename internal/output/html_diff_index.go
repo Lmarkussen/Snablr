@@ -89,7 +89,7 @@ CREATE INDEX html_diff_status_order_idx ON html_diff(status, sort_key);`); err !
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		payload, err := json.Marshal(finding)
+		payload, err := i.payloads.encode(ctx, tx, finding)
 		if err != nil {
 			return err
 		}
@@ -138,15 +138,15 @@ WHERE o.fingerprint > ? ORDER BY o.fingerprint LIMIT 1`, lastKey).Scan(&key, &cu
 			return err
 		}
 		lastKey = key
-		var current scanner.Finding
-		if err := json.Unmarshal(currentPayload, &current); err != nil {
+		current, err := i.payloads.decode(ctx, i.db, currentPayload)
+		if err != nil {
 			return err
 		}
 		status := diff.StatusNew
 		var fields []string
 		if baselineKey.Valid {
-			var previous scanner.Finding
-			if err := json.Unmarshal(baselinePayload, &previous); err != nil {
+			previous, err := i.payloads.decode(ctx, i.db, baselinePayload)
+			if err != nil {
 				return err
 			}
 			result := diff.Compare([]scanner.Finding{previous}, []scanner.Finding{current})
@@ -268,13 +268,14 @@ func (i *HTMLReportIndex) streamChanged(ctx context.Context) (<-chan diff.Change
 				close(errs)
 				return
 			}
-			var previous, current scanner.Finding
-			if err := json.Unmarshal(previousPayload, &previous); err != nil {
+			previous, err := i.payloads.decode(ctx, i.db, previousPayload)
+			if err != nil {
 				errs <- err
 				close(errs)
 				return
 			}
-			if err := json.Unmarshal(currentPayload, &current); err != nil {
+			current, err := i.payloads.decode(ctx, i.db, currentPayload)
+			if err != nil {
 				errs <- err
 				close(errs)
 				return
@@ -324,8 +325,8 @@ func (i *HTMLReportIndex) streamRemoved(ctx context.Context) (<-chan scanner.Fin
 				close(errs)
 				return
 			}
-			var finding scanner.Finding
-			if err := json.Unmarshal(payload, &finding); err != nil {
+			finding, err := i.payloads.decode(ctx, i.db, payload)
+			if err != nil {
 				errs <- err
 				close(errs)
 				return

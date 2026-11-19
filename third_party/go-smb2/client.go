@@ -912,7 +912,7 @@ func (fs *Share) createFile(name string, req *CreateRequest, followSymlinks bool
 	req.CreditCharge, _, err = fs.loanCredit(0)
 	defer func() {
 		if err != nil {
-			fs.chargeCredit(req.CreditCharge)
+			fs.refundCredit(req.CreditCharge, err)
 		}
 	}()
 	if err != nil {
@@ -941,7 +941,7 @@ func (fs *Share) createFileRec(name string, req *CreateRequest) (f *File, err er
 		req.CreditCharge, _, err = fs.loanCredit(0)
 		defer func() {
 			if err != nil {
-				fs.chargeCredit(req.CreditCharge)
+				fs.refundCredit(req.CreditCharge, err)
 			}
 		}()
 		if err != nil {
@@ -1057,6 +1057,10 @@ func (f *File) close() error {
 	}
 
 	req.CreditCharge = 1
+
+	if err := f.fs.loanFixedCredit(f.fs.ctx); err != nil {
+		return err
+	}
 
 	req.FileId = f.fd
 
@@ -1227,7 +1231,7 @@ func (f *File) readAtChunk(n int, off int64) (bs []byte, isEOF bool, err error) 
 	creditCharge, m, err := f.fs.loanCredit(n)
 	defer func() {
 		if err != nil {
-			f.fs.chargeCredit(creditCharge)
+			f.fs.refundCredit(creditCharge, err)
 		}
 	}()
 	if err != nil {
@@ -1497,7 +1501,7 @@ func (f *File) Sync() (err error) {
 	req.CreditCharge, _, err = f.fs.loanCredit(0)
 	defer func() {
 		if err != nil {
-			f.fs.chargeCredit(req.CreditCharge)
+			f.fs.refundCredit(req.CreditCharge, err)
 		}
 	}()
 	if err != nil {
@@ -1664,7 +1668,7 @@ func (f *File) writeAtChunk(b []byte, off int64) (n int, err error) {
 	creditCharge, m, err := f.fs.loanCredit(len(b))
 	defer func() {
 		if err != nil {
-			f.fs.chargeCredit(creditCharge)
+			f.fs.refundCredit(creditCharge, err)
 		}
 	}()
 	if err != nil {
@@ -1908,7 +1912,7 @@ func (f *File) ioctl(req *IoctlRequest) (output []byte, err error) {
 	req.CreditCharge, _, err = f.fs.loanCredit(payloadSize)
 	defer func() {
 		if err != nil {
-			f.fs.chargeCredit(req.CreditCharge)
+			f.fs.refundCredit(req.CreditCharge, err)
 		}
 	}()
 	if err != nil {
@@ -1934,6 +1938,17 @@ func (f *File) ioctl(req *IoctlRequest) (output []byte, err error) {
 	return r.Output(), nil
 }
 
+// outputLengthForCredit limits a response buffer to what the loaned credits
+// cover. A loan can be partial when other requests hold credits; asking for a
+// larger response than the credit charge covers is a protocol violation that
+// servers answer by dropping the connection.
+func outputLengthForCredit(outputLength uint32, grantedPayloadSize int) uint32 {
+	if grantedPayloadSize > 0 && uint32(grantedPayloadSize) < outputLength {
+		return uint32(grantedPayloadSize)
+	}
+	return outputLength
+}
+
 func (f *File) readdir(pattern string) (fi []os.FileInfo, err error) {
 	req := &QueryDirectoryRequest{
 		FileInfoClass:      FileDirectoryInformation,
@@ -1949,15 +1964,17 @@ func (f *File) readdir(pattern string) (fi []os.FileInfo, err error) {
 		return nil, &InternalError{fmt.Sprintf("payload size %d exceeds max transact size %d", payloadSize, f.maxTransactSize())}
 	}
 
-	req.CreditCharge, _, err = f.fs.loanCredit(payloadSize)
+	var grantedPayloadSize int
+	req.CreditCharge, grantedPayloadSize, err = f.fs.loanCredit(payloadSize)
 	defer func() {
 		if err != nil {
-			f.fs.chargeCredit(req.CreditCharge)
+			f.fs.refundCredit(req.CreditCharge, err)
 		}
 	}()
 	if err != nil {
 		return nil, err
 	}
+	req.OutputBufferLength = outputLengthForCredit(req.OutputBufferLength, grantedPayloadSize)
 
 	req.FileId = f.fd
 
@@ -2013,15 +2030,17 @@ func (f *File) queryInfo(req *QueryInfoRequest) (infoBytes []byte, err error) {
 		return nil, &InternalError{fmt.Sprintf("payload size %d exceeds max transact size %d", payloadSize, f.maxTransactSize())}
 	}
 
-	req.CreditCharge, _, err = f.fs.loanCredit(payloadSize)
+	var grantedPayloadSize int
+	req.CreditCharge, grantedPayloadSize, err = f.fs.loanCredit(payloadSize)
 	defer func() {
 		if err != nil {
-			f.fs.chargeCredit(req.CreditCharge)
+			f.fs.refundCredit(req.CreditCharge, err)
 		}
 	}()
 	if err != nil {
 		return nil, err
 	}
+	req.OutputBufferLength = outputLengthForCredit(req.OutputBufferLength, grantedPayloadSize)
 
 	req.FileId = f.fd
 
@@ -2048,7 +2067,7 @@ func (f *File) setInfo(req *SetInfoRequest) (err error) {
 	req.CreditCharge, _, err = f.fs.loanCredit(payloadSize)
 	defer func() {
 		if err != nil {
-			f.fs.chargeCredit(req.CreditCharge)
+			f.fs.refundCredit(req.CreditCharge, err)
 		}
 	}()
 	if err != nil {

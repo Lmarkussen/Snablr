@@ -45,6 +45,9 @@ func sessionSetup(conn *conn, i Initiator, ctx context.Context) (*session, error
 	var s *session
 	for round := 0; round < sessionSetupMaxRounds; round++ {
 		var rr *requestResponse
+		if err = conn.loanFixedCredit(ctx); err != nil {
+			return nil, err
+		}
 		if s == nil {
 			rr, err = conn.send(req, ctx)
 		} else {
@@ -162,6 +165,9 @@ func sessionSetup(conn *conn, i Initiator, ctx context.Context) (*session, error
 
 		// The completed mechanism's key is reduced to the 16-byte SMB
 		// Session.SessionKey before SMB 3.1.1 signing-key derivation.
+		if err = conn.loanFixedCredit(ctx); err != nil {
+			return nil, err
+		}
 		rr, err = s.send(req, ctx)
 		if err != nil {
 			return nil, err
@@ -394,6 +400,9 @@ func (s *session) logoff(ctx context.Context) error {
 
 	req.CreditCharge = 1
 
+	if err := s.loanFixedCredit(ctx); err != nil {
+		return err
+	}
 	_, err := s.sendRecv(SMB2_LOGOFF, req, ctx)
 	if err != nil {
 		return err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha512"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -109,6 +110,9 @@ retry:
 
 	req.CreditCharge = 1
 
+	if err := conn.loanFixedCredit(ctx); err != nil {
+		return nil, err
+	}
 	rr, err := conn.send(req, ctx)
 	if err != nil {
 		return nil, err
@@ -360,6 +364,42 @@ func (conn *conn) loanCredit(payloadSize int, ctx context.Context) (creditCharge
 
 func (conn *conn) chargeCredit(creditCharge uint16) {
 	conn.account.charge(creditCharge, creditCharge)
+}
+
+// loanFixedCredit takes the one credit spent by a request whose credit
+// charge is fixed at one (negotiate, session setup, tree connect and
+// disconnect, close, logoff). These requests used to be sent without taking it from
+// the balance while their responses still granted credits, so the balance
+// grew by one per request beyond what the server granted. Once concurrent
+// requests used the whole balance, the client exceeded the server's credit
+// window and the server dropped the connection.
+func (conn *conn) loanFixedCredit(ctx context.Context) error {
+	_, _, err := conn.account.loan(1, ctx)
+	return err
+}
+
+// answeredByServer reports whether a request error came from a response the
+// server sent: an error status (accept maps name collision, not found and
+// access denied to os.ErrExist, os.ErrNotExist and os.ErrPermission) or a
+// malformed response.
+func answeredByServer(err error) bool {
+	var responseErr *ResponseError
+	var invalidErr *InvalidResponseError
+	return errors.As(err, &responseErr) || errors.As(err, &invalidErr) ||
+		errors.Is(err, os.ErrExist) || errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission)
+}
+
+// refundCredit returns the credits loaned for a request that failed without a
+// response. When the server answered, even with an error status (for example
+// STATUS_NO_MORE_FILES at the end of every directory listing) or a malformed
+// response, the response already granted credits; returning the loan as well
+// counted credits the server never granted, and concurrent requests then
+// exceeded the server's credit window and the server dropped the connection.
+func (conn *conn) refundCredit(creditCharge uint16, err error) {
+	if answeredByServer(err) {
+		return
+	}
+	conn.chargeCredit(creditCharge)
 }
 
 func (conn *conn) send(req Packet, ctx context.Context) (rr *requestResponse, err error) {

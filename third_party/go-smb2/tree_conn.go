@@ -26,6 +26,9 @@ func treeConnect(s *session, path string, flags uint16, ctx context.Context) (*t
 
 	req.CreditCharge = 1
 
+	if err := s.loanFixedCredit(ctx); err != nil {
+		return nil, err
+	}
 	rr, err := s.send(req, ctx)
 	if err != nil {
 		return nil, err
@@ -64,6 +67,9 @@ func (tc *treeConn) disconnect(ctx context.Context) error {
 
 	req.CreditCharge = 1
 
+	if err := tc.loanFixedCredit(ctx); err != nil {
+		return err
+	}
 	res, err := tc.sendRecv(SMB2_TREE_DISCONNECT, req, ctx)
 	if err != nil {
 		return err

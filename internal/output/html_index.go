@@ -441,17 +441,33 @@ func (i *HTMLReportIndex) ForEachDuplicate(ctx context.Context, groupKey string,
 	if visit == nil {
 		return errors.New("HTML duplicate visitor is nil")
 	}
-	rows, err := i.db.QueryContext(ctx, `SELECT o.payload FROM observations o JOIN canonical c ON c.group_key=o.group_key WHERE o.group_key=? AND o.seq<>c.seq GROUP BY o.location_key ORDER BY o.unc_path,o.seq`, groupKey)
+	// Only row numbers go through the grouping and sort; a payload can be a
+	// whole file, and sorting payloads held every duplicate's in memory at
+	// once. Each selected row's payload is read afterwards.
+	rows, err := i.db.QueryContext(ctx, `SELECT o.seq FROM observations o JOIN canonical c ON c.group_key=o.group_key WHERE o.group_key=? AND o.seq<>c.seq GROUP BY o.location_key ORDER BY o.unc_path,o.seq`, groupKey)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	var seqs []int64
 	for rows.Next() {
+		var seq int64
+		if err := rows.Scan(&seq); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		seqs = append(seqs, seq)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	_ = rows.Close()
+	for _, seq := range seqs {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		var payload []byte
-		if err := rows.Scan(&payload); err != nil {
+		if err := i.db.QueryRowContext(ctx, `SELECT payload FROM observations WHERE seq=?`, seq).Scan(&payload); err != nil {
 			return err
 		}
 		var finding scanner.Finding
@@ -462,7 +478,7 @@ func (i *HTMLReportIndex) ForEachDuplicate(ctx context.Context, groupKey string,
 			return err
 		}
 	}
-	return rows.Err()
+	return nil
 }
 
 // CredentialAnchor resolves the stable HTML anchor to its persisted group.

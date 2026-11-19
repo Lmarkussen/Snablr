@@ -1,6 +1,8 @@
 package output
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -10,6 +12,13 @@ import (
 )
 
 const adCorrelationRuleID = "correlation.ad.ntds_system"
+
+// reportDedupEvidenceMax is the longest evidence a deduplication key holds
+// verbatim. Longer evidence, such as a whole file, is keyed by its first
+// reportDedupEvidenceMax bytes and a digest of all of it, so that a key is not
+// as large as the file it came from. Keys still sort as the evidence does
+// unless two evidences share that prefix.
+const reportDedupEvidenceMax = 4096
 
 func augmentFindingsForReporting(findings []scanner.Finding) []scanner.Finding {
 	if len(findings) == 0 {
@@ -89,6 +98,10 @@ func reportFindingDedupKey(f scanner.Finding) string {
 		f.Match,
 		f.Snippet,
 	)))
+	if len(evidence) > reportDedupEvidenceMax {
+		sum := sha256.Sum256([]byte(evidence))
+		evidence = evidence[:reportDedupEvidenceMax] + "|sha256:" + hex.EncodeToString(sum[:])
+	}
 	parts := []string{
 		strings.ToLower(strings.TrimSpace(f.RuleID)),
 		strings.ToLower(strings.TrimSpace(f.Category)),

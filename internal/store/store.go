@@ -74,6 +74,7 @@ type SQLiteStore struct {
 	firstErr         error
 	committedBatches int
 	failAfterBatches int
+	pending          *writeBudget
 }
 
 func (s *SQLiteStore) ScanID() string {
@@ -86,6 +87,8 @@ func (s *SQLiteStore) ScanID() string {
 type event struct {
 	apply   func(*sql.Tx) error
 	barrier chan error
+	// size is the payload bytes the event holds against the write budget.
+	size int64
 }
 
 func Open(path string, options Options) (*SQLiteStore, error) {
@@ -122,7 +125,7 @@ func Open(path string, options Options) (*SQLiteStore, error) {
 		return cleanup(fmt.Errorf("initialize sqlite state store schema: %w", err))
 	}
 	_ = os.Chmod(path, 0o600)
-	s := &SQLiteStore{db: db, path: path, scanID: options.ScanID, scanDomain: options.ScanDomain, queue: make(chan event, options.QueueSize), batch: options.BatchSize, interval: options.FlushEvery, done: make(chan struct{}), healthy: true, failAfterBatches: options.FailAfterBatches}
+	s := &SQLiteStore{db: db, path: path, scanID: options.ScanID, scanDomain: options.ScanDomain, queue: make(chan event, options.QueueSize), batch: options.BatchSize, interval: options.FlushEvery, done: make(chan struct{}), healthy: true, failAfterBatches: options.FailAfterBatches, pending: newWriteBudget(pendingWriteBytes)}
 	go s.run()
 	if err := s.BeginScan(options.ScanID, options.SnablrVersion, options.Semantics, time.Now().UTC()); err != nil {
 		_ = s.Close()
@@ -305,6 +308,7 @@ func (s *SQLiteStore) run() {
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 	batch := make([]event, 0, s.batch)
+	var batchBytes int64
 	flush := func() {
 		if len(batch) == 0 {
 			return
@@ -312,7 +316,9 @@ func (s *SQLiteStore) run() {
 		if err := s.commit(batch); err != nil {
 			s.markUnhealthy(err)
 		}
+		s.pending.release(batchBytes)
 		batch = batch[:0]
+		batchBytes = 0
 	}
 	for {
 		select {
@@ -327,10 +333,12 @@ func (s *SQLiteStore) run() {
 				continue
 			}
 			if s.healthError() != nil {
+				s.pending.release(e.size)
 				continue
 			}
 			batch = append(batch, e)
-			if len(batch) >= s.batch {
+			batchBytes += e.size
+			if len(batch) >= s.batch || batchBytes >= pendingWriteBytes/2 {
 				flush()
 			}
 		case <-ticker.C:
@@ -361,15 +369,23 @@ func (s *SQLiteStore) commit(events []event) error {
 }
 
 func (s *SQLiteStore) enqueue(apply func(*sql.Tx) error) error {
+	return s.enqueueSized(0, apply)
+}
+
+// enqueueSized queues a write holding size payload bytes, waiting first while
+// the payloads already pending reach the write budget.
+func (s *SQLiteStore) enqueueSized(size int64, apply func(*sql.Tx) error) error {
 	if err := s.healthError(); err != nil {
 		return err
 	}
+	s.pending.acquire(size)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
+		s.pending.release(size)
 		return errors.New("sqlite state store is closed")
 	}
-	s.queue <- event{apply: apply}
+	s.queue <- event{apply: apply, size: size}
 	return nil
 }
 
@@ -553,7 +569,7 @@ func payloadFingerprint(payload []byte) string {
 func (s *SQLiteStore) RecordFinding(f scanner.Finding) error {
 	payload, _ := json.Marshal(f)
 	fingerprint := payloadFingerprint(payload)
-	return s.enqueue(func(tx *sql.Tx) error {
+	return s.enqueueSized(int64(len(payload)), func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO findings(scan_id,fingerprint,host,share,path,rule_id,category,payload) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(scan_id,fingerprint) DO UPDATE SET payload=excluded.payload`, s.scanID, fingerprint, f.Host, f.Share, f.FilePath, f.RuleID, f.Category, payload)
 		return err
 	})
@@ -568,7 +584,7 @@ func (s *SQLiteStore) RecordDerivedFinding(correlationKey string, f scanner.Find
 	if err != nil {
 		return err
 	}
-	return s.enqueue(func(tx *sql.Tx) error {
+	return s.enqueueSized(int64(len(payload)), func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO derived_findings(scan_id,correlation_key,payload) VALUES(?,?,?) ON CONFLICT(scan_id,correlation_key) DO UPDATE SET payload=excluded.payload`, s.scanID, correlationKey, payload)
 		return err
 	})
@@ -589,6 +605,7 @@ func (s *SQLiteStore) IterateDerivedFindings(ctx context.Context, batchSize int,
 		return err
 	}
 	var after int64
+	var sharer evidenceSharer
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -599,6 +616,7 @@ func (s *SQLiteStore) IterateDerivedFindings(ctx context.Context, batchSize int,
 		}
 		batch := make([]scanner.Finding, 0, batchSize)
 		var last int64
+		batchBytes := 0
 		for rows.Next() {
 			var id int64
 			var payload []byte
@@ -611,8 +629,13 @@ func (s *SQLiteStore) IterateDerivedFindings(ctx context.Context, batchSize int,
 				_ = rows.Close()
 				return fmt.Errorf("decode derived finding %d: %w", id, err)
 			}
+			sharer.finding(&finding)
 			batch = append(batch, finding)
 			last = id
+			batchBytes += len(payload)
+			if batchBytes >= readBatchBytes {
+				break
+			}
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
@@ -680,7 +703,7 @@ func (s *SQLiteStore) RecordCorrelationState(family, groupKey, slot string, prio
 	if err != nil {
 		return err
 	}
-	return s.enqueue(func(tx *sql.Tx) error {
+	return s.enqueueSized(int64(len(payload)), func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO correlation_state(scan_id,family,group_key,slot,priority,severity_rank,file_path,payload) VALUES(?,?,?,?,?,?,?,?)`, s.scanID, family, groupKey, slot, priority, severityRank, filePath, payload)
 		return err
 	})
@@ -748,6 +771,7 @@ func (s *SQLiteStore) IterateFindings(ctx context.Context, batchSize int, visit 
 		return err
 	}
 	var after int64
+	var sharer evidenceSharer
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -758,6 +782,7 @@ func (s *SQLiteStore) IterateFindings(ctx context.Context, batchSize int, visit 
 		}
 		batch := make([]scanner.Finding, 0, batchSize)
 		var last int64
+		batchBytes := 0
 		for rows.Next() {
 			var id int64
 			var payload []byte
@@ -770,8 +795,13 @@ func (s *SQLiteStore) IterateFindings(ctx context.Context, batchSize int, visit 
 				_ = rows.Close()
 				return fmt.Errorf("decode persisted finding %d: %w", id, err)
 			}
+			sharer.finding(&finding)
 			batch = append(batch, finding)
 			last = id
+			batchBytes += len(payload)
+			if batchBytes >= readBatchBytes {
+				break
+			}
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
@@ -790,7 +820,7 @@ func (s *SQLiteStore) IterateFindings(ctx context.Context, batchSize int, visit 
 func (s *SQLiteStore) RecordCredential(c credentialanalysis.Candidate) error {
 	payload, _ := credentialPayload(c)
 	key := fmt.Sprintf("%s|%s|%s|%s", c.CredentialType, c.Identity, c.Path, c.Value)
-	return s.enqueue(func(tx *sql.Tx) error {
+	return s.enqueueSized(int64(len(payload)), func(tx *sql.Tx) error {
 		if _, err := tx.Exec(`INSERT INTO credentials(scan_id,credential_key,credential_type,identity,value,payload) VALUES(?,?,?,?,?,?) ON CONFLICT(scan_id,credential_key) DO UPDATE SET payload=excluded.payload,value=excluded.value`, s.scanID, key, c.CredentialType, c.Identity, c.Value, payload); err != nil {
 			return err
 		}
@@ -905,7 +935,7 @@ func credentialPayload(c credentialanalysis.Candidate) ([]byte, error) {
 }
 func (s *SQLiteStore) RecordCorrelation(key string, payload any) error {
 	data, _ := json.Marshal(payload)
-	return s.enqueue(func(tx *sql.Tx) error {
+	return s.enqueueSized(int64(len(data)), func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO correlations(scan_id,correlation_key,payload) VALUES(?,?,?) ON CONFLICT(scan_id,correlation_key) DO UPDATE SET payload=excluded.payload`, s.scanID, key, data)
 		return err
 	})

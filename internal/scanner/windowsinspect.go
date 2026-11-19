@@ -22,8 +22,6 @@ func findingsFromWindowsMatches(meta FileMetadata, matches []windowsinspect.Matc
 			MatchedTextRedacted: match.MatchedText, Snippet: match.Snippet, Context: match.Context,
 		})
 		finding.ObservationID = sourceScopedWindowsObservationID(meta, match.ID, match.ObservationKey)
-		finding.TriageClass = "confirmed"
-		finding.Actionable = false
 		finding.Tags = append(finding.Tags, "windows-artifact")
 		findings = append(findings, finding)
 	}

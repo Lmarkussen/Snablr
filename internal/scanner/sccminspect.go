@@ -19,8 +19,6 @@ func findingsFromSCCMMatches(meta FileMetadata, matches []sccminspect.Match) []F
 	for _, match := range matches {
 		finding := newFinding(ruleFromSCCMMatch(match), meta, findingEvidence{SignalType: match.SignalType, Match: match.Match, MatchedText: match.MatchedText, MatchedTextRedacted: match.MatchedText, Snippet: match.Snippet, Context: match.Context})
 		finding.ObservationID = sourceScopedSCCMObservationID(meta, match.ID, match.ObservationKey)
-		finding.TriageClass = "review"
-		finding.Actionable = false
 		finding.Tags = append(finding.Tags, "sccm-artifact")
 		findings = append(findings, finding)
 	}

@@ -24,6 +24,11 @@ type reportFindingIterator = HTMLReportFindingIterator
 
 var shadowSinks sync.Map
 
+// shadowWriteCovered holds sinks inside a MultiWriter. The MultiWriter
+// persists each finding and credential once; its children keep read access to
+// the store for reports and search but must not write every record again.
+var shadowWriteCovered sync.Map
+
 func AttachSQLiteStore(sink scanner.FindingSink, shadow *store.SQLiteStore) {
 	if sink == nil || shadow == nil {
 		return
@@ -38,6 +43,9 @@ func AttachSQLiteStore(sink scanner.FindingSink, shadow *store.SQLiteStore) {
 }
 
 func shadowFinding(sink scanner.FindingSink, finding scanner.Finding) {
+	if _, covered := shadowWriteCovered.Load(sink); covered {
+		return
+	}
 	if value, ok := shadowSinks.Load(sink); ok {
 		_ = value.(*store.SQLiteStore).RecordFinding(finding)
 	}
@@ -129,6 +137,9 @@ func persistedReportIteratorContext(ctx context.Context, shadow *store.SQLiteSto
 }
 
 func shadowCredential(sink scanner.FindingSink, candidate credentialanalysis.Candidate) {
+	if _, covered := shadowWriteCovered.Load(sink); covered {
+		return
+	}
 	if value, ok := shadowSinks.Load(sink); ok {
 		_ = value.(*store.SQLiteStore).RecordCredential(candidate)
 	}

@@ -283,6 +283,7 @@ func (w *MultiWriter) AttachSQLiteStore(shadow *store.SQLiteStore) {
 	w.mu.Unlock()
 	for _, sink := range sinks {
 		AttachSQLiteStore(sink, shadow)
+		shadowWriteCovered.Store(sink, struct{}{})
 	}
 }
 

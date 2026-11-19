@@ -15,7 +15,8 @@ func harvestSCCMFields(fields map[string]string, add func(Candidate), basis stri
 	if len(fields) == 0 {
 		return
 	}
-	for key, value := range fields {
+	for _, key := range sortedKeys(fields) {
+		value := fields[key]
 		key = normalizeKey(key)
 		accountKey, ok := sccmPasswordAccounts[key]
 		if !ok || strings.TrimSpace(value) == "" {

@@ -460,10 +460,24 @@ func logicalOrigin(value string) string {
 // one. Confirmed outranks Review, the strongest validation basis is kept, all
 // evidence/provenance is retained, and non-empty identity/domain metadata is
 // never discarded.
+func candidateLocationKey(candidate Candidate) string {
+	return strings.Join([]string{
+		strings.ToLower(strings.TrimSpace(candidate.Host)),
+		strings.ToLower(strings.TrimSpace(candidate.Share)),
+		strings.ToLower(strings.TrimSpace(candidate.Path)),
+		strings.ToLower(strings.TrimSpace(candidate.Container)),
+	}, "\x00")
+}
+
 func mergeLogicalCredential(existing, incoming Candidate) Candidate {
 	strong := existing
 	weak := incoming
 	if existing.Verification != Confirmed && incoming.Verification == Confirmed {
+		strong, weak = incoming, existing
+	} else if (existing.Verification == Confirmed) == (incoming.Verification == Confirmed) && candidateLocationKey(incoming) < candidateLocationKey(existing) {
+		// Equally strong records keep the lowest location as the primary
+		// one, so the merged record does not depend on the order records
+		// arrive in.
 		strong, weak = incoming, existing
 	}
 

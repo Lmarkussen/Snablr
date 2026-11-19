@@ -321,8 +321,8 @@ func harvestStructuredAssignments(text string, add func(Candidate), toml bool) {
 	fields := make(map[string]string)
 	propertyScopes := make(map[string]map[string]string)
 	flushProperties := func() {
-		for _, scoped := range propertyScopes {
-			flush(scoped)
+		for _, scope := range sortedKeys(propertyScopes) {
+			flush(propertyScopes[scope])
 		}
 	}
 	for _, raw := range strings.Split(text, "\n") {
@@ -555,7 +555,8 @@ func isLocalizationResource(value any) bool {
 func collectStringEntries(value any, out *[][2]string) {
 	switch object := value.(type) {
 	case map[string]any:
-		for key, raw := range object {
+		for _, key := range sortedKeys(object) {
+			raw := object[key]
 			if text, ok := raw.(string); ok {
 				*out = append(*out, [2]string{normalizeKey(key), strings.TrimSpace(text)})
 				continue
@@ -598,14 +599,15 @@ func harvestJSON(value any, add func(Candidate)) {
 	switch object := value.(type) {
 	case map[string]any:
 		fields := make(map[string]string)
-		for key, raw := range object {
-			if text, ok := raw.(string); ok {
+		keys := sortedKeys(object)
+		for _, key := range keys {
+			if text, ok := object[key].(string); ok {
 				fields[normalizeKey(key)] = strings.TrimSpace(text)
 			}
 		}
 		harvestFields(fields, add, "structured JSON object")
-		for _, raw := range object {
-			harvestJSON(raw, add)
+		for _, key := range keys {
+			harvestJSON(object[key], add)
 		}
 	case []any:
 		for _, raw := range object {
@@ -1076,7 +1078,8 @@ func harvestLines(text string, add func(Candidate)) {
 			add(Candidate{Verification: Confirmed, CredentialType: "connection_string", Value: value, ValidationBasis: "structured_connection_string"})
 		}
 	}
-	for section, fields := range sections {
+	for _, section := range sortedKeys(sections) {
+		fields := sections[section]
 		basis := "structured configuration section"
 		if section == "" {
 			basis = "structured configuration record"
@@ -1091,7 +1094,8 @@ func harvestLines(text string, add func(Candidate)) {
 	// username at the start of a large document from being paired with a
 	// distant password. Environment-style prefixes provide their own scope.
 	prefixes := map[string]map[string]string{}
-	for key, value := range sections[""] {
+	for _, key := range sortedKeys(sections[""]) {
+		value := sections[""][key]
 		if _, sccmField := sccmPasswordAccounts[key]; sccmField {
 			continue
 		}
@@ -1123,14 +1127,15 @@ func harvestLines(text string, add func(Candidate)) {
 			}
 		}
 	}
-	for _, fields := range prefixes {
-		harvestFields(fields, add, "structured environment record")
+	for _, prefix := range sortedKeys(prefixes) {
+		harvestFields(prefixes[prefix], add, "structured environment record")
 	}
 }
 
 func harvestScopedFields(fields map[string]string, add func(Candidate), basis string) {
 	scopes := make(map[string]map[string]string)
-	for key, value := range fields {
+	for _, key := range sortedKeys(fields) {
+		value := fields[key]
 		scope := ""
 		field := key
 		switch key {
@@ -1169,7 +1174,8 @@ func harvestScopedFields(fields map[string]string, add func(Candidate), basis st
 	// when there is exactly one explicit companion scope and the fields form an
 	// identity/password pair. Multiple explicit scopes remain isolated.
 	if base, ok := scopes[""]; ok && len(scopes) == 2 {
-		for scope, scoped := range scopes {
+		for _, scope := range sortedKeys(scopes) {
+			scoped := scopes[scope]
 			if scope == "" || !hasFieldRole(base, FieldRoleIdentity) || !hasFieldRole(scoped, FieldRolePassword) {
 				continue
 			}
@@ -1181,8 +1187,8 @@ func harvestScopedFields(fields map[string]string, add func(Candidate), basis st
 			break
 		}
 	}
-	for _, scoped := range scopes {
-		harvestFields(scoped, add, basis)
+	for _, scope := range sortedKeys(scopes) {
+		harvestFields(scopes[scope], add, basis)
 	}
 }
 
@@ -1386,7 +1392,8 @@ func harvestFieldsMode(fields map[string]string, add func(Candidate), basis stri
 	identityPlaceholder := IsPlaceholderIdentity(identity)
 	strongAPI := (fields["access_key_id"] != "" || fields["access_key"] != "") && (fields["secret_access_key"] != "" || fields["secret_key"] != "")
 	strongClient := fields["client_id"] != "" && fields["client_secret"] != ""
-	for key, value := range fields {
+	for _, key := range sortedKeys(fields) {
+		value := fields[key]
 		if _, sccmField := sccmPasswordAccounts[key]; sccmField {
 			continue
 		}
@@ -1472,7 +1479,8 @@ func harvestNTHashFields(fields map[string]string, add func(Candidate), basis st
 	if !meaningfulHashIdentity(identity) {
 		return
 	}
-	for key, value := range fields {
+	for _, key := range sortedKeys(fields) {
+		value := fields[key]
 		if _, ok := ntHashFieldNames[normalizeKey(key)]; !ok || !validHexHash(value) {
 			continue
 		}
@@ -1663,6 +1671,18 @@ func keyTokens(key string) []string {
 		}
 	}
 	return out
+}
+
+// sortedKeys returns the keys of m in order. Harvesting walks maps through it
+// so that candidates, and the finding that names one of them, come out the
+// same on every run.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func fieldIdentity(fields map[string]string) string {

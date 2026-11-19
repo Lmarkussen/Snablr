@@ -142,6 +142,13 @@ func (c *Client) SetMaxReadSize(limit int64) {
 	c.maxReadSize = limit
 }
 
+// readLimit returns the read size limit; SetMaxReadSize writes it under c.mu.
+func (c *Client) readLimit() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.maxReadSize
+}
+
 func (c *Client) Connect(host, user, pass string) error {
 	return c.ConnectWithAuth(host, NewPasswordAuth(user, "", pass))
 }

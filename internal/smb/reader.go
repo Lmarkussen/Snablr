@@ -10,6 +10,7 @@ import (
 )
 
 func (c *Client) ReadFile(share, path string) ([]byte, error) {
+	maxReadSize := c.readLimit()
 	fs, err := c.mountShare(share)
 	if err != nil {
 		return nil, err
@@ -33,8 +34,8 @@ func (c *Client) ReadFile(share, path string) ([]byte, error) {
 	if info.IsDir() {
 		return nil, fmt.Errorf("%s on %s is a directory", path, share)
 	}
-	if c.maxReadSize > 0 && info.Size() > c.maxReadSize {
-		return nil, fmt.Errorf("%w: %s on %s is %d bytes, limit is %d", ErrFileTooLarge, path, share, info.Size(), c.maxReadSize)
+	if maxReadSize > 0 && info.Size() > maxReadSize {
+		return nil, fmt.Errorf("%w: %s on %s is %d bytes, limit is %d", ErrFileTooLarge, path, share, info.Size(), maxReadSize)
 	}
 
 	file, err := fs.Open(path)
@@ -44,7 +45,7 @@ func (c *Client) ReadFile(share, path string) ([]byte, error) {
 	defer file.Close()
 	watchdog.touch()
 
-	data, err := readFileContent(progressReader{r: file, w: watchdog}, c.maxReadSize)
+	data, err := readFileContent(progressReader{r: file, w: watchdog}, maxReadSize)
 	if err != nil {
 		if os.IsPermission(err) {
 			return nil, fmt.Errorf("read %s on %s: permission denied", path, share)
@@ -53,7 +54,7 @@ func (c *Client) ReadFile(share, path string) ([]byte, error) {
 	}
 	_ = c.observe(nil)
 
-	if c.maxReadSize > 0 && int64(len(data)) > c.maxReadSize {
+	if maxReadSize > 0 && int64(len(data)) > maxReadSize {
 		return nil, fmt.Errorf("%w: %s on %s exceeded the read limit", ErrFileTooLarge, path, share)
 	}
 

@@ -30,7 +30,7 @@ func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
 	match := Match{
 		ID:                  "keyinspect.content.private_key_header",
 		Name:                "Validated Private Key Header",
-		Description:         "Validated private key material was identified from an exact high-value private key artifact filename and a real private key header.",
+		Description:         "Validated private key material was identified from a real OpenSSH or PEM private key header.",
 		RuleType:            "content",
 		SignalType:          "validated",
 		Severity:            "critical",
@@ -43,7 +43,7 @@ func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
 		Context:             context,
 		ContextRedacted:     context,
 		LineNumber:          lineNumber,
-		Explanation:         "This finding is promoted only when an exact private key artifact filename also contains a real OpenSSH or PEM private key header.",
+		Explanation:         "This finding is raised when file content contains a real OpenSSH or PEM private key header, whatever the file is named; the key is parsed to report its format, algorithm and whether it is encrypted.",
 		Remediation:         "Restrict access immediately, remove unnecessary private keys from shared storage, and rotate or replace exposed key material.",
 		Tags: []string{
 			"crypto",

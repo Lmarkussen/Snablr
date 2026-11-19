@@ -98,3 +98,29 @@ func TestResolvePasswordSourcesAndNonInteractivePrompt(t *testing.T) {
 		t.Fatalf("explicit non-terminal prompt error = %v", err)
 	}
 }
+
+func TestExplicitPasswordSourceDetectsEveryPasswordFlag(t *testing.T) {
+	for _, args := range [][]string{{"--password", "x"}, {"--pass", "x"}, {"--password-file", "/tmp/p"}, {"--password-prompt"}} {
+		fs := flag.NewFlagSet("t", flag.ContinueOnError)
+		fs.String("password", "", "")
+		fs.String("pass", "", "")
+		fs.String("password-file", "", "")
+		fs.Bool("password-prompt", false, "")
+		fs.String("username", "", "")
+		if err := fs.Parse(args); err != nil {
+			t.Fatal(err)
+		}
+		if !explicitPasswordSource(fs) {
+			t.Fatalf("%v not detected as an explicit password source", args)
+		}
+	}
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	fs.String("password", "", "")
+	fs.String("username", "", "")
+	if err := fs.Parse([]string{"--username", "svc"}); err != nil {
+		t.Fatal(err)
+	}
+	if explicitPasswordSource(fs) {
+		t.Fatal("username alone reported as a password source")
+	}
+}

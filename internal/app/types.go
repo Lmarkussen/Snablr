@@ -63,6 +63,9 @@ type ScanOptions struct {
 	WIMMaxNTDSBytes            *int64
 	WIMMaxImages               *int
 	LogLevel                   string
+	// PromptPassword, when set, is called if the merged configuration needs a
+	// password for SMB authentication that was not supplied.
+	PromptPassword PasswordPrompt
 }
 
 type RulesOptions struct {
@@ -128,6 +131,9 @@ type DiscoverOptions struct {
 	SkipReachabilityCheck      bool
 	ReachabilityTimeoutSeconds int
 	LogLevel                   string
+	// PromptPassword, when set, is called if LDAP discovery needs a password
+	// that was not supplied.
+	PromptPassword PasswordPrompt
 }
 
 type ExitError struct {

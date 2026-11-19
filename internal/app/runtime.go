@@ -589,6 +589,9 @@ func RunDiscover(ctx context.Context, opts DiscoverOptions) error {
 	}
 
 	applyDiscoverOverrides(&cfg, opts)
+	if err := promptForMissingPassword(&cfg, opts.PromptPassword, discoverNeedsPassword); err != nil {
+		return err
+	}
 	if err := validateDiscoverConfig(cfg.Scan); err != nil {
 		return err
 	}

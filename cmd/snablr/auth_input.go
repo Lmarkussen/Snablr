@@ -47,6 +47,19 @@ func resolveCLIAuthPassword(value, path string, prompt, automatic bool, fs *flag
 	return value, nil
 }
 
+// explicitPasswordSource reports whether any password flag was given; then no
+// automatic prompt is offered.
+func explicitPasswordSource(fs *flag.FlagSet) bool {
+	explicit := false
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "password", "pass", "password-file", "password-prompt":
+			explicit = true
+		}
+	})
+	return explicit
+}
+
 func readPasswordFile(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {

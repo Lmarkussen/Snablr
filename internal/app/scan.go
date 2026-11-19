@@ -70,6 +70,9 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	}
 
 	applyScanOverrides(&cfg, opts)
+	if err := promptForMissingPassword(&cfg, opts.PromptPassword, scanNeedsPassword); err != nil {
+		return err
+	}
 	if err := validateScanConfig(cfg); err != nil {
 		return err
 	}

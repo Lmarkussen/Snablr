@@ -37,7 +37,9 @@ func (s *SQLiteStore) Search(ctx context.Context, query string, options SearchOp
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("sqlite search store is closed")
 	}
-	query = escapeLike(strings.TrimSpace(query))
+	// snablr_contains folds case for all letters (æøå too) and treats the
+	// query as a literal substring, so no LIKE escaping is needed.
+	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, nil
 	}
@@ -48,34 +50,34 @@ func (s *SQLiteStore) Search(ctx context.Context, query string, options SearchOp
 		options.Offset = 0
 	}
 
-	// The LIKE predicates are intentionally bounded and run on the database
+	// The match predicates are intentionally bounded and run on the database
 	// connection. Search never materializes the scan inventory in Go memory.
 	const searchSQL = `
 	SELECT result_type, result_id, title, context, detail, source, bookmark_key, credential_payload, credential_type, credential_identity, credential_value FROM (
 	  SELECT 'FILE' AS result_type, file_key AS result_id, path AS title, host || ' / ' || share AS context, path || '  [' || host || ' / ' || share || ']' AS detail, path AS source, file_key AS bookmark_key, '' AS credential_payload, '' AS credential_type, '' AS credential_identity, '' AS credential_value
     FROM files
-   WHERE scan_id=? AND (path LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR host LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR share LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\')
+   WHERE scan_id=? AND (snablr_contains(path,?) OR snablr_contains(host,?) OR snablr_contains(share,?))
   UNION ALL
 	  SELECT 'FINDING' AS result_type, CAST(id AS TEXT) AS result_id, COALESCE(rule_id, category, 'finding') AS title, host || ' / ' || share AS context, path AS detail, path AS source, COALESCE((SELECT file_key FROM files f WHERE f.scan_id=findings.scan_id AND f.host=findings.host AND f.share=findings.share AND (f.path=findings.path OR findings.path LIKE f.path || '!%') LIMIT 1), '') AS bookmark_key, '' AS credential_payload, '' AS credential_type, '' AS credential_identity, '' AS credential_value
     FROM findings
-   WHERE scan_id=? AND (rule_id LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR category LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR host LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR share LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR path LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\')
+   WHERE scan_id=? AND (snablr_contains(rule_id,?) OR snablr_contains(category,?) OR snablr_contains(host,?) OR snablr_contains(share,?) OR snablr_contains(path,?))
   UNION ALL
 	  SELECT 'EVIDENCE' AS result_type, CAST(id AS TEXT) AS result_id, COALESCE(rule_id, 'evidence') AS title, path AS context, substr(payload, 1, 240) AS detail, path AS source, COALESCE((SELECT file_key FROM files f WHERE f.scan_id=findings.scan_id AND f.host=findings.host AND f.share=findings.share AND (f.path=findings.path OR findings.path LIKE f.path || '!%') LIMIT 1), '') AS bookmark_key, '' AS credential_payload, '' AS credential_type, '' AS credential_identity, '' AS credential_value
     FROM findings
-   WHERE scan_id=? AND payload LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\'
-     AND rule_id NOT LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\'
-     AND category NOT LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\'
-     AND host NOT LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\'
-     AND share NOT LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\'
-     AND path NOT LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\'
+   WHERE scan_id=? AND snablr_contains(payload,?)
+     AND NOT snablr_contains(rule_id,?)
+     AND NOT snablr_contains(category,?)
+     AND NOT snablr_contains(host,?)
+     AND NOT snablr_contains(share,?)
+     AND NOT snablr_contains(path,?)
   UNION ALL
 	  SELECT 'EVIDENCE' AS result_type, correlation_key AS result_id, 'credential correlation' AS title, substr(payload, 1, 160) AS context, payload AS detail, '' AS source, '' AS bookmark_key, '' AS credential_payload, '' AS credential_type, '' AS credential_identity, '' AS credential_value
     FROM correlations
-   WHERE scan_id=? AND payload LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\'
+   WHERE scan_id=? AND snablr_contains(payload,?)
   UNION ALL
 	  SELECT 'CREDENTIAL' AS result_type, CAST(id AS TEXT) AS result_id, COALESCE(identity, credential_type, 'credential') AS title, credential_type AS context, COALESCE(identity, credential_type, 'credential') || ' | ' || COALESCE(value, '') AS detail, credential_key AS source, COALESCE((SELECT file_key FROM files f WHERE f.scan_id=credentials.scan_id AND instr(credentials.credential_key, '|' || f.path || '|') > 0 LIMIT 1), '') AS bookmark_key, payload AS credential_payload, credential_type, identity, value
     FROM credentials
-   WHERE scan_id=? AND (identity LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR value LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR credential_type LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\' OR payload LIKE '%' || ? || '%' COLLATE NOCASE ESCAPE '\')
+   WHERE scan_id=? AND (snablr_contains(identity,?) OR snablr_contains(value,?) OR snablr_contains(credential_type,?) OR snablr_contains(payload,?))
 )
 ORDER BY result_type, result_id
 LIMIT ? OFFSET ?`
@@ -212,10 +214,4 @@ func firstSearchString(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func escapeLike(value string) string {
-	value = strings.ReplaceAll(value, `\`, `\\`)
-	value = strings.ReplaceAll(value, `%`, `\%`)
-	return strings.ReplaceAll(value, `_`, `\_`)
 }

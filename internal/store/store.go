@@ -16,6 +16,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"snablr/internal/credentialanalysis"
 	"snablr/internal/scanner"
+	"snablr/internal/sqlitefold"
 )
 
 const SchemaVersion = 3
@@ -109,7 +110,7 @@ func Open(path string, options Options) (*SQLiteStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite3", path)
+	db, err := sqlitefold.Open("snablr-store-sqlite3", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite state store: %w", err)
 	}

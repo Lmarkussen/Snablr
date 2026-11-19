@@ -1219,3 +1219,43 @@ func TestCredentialRelationshipPagesTraverseTenThousandRows(t *testing.T) {
 		t.Fatalf("related references=%d, want %d", len(seen), total)
 	}
 }
+
+// Finder "/" search must fold æøå like the global search does.
+func TestProviderSearchPageAfterFoldsNorwegianLetters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fold.db")
+	state, err := store.Open(path, store.Options{ScanID: "scan-fold", SnablrVersion: "test", Semantics: "synthetic", BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.RecordFinding(scanner.Finding{RuleID: "fold.rule", RuleName: "Fold", FilePath: "Økonomi/Lønn/årsoppgjør.txt", MatchedText: "synthetic"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.RecordCredential(credentialanalysis.Candidate{CredentialType: "password", Identity: "åse.berg", Value: "synthetic-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetScanStatus(store.StatusCompleted, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	page, err := provider.SearchPageAfter(context.Background(), "scan-fold", "ØKONOMI/LØNN", 0, 0, "", PageSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Findings) != 1 {
+		t.Fatalf("finding path search returned %d findings", len(page.Findings))
+	}
+	page, err = provider.SearchPageAfter(context.Background(), "scan-fold", "ÅSE.BERG", 0, 0, "", PageSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Credentials) != 1 {
+		t.Fatalf("credential identity search returned %d credentials", len(page.Credentials))
+	}
+}

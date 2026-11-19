@@ -9,12 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
-	sqlite3 "github.com/mattn/go-sqlite3"
 	"snablr/internal/credentialanalysis"
 	"snablr/internal/scanner"
+	"snablr/internal/sqlitefold"
 )
 
 const (
@@ -31,17 +30,8 @@ type Provider struct {
 	hasDerivedFindings bool
 }
 
-var registerFinderSQLite sync.Once
-
 func openFinderSQLite(path string) (*sql.DB, error) {
-	registerFinderSQLite.Do(func() {
-		sql.Register("snablr-findings-sqlite3", &sqlite3.SQLiteDriver{ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-			return conn.RegisterFunc("snablr_contains", func(value, query string) bool {
-				return strings.Contains(strings.ToLower(value), strings.ToLower(query))
-			}, true)
-		}})
-	})
-	return sql.Open("snablr-findings-sqlite3", path)
+	return sqlitefold.Open("snablr-findings-sqlite3", path)
 }
 
 type Scan struct {
@@ -470,9 +460,11 @@ func (p *Provider) SearchPageAfter(ctx context.Context, scanID, query string, fi
 	if query == "" {
 		return SearchPage{}, nil
 	}
-	pattern := "%" + query + "%"
+	// snablr_contains folds case for all letters (æøå too) and treats the
+	// query as a literal substring.
+	pattern := query
 	result := SearchPage{}
-	searchPredicate := `WHERE id>? AND (payload LIKE ? COLLATE NOCASE OR path LIKE ? COLLATE NOCASE OR rule_id LIKE ? COLLATE NOCASE) ORDER BY id LIMIT ?`
+	searchPredicate := `WHERE id>? AND (snablr_contains(payload,?) OR snablr_contains(path,?) OR snablr_contains(rule_id,?)) ORDER BY id LIMIT ?`
 	searchQuery := p.findingRowsQuery("id,fingerprint,payload", searchPredicate)
 	searchArgs := []any{scanID}
 	if p.hasDerivedFindings {
@@ -487,7 +479,7 @@ func (p *Provider) SearchPageAfter(ctx context.Context, scanID, query string, fi
 	if err != nil {
 		return SearchPage{}, err
 	}
-	rows, err = p.db.QueryContext(ctx, `SELECT id,credential_key,payload FROM credentials WHERE scan_id=? AND id>? AND (payload LIKE ? COLLATE NOCASE OR credential_key LIKE ? COLLATE NOCASE OR identity LIKE ? COLLATE NOCASE OR value LIKE ? COLLATE NOCASE) ORDER BY id LIMIT ?`, scanID, credentialAfter, pattern, pattern, pattern, pattern, limit)
+	rows, err = p.db.QueryContext(ctx, `SELECT id,credential_key,payload FROM credentials WHERE scan_id=? AND id>? AND (snablr_contains(payload,?) OR snablr_contains(credential_key,?) OR snablr_contains(identity,?) OR snablr_contains(value,?)) ORDER BY id LIMIT ?`, scanID, credentialAfter, pattern, pattern, pattern, pattern, limit)
 	if err != nil {
 		return SearchPage{}, fmt.Errorf("search persisted credentials: %w", err)
 	}
@@ -495,7 +487,7 @@ func (p *Provider) SearchPageAfter(ctx context.Context, scanID, query string, fi
 	if err != nil {
 		return SearchPage{}, err
 	}
-	rows, err = p.db.QueryContext(ctx, `SELECT correlation_key,payload FROM correlations WHERE scan_id=? AND correlation_key>? AND payload LIKE ? COLLATE NOCASE ORDER BY correlation_key LIMIT ?`, scanID, correlationAfter, pattern, limit)
+	rows, err = p.db.QueryContext(ctx, `SELECT correlation_key,payload FROM correlations WHERE scan_id=? AND correlation_key>? AND snablr_contains(payload,?) ORDER BY correlation_key LIMIT ?`, scanID, correlationAfter, pattern, limit)
 	if err != nil {
 		return SearchPage{}, fmt.Errorf("search persisted correlations: %w", err)
 	}

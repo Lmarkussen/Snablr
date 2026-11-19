@@ -191,3 +191,38 @@ func TestSearchReturnsPersistedCredentialCorrelationEvidence(t *testing.T) {
 		t.Fatalf("persisted correlation evidence missing from search: %#v", results)
 	}
 }
+
+// SQLite NOCASE folds only ASCII, so "økonomi" never found "Økonomi".
+func TestSearchFoldsNorwegianLetters(t *testing.T) {
+	state, err := Open(t.TempDir()+"/fold.db", Options{ScanID: "fold", BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	now := time.Now().UTC()
+	if err := state.RecordFile("file-1", "FS01", "Felles", `Økonomi/Lønn/årsoppgjør.xlsx`, "complete", "semantics", 12, now, now, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.RecordCredential(credentialanalysis.Candidate{CredentialType: "password", Identity: "åse.berg", Value: "synthetic-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	for query, want := range map[string]SearchResultType{"økonomi/LØNN": SearchResultFile, "ÅRSOPPGJØR": SearchResultFile, "ÅSE.BERG": SearchResultCredential} {
+		results, err := state.Search(context.Background(), query, SearchOptions{Limit: 100})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 1 || results[0].Type != want {
+			t.Fatalf("search %q = %#v, want one %s", query, results, want)
+		}
+	}
+	results, err := state.Search(context.Background(), "%", SearchOptions{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("%% must be a literal character, got %#v", results)
+	}
+}

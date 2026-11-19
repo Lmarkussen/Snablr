@@ -119,8 +119,8 @@ func Open(path string) (*Provider, error) {
 		}
 		return cleanup(fmt.Errorf("read findings database schema: %w", err))
 	}
-	if version != "2" && version != "3" {
-		return cleanup(fmt.Errorf("unsupported Snablr SQLite schema version %s (expected 2 or 3)", version))
+	if version != "2" && version != "3" && version != "4" {
+		return cleanup(fmt.Errorf("unsupported Snablr SQLite schema version %s (expected 2, 3 or 4)", version))
 	}
 	var integrity string
 	if err := db.QueryRow(`PRAGMA integrity_check`).Scan(&integrity); err != nil {

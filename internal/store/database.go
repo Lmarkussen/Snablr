@@ -70,7 +70,7 @@ func ResetDatabase(path string) error {
 	}
 	for _, table := range []string{
 		"bookmarks", "scope_exclusions", "access_observations", "members",
-		"findings", "credentials", "correlations", "files", "shares",
+		"finding_rows", "evidence", "credentials", "correlations", "files", "shares",
 		"targets", "scan_labels", "scans",
 	} {
 		if _, err := tx.Exec("DELETE FROM " + table); err != nil {
@@ -149,12 +149,16 @@ func validateExistingSchema(db *sql.DB) error {
 		}
 		return fmt.Errorf("read schema metadata: %w", err)
 	}
-	if version != "1" && version != "2" && version != "3" {
+	if version != "1" && version != "2" && version != "3" && version != "4" {
 		return fmt.Errorf("unsupported schema version %s", version)
 	}
 	requiredTables := []string{"metadata", "scans", "targets", "shares", "files", "access_observations", "members", "findings", "credentials", "correlations"}
 	if version == "3" {
 		requiredTables = append(requiredTables, "derived_findings", "correlation_state", "derived_state")
+	}
+	if version == "4" {
+		// Findings and correlation candidates are views over row tables.
+		requiredTables = []string{"metadata", "scans", "targets", "shares", "files", "access_observations", "members", "finding_rows", "credentials", "correlations", "derived_findings", "correlation_state_rows", "derived_state", "evidence"}
 	}
 	for _, table := range requiredTables {
 		var count int

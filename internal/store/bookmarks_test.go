@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -98,25 +97,13 @@ func TestBookmarkDetailsIncludeBoundedRelatedFindingsAndCredentials(t *testing.T
 
 func TestBookmarkSchemaMigratesFromVersionOneWithoutDataLoss(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "migration.db")
-	state, err := Open(path, Options{ScanID: "migration-scan", BatchSize: 1})
-	if err != nil {
+	db := createSchemaThreeDatabase(t, path)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := db.Exec(`INSERT INTO scans(scan_id,schema_version,started_at,status) VALUES('migration-scan',1,?,'running'); INSERT INTO files(scan_id,file_key,host,share,path,size,updated_at,status,semantics) VALUES('migration-scan','file-1','host','share','file.txt',1,?,'complete','semantics')`, now, now); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC()
-	if err := state.RecordFile("file-1", "host", "share", "file.txt", "complete", "semantics", 1, now, now, now, now); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.Flush(); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.Close(); err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite3", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`UPDATE metadata SET value='1' WHERE key='schema_version'`); err != nil {
+	// Schema 1 had no bookmark, exclusion or label tables.
+	if _, err := db.Exec(`DROP TABLE bookmarks; DROP TABLE scope_exclusions; DROP TABLE scan_labels; UPDATE metadata SET value='1' WHERE key='schema_version'`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {

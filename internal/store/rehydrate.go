@@ -160,7 +160,9 @@ func loadResumeState(db *sql.DB, requestedID string, materializeFiles bool, out 
 		}
 		return fmt.Errorf("load sqlite scan metadata: %w", err)
 	}
-	if schema != SchemaVersion {
+	// A scan begun under schema 3 resumes after its database is migrated:
+	// migration keeps every row.
+	if schema != SchemaVersion && schema != 3 {
 		return fmt.Errorf("unsupported sqlite scan schema version %d", schema)
 	}
 	out.SchemaVersion, out.Status = fmt.Sprintf("%d", schema), status

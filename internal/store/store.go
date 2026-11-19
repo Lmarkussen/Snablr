@@ -19,7 +19,7 @@ import (
 	"snablr/internal/sqlitefold"
 )
 
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 const (
 	ScopeExclusionShare  = "share"
@@ -75,6 +75,7 @@ type SQLiteStore struct {
 	committedBatches int
 	failAfterBatches int
 	pending          *writeBudget
+	evidence         knownEvidence
 }
 
 func (s *SQLiteStore) ScanID() string {
@@ -174,7 +175,7 @@ UPDATE metadata SET value='2' WHERE key='schema_version';
 `); err != nil {
 				return fmt.Errorf("migrate SQLite scan database schema: %w", err)
 			}
-			return nil
+			storedVersion = "2"
 		}
 		if storedVersion == "2" {
 			if _, err := db.Exec(`
@@ -187,13 +188,19 @@ UPDATE metadata SET value='3' WHERE key='schema_version';
 `); err != nil {
 				return fmt.Errorf("migrate SQLite derived findings schema: %w", err)
 			}
-			return nil
+			storedVersion = "3"
 		}
-		if storedVersion != "3" {
+		if storedVersion == "3" {
+			if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS correlation_state (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, family TEXT NOT NULL, group_key TEXT NOT NULL, slot TEXT NOT NULL, priority INTEGER NOT NULL, severity_rank INTEGER NOT NULL, file_path TEXT NOT NULL, payload TEXT NOT NULL, FOREIGN KEY (scan_id) REFERENCES scans(scan_id)); CREATE TABLE IF NOT EXISTS derived_state (scan_id TEXT PRIMARY KEY, status TEXT NOT NULL, started_at TEXT NOT NULL, completed_at TEXT, FOREIGN KEY (scan_id) REFERENCES scans(scan_id)); CREATE INDEX IF NOT EXISTS correlation_state_group_idx ON correlation_state(scan_id, family, group_key, slot, priority DESC, severity_rank DESC, file_path, id);`); err != nil {
+				return fmt.Errorf("ensure SQLite correlation state schema: %w", err)
+			}
+			if err := migrateToSharedEvidence(db); err != nil {
+				return err
+			}
+			storedVersion = "4"
+		}
+		if storedVersion != "4" {
 			return fmt.Errorf("unsupported SQLite scan database schema version %s", storedVersion)
-		}
-		if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS correlation_state (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, family TEXT NOT NULL, group_key TEXT NOT NULL, slot TEXT NOT NULL, priority INTEGER NOT NULL, severity_rank INTEGER NOT NULL, file_path TEXT NOT NULL, payload TEXT NOT NULL, FOREIGN KEY (scan_id) REFERENCES scans(scan_id)); CREATE TABLE IF NOT EXISTS derived_state (scan_id TEXT PRIMARY KEY, status TEXT NOT NULL, started_at TEXT NOT NULL, completed_at TEXT, FOREIGN KEY (scan_id) REFERENCES scans(scan_id)); CREATE INDEX IF NOT EXISTS correlation_state_group_idx ON correlation_state(scan_id, family, group_key, slot, priority DESC, severity_rank DESC, file_path, id);`); err != nil {
-			return fmt.Errorf("ensure SQLite correlation state schema: %w", err)
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) && !strings.Contains(err.Error(), "no such table") {
 		return err
@@ -207,27 +214,53 @@ CREATE TABLE IF NOT EXISTS shares (scan_id TEXT NOT NULL, host TEXT NOT NULL, sh
 CREATE TABLE IF NOT EXISTS files (scan_id TEXT NOT NULL, file_key TEXT NOT NULL, host TEXT NOT NULL, share TEXT NOT NULL, path TEXT NOT NULL, size INTEGER NOT NULL, modified_at TEXT, first_seen TEXT, last_seen TEXT, updated_at TEXT NOT NULL, status TEXT NOT NULL, semantics TEXT NOT NULL, PRIMARY KEY (scan_id, file_key), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS access_observations (scan_id TEXT NOT NULL, context_id TEXT NOT NULL, file_key TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, access_result TEXT NOT NULL, PRIMARY KEY (scan_id, context_id, file_key), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS members (scan_id TEXT NOT NULL, parent_key TEXT NOT NULL, member_key TEXT NOT NULL, member_type TEXT NOT NULL, member_path TEXT NOT NULL, status TEXT NOT NULL, provenance TEXT, PRIMARY KEY (scan_id, parent_key, member_key), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
-CREATE TABLE IF NOT EXISTS findings (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, fingerprint TEXT NOT NULL, host TEXT, share TEXT, path TEXT, rule_id TEXT, category TEXT, payload TEXT NOT NULL, UNIQUE(scan_id, fingerprint), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
+CREATE TABLE IF NOT EXISTS finding_rows (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, fingerprint TEXT NOT NULL, host TEXT, share TEXT, path TEXT, rule_id TEXT, category TEXT, payload TEXT NOT NULL, evidence_refs TEXT, UNIQUE(scan_id, fingerprint), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS credentials (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, credential_key TEXT NOT NULL, credential_type TEXT, identity TEXT, value TEXT, payload TEXT NOT NULL, UNIQUE(scan_id, credential_key), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS correlations (scan_id TEXT NOT NULL, correlation_key TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY (scan_id, correlation_key), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS derived_findings (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, correlation_key TEXT NOT NULL, payload TEXT NOT NULL, UNIQUE(scan_id, correlation_key), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
-CREATE TABLE IF NOT EXISTS correlation_state (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, family TEXT NOT NULL, group_key TEXT NOT NULL, slot TEXT NOT NULL, priority INTEGER NOT NULL, severity_rank INTEGER NOT NULL, file_path TEXT NOT NULL, payload TEXT NOT NULL, FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
+CREATE TABLE IF NOT EXISTS correlation_state_rows (id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL, family TEXT NOT NULL, group_key TEXT NOT NULL, slot TEXT NOT NULL, priority INTEGER NOT NULL, severity_rank INTEGER NOT NULL, file_path TEXT NOT NULL, payload TEXT NOT NULL, evidence_refs TEXT, FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS derived_state (scan_id TEXT PRIMARY KEY, status TEXT NOT NULL, started_at TEXT NOT NULL, completed_at TEXT, FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE TABLE IF NOT EXISTS bookmarks (scan_id TEXT NOT NULL, file_key TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (scan_id, file_key), FOREIGN KEY (scan_id, file_key) REFERENCES files(scan_id, file_key));
 CREATE TABLE IF NOT EXISTS scope_exclusions (scan_id TEXT NOT NULL, kind TEXT NOT NULL, host TEXT NOT NULL, share TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (scan_id, kind, host, share, path), FOREIGN KEY (scan_id) REFERENCES scans(scan_id));
 CREATE INDEX IF NOT EXISTS files_status_idx ON files(scan_id, status);
 CREATE INDEX IF NOT EXISTS files_identity_idx ON files(scan_id, host, share, path);
-CREATE INDEX IF NOT EXISTS findings_path_idx ON findings(scan_id, path);
-CREATE INDEX IF NOT EXISTS findings_scan_id_id_idx ON findings(scan_id, id);
+CREATE INDEX IF NOT EXISTS findings_path_idx ON finding_rows(scan_id, path);
+CREATE INDEX IF NOT EXISTS findings_scan_id_id_idx ON finding_rows(scan_id, id);
 CREATE INDEX IF NOT EXISTS derived_findings_scan_id_id_idx ON derived_findings(scan_id, id);
-CREATE INDEX IF NOT EXISTS correlation_state_group_idx ON correlation_state(scan_id, family, group_key, slot, priority DESC, severity_rank DESC, file_path, id);
+CREATE INDEX IF NOT EXISTS correlation_state_group_idx ON correlation_state_rows(scan_id, family, group_key, slot, priority DESC, severity_rank DESC, file_path, id);
 CREATE INDEX IF NOT EXISTS credentials_scan_id_id_idx ON credentials(scan_id, id);
 CREATE INDEX IF NOT EXISTS credentials_group_idx ON credentials(scan_id, credential_type, identity, value, id);
 CREATE INDEX IF NOT EXISTS bookmarks_scan_created_idx ON bookmarks(scan_id, created_at, file_key);
 CREATE INDEX IF NOT EXISTS scope_exclusions_identity_idx ON scope_exclusions(scan_id, kind, host, share, path);
-INSERT INTO metadata(key, value) VALUES ('schema_version', '3') ON CONFLICT(key) DO UPDATE SET value=excluded.value;
-`)
+INSERT INTO metadata(key, value) VALUES ('schema_version', '4') ON CONFLICT(key) DO UPDATE SET value=excluded.value;
+` + evidenceSchemaSQL)
 	return err
+}
+
+// migrateToSharedEvidence moves a schema 3 database to schema 4. Findings and
+// correlation candidates keep their rows and payloads; the tables are renamed
+// and views with the old names present them, so no payload is rewritten.
+// Rows written from now on keep large evidence once in the evidence table.
+func migrateToSharedEvidence(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin SQLite evidence migration: %w", err)
+	}
+	if _, err := tx.Exec(`
+ALTER TABLE findings RENAME TO finding_rows;
+ALTER TABLE finding_rows ADD COLUMN evidence_refs TEXT;
+ALTER TABLE correlation_state RENAME TO correlation_state_rows;
+ALTER TABLE correlation_state_rows ADD COLUMN evidence_refs TEXT;
+` + evidenceSchemaSQL + `
+UPDATE metadata SET value='4' WHERE key='schema_version';
+`); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("migrate SQLite findings to shared evidence: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit SQLite evidence migration: %w", err)
+	}
+	return nil
 }
 
 // RecordScopeExclusion waits for the authoritative transaction to commit.
@@ -569,8 +602,16 @@ func payloadFingerprint(payload []byte) string {
 func (s *SQLiteStore) RecordFinding(f scanner.Finding) error {
 	payload, _ := json.Marshal(f)
 	fingerprint := payloadFingerprint(payload)
-	return s.enqueueSized(int64(len(payload)), func(tx *sql.Tx) error {
-		_, err := tx.Exec(`INSERT INTO findings(scan_id,fingerprint,host,share,path,rule_id,category,payload) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(scan_id,fingerprint) DO UPDATE SET payload=excluded.payload`, s.scanID, fingerprint, f.Host, f.Share, f.FilePath, f.RuleID, f.Category, payload)
+	stored, err := compactFinding(f)
+	if err != nil {
+		return err
+	}
+	stored = s.withoutKnownBodies(stored)
+	return s.enqueueSized(stored.size(), func(tx *sql.Tx) error {
+		if err := writeEvidence(tx, stored.bodies); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT INTO finding_rows(scan_id,fingerprint,host,share,path,rule_id,category,payload,evidence_refs) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(scan_id,fingerprint) DO UPDATE SET payload=excluded.payload,evidence_refs=excluded.evidence_refs`, s.scanID, fingerprint, f.Host, f.Share, f.FilePath, f.RuleID, f.Category, stored.payload, stored.refs)
 		return err
 	})
 }
@@ -657,7 +698,7 @@ func (s *SQLiteStore) IterateDerivedFindings(ctx context.Context, batchSize int,
 // correlations cannot survive a changed or resumed scan.
 func (s *SQLiteStore) ResetCorrelationState() error {
 	return s.enqueue(func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`DELETE FROM correlation_state WHERE scan_id=?`, s.scanID); err != nil {
+		if _, err := tx.Exec(`DELETE FROM correlation_state_rows WHERE scan_id=?`, s.scanID); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`DELETE FROM derived_findings WHERE scan_id=?`, s.scanID); err != nil {
@@ -699,12 +740,16 @@ func (s *SQLiteStore) CorrelationStateReady(ctx context.Context) (bool, error) {
 // intentionally append-only for a replay; the indexed group query chooses
 // the preferred candidate without retaining the group in Go memory.
 func (s *SQLiteStore) RecordCorrelationState(family, groupKey, slot string, priority, severityRank int, filePath string, f scanner.Finding) error {
-	payload, err := json.Marshal(f)
+	stored, err := compactFinding(f)
 	if err != nil {
 		return err
 	}
-	return s.enqueueSized(int64(len(payload)), func(tx *sql.Tx) error {
-		_, err := tx.Exec(`INSERT INTO correlation_state(scan_id,family,group_key,slot,priority,severity_rank,file_path,payload) VALUES(?,?,?,?,?,?,?,?)`, s.scanID, family, groupKey, slot, priority, severityRank, filePath, payload)
+	stored = s.withoutKnownBodies(stored)
+	return s.enqueueSized(stored.size(), func(tx *sql.Tx) error {
+		if err := writeEvidence(tx, stored.bodies); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT INTO correlation_state_rows(scan_id,family,group_key,slot,priority,severity_rank,file_path,payload,evidence_refs) VALUES(?,?,?,?,?,?,?,?,?)`, s.scanID, family, groupKey, slot, priority, severityRank, filePath, stored.payload, stored.refs)
 		return err
 	})
 }

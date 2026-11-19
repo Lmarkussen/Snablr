@@ -683,14 +683,8 @@ func TestSQLiteStoreDerivedFindingsAreIdempotentAndSeparate(t *testing.T) {
 }
 
 func TestSchemaThreeMigrationAddsDerivedAndCorrelationState(t *testing.T) {
-	s, path := openTestStore(t)
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite3", path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	path := filepath.Join(t.TempDir(), "state.db")
+	db := createSchemaThreeDatabase(t, path)
 	if _, err := db.Exec(`DROP TABLE derived_findings; DROP TABLE correlation_state; UPDATE metadata SET value='2' WHERE key='schema_version'`); err != nil {
 		t.Fatal(err)
 	}
@@ -707,21 +701,21 @@ func TestSchemaThreeMigrationAddsDerivedAndCorrelationState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer check.Close()
-	for _, table := range []string{"derived_findings", "correlation_state"} {
+	for _, object := range []struct{ kind, name string }{{"table", "derived_findings"}, {"table", "correlation_state_rows"}, {"view", "correlation_state"}, {"view", "findings"}, {"table", "evidence"}} {
 		var count int
-		if err := check.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil {
+		if err := check.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type=? AND name=?`, object.kind, object.name).Scan(&count); err != nil {
 			t.Fatal(err)
 		}
 		if count != 1 {
-			t.Fatalf("migration did not create %s", table)
+			t.Fatalf("migration did not create %s %s", object.kind, object.name)
 		}
 	}
 	var version string
 	if err := check.QueryRow(`SELECT value FROM metadata WHERE key='schema_version'`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != "3" {
-		t.Fatalf("schema version=%q, want 3", version)
+	if version != "4" {
+		t.Fatalf("schema version=%q, want 4", version)
 	}
 }
 

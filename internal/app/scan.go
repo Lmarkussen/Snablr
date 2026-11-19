@@ -35,6 +35,11 @@ import (
 
 const sharePlanningBatchSize = 2048
 
+// sharePlanningFlushInterval hands planned files to the workers while a slow
+// share is still being walked, instead of only when a batch is full or the
+// walk ends. On a fast link the batch size is normally reached first.
+var sharePlanningFlushInterval = 2 * time.Second
+
 type bundleCandidate struct {
 	remote   smb.RemoteFile
 	filePlan planner.PlannedTarget
@@ -853,7 +858,9 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		skippedBundleCandidates := make(map[artifactbundle.BundleKey]map[artifact.Kind]bundleCandidate)
 		rehydratedBundleCandidates := make(map[artifactbundle.BundleKey]map[artifact.Kind]bool)
 		changedBundles := make(map[artifactbundle.BundleKey]map[artifact.Kind]bool)
+		lastFlush := time.Now()
 		flushBatch := func() error {
+			lastFlush = time.Now()
 			if len(fileInputs) == 0 {
 				return nil
 			}
@@ -1000,6 +1007,11 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		}, func(remote smb.RemoteFile) error {
 			if shareScheduler.consumeDefer(sharePlan) {
 				return errShareDeferred
+			}
+			if len(fileInputs) > 0 && time.Since(lastFlush) >= sharePlanningFlushInterval {
+				if err := flushBatch(); err != nil {
+					return err
+				}
 			}
 			if remote.IsDir {
 				return nil

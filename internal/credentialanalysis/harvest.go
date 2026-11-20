@@ -207,7 +207,7 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 		}
 		// Remote-access client stores keep saved passwords encrypted or encoded.
 		// The material is preserved for review but never confirmed as plaintext.
-		if protectedStore != "" && strings.EqualFold(candidate.CredentialType, "password") {
+		if protectedStore != "" && strings.EqualFold(candidate.CredentialType, "password") && !publicKeyDecoded(candidate.ValidationBasis) {
 			candidate.Verification = Review
 			candidate.Encrypted = true
 			candidate.ReviewReasons = []string{protectedStore + " stores this password encrypted or encoded; plaintext is not recovered"}
@@ -251,6 +251,9 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 		}
 	}
 	harvestPowerShellHashtables(textContent, add)
+	if protectedStore == "WinSCP" {
+		harvestWinSCPSessions(textContent, add)
+	}
 	if strings.TrimSpace(textContent) == "" {
 		return out
 	}
@@ -788,6 +791,9 @@ func walkXMLHarvest(node *xmlHarvestNode, add func(Candidate)) {
 		walkXMLHarvest(child, add)
 	}
 	harvestSCCMXMLScope(node, add)
+	harvestGPPNode(node, add)
+	harvestFileZillaServer(node, add)
+	harvestMRemoteNGNode(node, add)
 	harvestGenericXMLNode(node, add)
 	if isSecretElement(node.name) {
 		harvestXMLSecretElement(node, add)
@@ -841,6 +847,14 @@ func harvestXMLSecretElement(node *xmlHarvestNode, add func(Candidate)) {
 	}
 	identity, domain := xmlCredentialContext(node)
 	plainText, hasPlainText := xmlChildValue(node, "plaintext")
+	// Unattend values written with PlainText=false are only base64 encoded;
+	// decoded, they are handled like plaintext values.
+	decoded := false
+	if hasPlainText && strings.EqualFold(plainText, "false") {
+		if text, ok := DecodeUnattendPassword(value, node.name); ok {
+			value, plainText, decoded = text, "true", true
+		}
+	}
 	identityPlaceholder := IsPlaceholderIdentity(identity)
 	verification := Review
 	basis := "windows_unattend_credential_element"
@@ -877,6 +891,9 @@ func harvestXMLSecretElement(node *xmlHarvestNode, add func(Candidate)) {
 		}
 	}
 
+	if decoded && verification == Confirmed {
+		basis = strings.Replace(basis, "plaintext", "decoded_base64", 1)
+	}
 	if identityPlaceholder {
 		reasons = append(reasons, "identity resembles template or variable reference")
 	}
@@ -939,6 +956,12 @@ func xmlCredentialContext(node *xmlHarvestNode) (string, string) {
 		return "Administrator", xmlContextDomain(node.parent)
 	}
 	for ancestor := node.parent; ancestor != nil; ancestor = ancestor.parent {
+		// An unattend LocalAccount names its account in a <Name> child; the
+		// search never leaves the LocalAccount for an unrelated account.
+		if strings.EqualFold(ancestor.name, "localaccount") {
+			name, _ := xmlChildValue(ancestor, "name")
+			return name, ""
+		}
 		fields := xmlDirectChildFields(ancestor)
 		identity := fieldIdentity(fields)
 		domain := fieldDomain(fields)

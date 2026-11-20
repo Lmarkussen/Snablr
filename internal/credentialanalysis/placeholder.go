@@ -184,7 +184,7 @@ func scalarPlaceholderReason(value string) (string, bool) {
 		angleWrapperPattern.MatchString(trimmed) {
 		return "template_wrapper", true
 	}
-	if symbolicPattern.MatchString(trimmed) && allSegmentsAlphabetic(trimmed) {
+	if IsSymbolicConstant(trimmed) && hasCredentialVocabularyToken(trimmed) {
 		return "symbolic_identifier", true
 	}
 	if alphabeticOnlyPattern.MatchString(trimmed) && containsTemplateWord(trimmed) {
@@ -249,6 +249,37 @@ func isCredentialComponentKey(key string) bool {
 // ALL-CAPS value consists solely of uppercase letters. A digit inside any
 // segment (for example "ONLYUPPERCASE42" or "RUN_2026") keeps the value
 // reachable as a real credential.
+// IsSymbolicConstant reports whether a value has the shape of an
+// ALL_CAPS_UNDERSCORE constant name. Built from credential or template words
+// ("DB_PASSWORD", "SERVICE_ACCOUNT_NAME") it is a placeholder; otherwise
+// ("BLUE_HARBOR_LANTERN") it may be a real password and is review material.
+func IsSymbolicConstant(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	return symbolicPattern.MatchString(trimmed) && allSegmentsAlphabetic(trimmed)
+}
+
+// credentialVocabularyTokens are the words placeholder constants are built
+// from: credential field names and template vocabulary.
+var credentialVocabularyTokens = map[string]struct{}{
+	"PASSWORD": {}, "PASSWORDS": {}, "PASSWD": {}, "PASSORD": {}, "PASS": {}, "PWD": {}, "PW": {},
+	"PASSPHRASE": {}, "PIN": {}, "SECRET": {}, "SECRETS": {}, "TOKEN": {}, "KEY": {}, "APIKEY": {},
+	"HASH": {}, "USER": {}, "USERNAME": {}, "USERID": {}, "UID": {}, "LOGIN": {}, "ACCOUNT": {},
+	"NAME": {}, "CRED": {}, "CREDS": {}, "CREDENTIAL": {}, "CREDENTIALS": {}, "AUTH": {},
+	"VALUE": {}, "VAR": {}, "ENV": {}, "HERE": {}, "YOUR": {}, "MY": {}, "REPLACE": {}, "ME": {},
+	"CHANGE": {}, "CHANGEME": {}, "TEMPLATE": {}, "PLACEHOLDER": {}, "EXAMPLE": {}, "SAMPLE": {},
+	"DUMMY": {}, "DEFAULT": {}, "INSERT": {}, "ENTER": {}, "SET": {}, "TODO": {}, "FIXME": {},
+	"REDACTED": {}, "HIDDEN": {}, "MASKED": {}, "NONE": {}, "NULL": {}, "EMPTY": {},
+}
+
+func hasCredentialVocabularyToken(value string) bool {
+	for _, token := range strings.Split(strings.TrimSpace(value), "_") {
+		if _, ok := credentialVocabularyTokens[token]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func allSegmentsAlphabetic(value string) bool {
 	for _, segment := range strings.Split(value, "_") {
 		if segment == "" {

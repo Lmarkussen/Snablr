@@ -113,7 +113,14 @@ func (s ContentScanner) Scan(ruleSet []rules.Rule, meta FileMetadata, content []
 		if !ok {
 			continue
 		}
-		if suppress, reason := weakContentSuppression(rule.ID, rule.Category, details.matchedText, details.context); suppress {
+		suppress, reason := weakContentSuppression(rule.ID, rule.Category, details.matchedText, details.context)
+		if !suppress && rule.ID == "content.unattended_deployment_password_fields" && isUnattendXML(contentString) && !unattendTextCarriesCredential(meta.FilePath, contentString) {
+			// The field names alone are no credential: Windows setup scrubs
+			// the values ("*SENSITIVE*DATA*DELETED*") and templates leave
+			// them empty. The file stays reported through its name.
+			suppress, reason = true, "unattend password fields are empty, scrubbed or placeholders"
+		}
+		if suppress {
 			if s.observer != nil {
 				s.observer.RecordSuppressedFinding(SuppressedFinding{
 					Host:     meta.Host,
@@ -461,4 +468,14 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// isUnattendXML reports whether text is a Windows unattended-setup XML
+// document.
+func isUnattendXML(text string) bool {
+	head := text
+	if len(head) > 4096 {
+		head = head[:4096]
+	}
+	return strings.Contains(strings.ToLower(head), "urn:schemas-microsoft-com:unattend")
 }

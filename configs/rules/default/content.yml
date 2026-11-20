@@ -205,13 +205,14 @@ rules:
 
   # High value: saved passwords in remote-access client stores. The values are encrypted or
   # encoded with static or user-bound keys; they are reported with the original material and
-  # never decoded (mRemoteNG Password attribute, RDCMan <password>, WinSCP Password=,
+  # never decoded (mRemoteNG Password attribute, RDCMan <password> (lowercase only: unattend
+  # files use <Password>), WinSCP Password=,
   # FileZilla <Pass>, RDP "password 51:b:").
   - id: content.remote_access_saved_password
     name: Remote Access Saved Password
     description: Detect saved passwords in mRemoteNG, RDCMan, WinSCP, FileZilla and RDP connection files.
     type: content
-    pattern: '(?im)(<Node\b[^>]*\bPassword="[^"]{8,}"|<password>[^<]{8,}</password>|^\s*Password=[0-9A-F]{16,}\s*$|<Pass\b[^>]*>[^<]{4,}</Pass>|^\s*password 51:b:[0-9A-F]{16,})'
+    pattern: '(?im)(<Node\b[^>]*\bPassword="[^"]{8,}"|(?-i:<password>)[^<]{8,}(?-i:</password>)|^\s*Password=[0-9A-F]{16,}\s*$|<Pass\b[^>]*>[^<]{4,}</Pass>|^\s*password 51:b:[0-9A-F]{16,})'
     case_sensitive: false
     severity: high
     confidence: high

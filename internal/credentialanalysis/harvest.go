@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v3"
@@ -239,6 +240,20 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 			candidate.Verification = Review
 			candidate.ValidationBasis = ""
 			candidate.ReviewReasons = []string{"value or account is a code reference, not a literal credential"}
+		}
+		// A constant-shaped value without credential words
+		// ("BLUE_HARBOR_LANTERN") may be a real password or a constant name.
+		if candidate.Verification == Confirmed && IsScalarCredentialType(candidate.CredentialType) && IsSymbolicConstant(candidate.Value) {
+			candidate.Verification = Review
+			candidate.ValidationBasis = ""
+			candidate.ReviewReasons = []string{"value is shaped like a constant name"}
+		}
+		// A one- or two-character value ("p", a switch letter in a script)
+		// is never a confirmed password; it stays review material.
+		if candidate.Verification == Confirmed && IsScalarCredentialType(candidate.CredentialType) && utf8.RuneCountInString(strings.TrimSpace(candidate.Value)) < 3 {
+			candidate.Verification = Review
+			candidate.ValidationBasis = ""
+			candidate.ReviewReasons = []string{"value is too short to be a password"}
 		}
 		// Scalar secret values must have a scalar secret shape. Syntactically
 		// valid assignments whose right-hand side is a SQL variable, function

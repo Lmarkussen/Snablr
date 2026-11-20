@@ -179,6 +179,11 @@ func isValidatedArtifactIdentityOnly(f Finding) bool {
 		return true
 	case ruleID == "awsinspect.path.config":
 		return true
+	case strings.HasPrefix(ruleID, "windowsinspect.gpp."):
+		// A Group Policy Preferences document is actionable for a cpassword
+		// that decrypts; group memberships and values that do not decrypt
+		// are review material.
+		return !gppCarriesConfirmedCredential(f)
 	case ruleID == "windowsinspect.unattend.structured":
 		// An unattend file is actionable for the credentials it carries;
 		// templates and files Windows setup has scrubbed carry none.
@@ -227,5 +232,20 @@ func confidenceRank(value string) int {
 // unattendCarriesCredential reports whether an unattend document holds a
 // credential value that is not a placeholder, scrubbed or template value.
 func unattendCarriesCredential(f Finding) bool {
-	return len(credentialanalysis.Harvest(credentialanalysis.HarvestInput{Content: []byte(f.MatchedText), Path: f.FilePath})) > 0
+	return unattendTextCarriesCredential(f.FilePath, f.MatchedText)
+}
+
+func unattendTextCarriesCredential(path, text string) bool {
+	return len(credentialanalysis.Harvest(credentialanalysis.HarvestInput{Content: []byte(text), Path: path})) > 0
+}
+
+// gppCarriesConfirmedCredential reports whether a Group Policy Preferences
+// document holds a cpassword that decrypts to a credential.
+func gppCarriesConfirmedCredential(f Finding) bool {
+	for _, candidate := range credentialanalysis.Harvest(credentialanalysis.HarvestInput{Content: []byte(f.MatchedText), Path: f.FilePath}) {
+		if candidate.Verification == credentialanalysis.Confirmed {
+			return true
+		}
+	}
+	return false
 }

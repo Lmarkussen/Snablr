@@ -161,6 +161,8 @@ func ProtectedCredentialStore(path string) string {
 		return "FileZilla"
 	case strings.HasSuffix(name, ".rdp"):
 		return "RDP connection file"
+	case name == "ultravnc.ini":
+		return "UltraVNC"
 	default:
 		return ""
 	}

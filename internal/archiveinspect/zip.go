@@ -108,7 +108,8 @@ func InspectZIP(content []byte, outerExtension string, opts Options, allowedExte
 		// Legacy OLE/CFB Office documents are binary containers: keep the raw
 		// member so the shared harvester can reconstruct their text.
 		nestedLegacy := !officeContainer && isLegacyOfficeExtension(memberExt)
-		if !nestedOffice && !nestedLegacy && !shouldInspectMember(outerExtension, cleanedPath, memberExt, opts, allowedExtensions) {
+		jenkinsKey := IsJenkinsKeyMember(cleanedPath)
+		if !nestedOffice && !nestedLegacy && !jenkinsKey && !shouldInspectMember(outerExtension, cleanedPath, memberExt, opts, allowedExtensions) {
 			continue
 		}
 
@@ -135,7 +136,7 @@ func InspectZIP(content []byte, outerExtension string, opts Options, allowedExte
 			continue
 		}
 
-		if isSQLiteMemberExtension(memberExt) {
+		if isSQLiteMemberExtension(memberExt) || jenkinsKey {
 			totalBytes += int64(len(data))
 			inspectedMembers++
 			result.Members = append(result.Members, Member{
@@ -450,7 +451,8 @@ func InspectTAR(content []byte, outerExtension string, opts Options, allowedExte
 		cleanedPath := cleanedArchivePath(header.Name)
 		memberName := path.Base(cleanedPath)
 		memberExt := strings.ToLower(filepath.Ext(memberName))
-		if !shouldInspectMember(outerExtension, cleanedPath, memberExt, opts, allowedExtensions) {
+		jenkinsKey := IsJenkinsKeyMember(cleanedPath)
+		if !jenkinsKey && !shouldInspectMember(outerExtension, cleanedPath, memberExt, opts, allowedExtensions) {
 			continue
 		}
 
@@ -465,7 +467,7 @@ func InspectTAR(content []byte, outerExtension string, opts Options, allowedExte
 		if opts.MaxMemberBytes > 0 && int64(len(data)) > opts.MaxMemberBytes {
 			continue
 		}
-		if !looksTextLike(data) {
+		if !jenkinsKey && !looksTextLike(data) {
 			continue
 		}
 
@@ -481,6 +483,15 @@ func InspectTAR(content []byte, outerExtension string, opts Options, allowedExte
 	}
 
 	return result, nil
+}
+
+// IsJenkinsKeyMember reports a Jenkins home's key files (secrets/master.key
+// and the binary secrets/hudson.util.Secret), which decrypt the credentials
+// stored next to them in a backup of the home.
+func IsJenkinsKeyMember(memberPath string) bool {
+	lower := strings.ToLower(strings.ReplaceAll(memberPath, `\`, "/"))
+	return lower == "secrets/master.key" || lower == "secrets/hudson.util.secret" ||
+		strings.HasSuffix(lower, "/secrets/master.key") || strings.HasSuffix(lower, "/secrets/hudson.util.secret")
 }
 
 func newTARReader(content []byte, outerExtension string) (*tar.Reader, error) {

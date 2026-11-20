@@ -151,7 +151,7 @@ func allWordTokens(fields []string) bool {
 // hashes) is excluded.
 func IsScalarCredentialType(credentialType string) bool {
 	switch strings.ToLower(strings.TrimSpace(credentialType)) {
-	case "", "private_key", "connection_string", "nt_hash", "certificate":
+	case "", "private_key", "connection_string", "nt_hash", "certificate", "machine_key":
 		return false
 	default:
 		return true

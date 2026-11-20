@@ -65,6 +65,7 @@ var secretCredentialTypes = map[string]struct{}{
 	"dcc2":              {},
 	"hash":              {},
 	"certificate":       {},
+	"machine_key":       {},
 }
 
 // IsHashCredentialType reports whether a credential carries hash or
@@ -347,7 +348,7 @@ func reviewCandidateLacksEvidence(candidate Candidate) (string, bool) {
 	}
 	credentialType := strings.ToLower(strings.TrimSpace(candidate.CredentialType))
 	switch credentialType {
-	case "private_key", "nt_hash", "netntlmv1", "netntlmv2", "certificate", "connection_string":
+	case "private_key", "nt_hash", "netntlmv1", "netntlmv2", "certificate", "connection_string", "machine_key":
 		// Recovered or composite material carries its own evidence.
 		return "", false
 	case "password":

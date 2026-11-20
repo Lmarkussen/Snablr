@@ -85,6 +85,7 @@ type Engine struct {
 	validationSink     ValidationObserver
 	credentialExporter SensitiveCredentialExporter
 	candidateSink      CredentialCandidateSink
+	jenkins            *jenkinsCorrelator
 	bundleCoordinator  *artifactbundle.Coordinator
 	samMaxBytes        int64
 	systemMaxBytes     int64
@@ -150,6 +151,7 @@ func NewEngine(opts Options, manager *rules.Manager, sink FindingSink, log *logx
 		browserInspector:  browsercredinspect.New(),
 		dbInspector:       dbinspect.New(),
 		keyInspector:      keyinspect.New(),
+		jenkins:           newJenkinsCorrelator(),
 		sqliteInspector:   sqliteinspect.New(opts.SQLite),
 		wimInspector:      opts.WIM,
 		winCredInspector:  wincredinspect.New(),
@@ -410,6 +412,7 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 	harvestFailures, credentialFindings, harvested := e.harvestCredentialCandidatesWithOptions(meta, content, len(keyMatchesBeforeHarvest) > 0)
 	evaluation.InspectionFailures = append(evaluation.InspectionFailures, harvestFailures...)
 	evaluation.Findings = append(evaluation.Findings, credentialFindings...)
+	evaluation.Findings = append(evaluation.Findings, e.recordJenkinsSecrets(meta, content)...)
 
 	// Content rules operate on human-readable text. Legacy OLE/CFB Office files
 	// are binary containers, so the recovered text is what the rules must see.

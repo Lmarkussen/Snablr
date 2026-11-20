@@ -26,7 +26,7 @@ const (
 // decoding a value protected only by a public key or fixed obfuscation.
 func publicKeyDecoded(basis string) bool {
 	switch basis {
-	case decodedWinSCPBasis, decodedFileZillaBasis, decodedMRemoteNGBasis:
+	case decodedWinSCPBasis, decodedFileZillaBasis, decodedMRemoteNGBasis, decodedVNCBasis, decodedTeamViewerBasis:
 		return true
 	default:
 		return false

@@ -300,6 +300,12 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 	if protectedStore == "WinSCP" {
 		harvestWinSCPSessions(textContent, add)
 	}
+	if protectedStore == "UltraVNC" {
+		harvestUltraVNCIni(textContent, add)
+	}
+	if isRegistryExport(textContent) {
+		harvestRegistryRemoteStores(textContent, add)
+	}
 	if strings.TrimSpace(textContent) == "" {
 		return out
 	}
@@ -840,6 +846,7 @@ func walkXMLHarvest(node *xmlHarvestNode, add func(Candidate)) {
 	harvestGPPNode(node, add)
 	harvestFileZillaServer(node, add)
 	harvestMRemoteNGNode(node, add)
+	harvestMachineKeyNode(node, add)
 	harvestGenericXMLNode(node, add)
 	if isSecretElement(node.name) {
 		harvestXMLSecretElement(node, add)

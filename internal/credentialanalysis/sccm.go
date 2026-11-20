@@ -32,6 +32,12 @@ func harvestSCCMFields(fields map[string]string, add func(Candidate), basis stri
 		if !meaningfulHashIdentity(identity) {
 			identity = ""
 		}
+		// OSDLocalAdminPassword sets the local Administrator password of the
+		// deployed machine, like MDT AdminPassword; it never belongs to the
+		// join account in the same record.
+		if identity == "" && key == "osd_local_admin_password" {
+			identity = "Administrator"
+		}
 		candidate := Candidate{
 			Verification:    Review,
 			CredentialType:  "password",

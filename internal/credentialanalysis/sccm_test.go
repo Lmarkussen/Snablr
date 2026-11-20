@@ -17,8 +17,8 @@ func TestHarvestSCCMStructuredCredentials(t *testing.T) {
 	if seen["Synthetic-Join-482!"].Verification != Confirmed || seen["Synthetic-Join-482!"].Identity != `SYNTHETIC\join` {
 		t.Fatalf("join credential pairing = %#v", seen["Synthetic-Join-482!"])
 	}
-	if seen["Synthetic-Admin-482!"].Identity != "" || seen["Synthetic-Admin-482!"].Verification != Review {
-		t.Fatalf("local-admin credential was paired with unrelated account: %#v", seen["Synthetic-Admin-482!"])
+	if seen["Synthetic-Admin-482!"].Identity != "Administrator" || seen["Synthetic-Admin-482!"].Verification != Confirmed {
+		t.Fatalf("local-admin password is not the local Administrator credential (never the join account): %#v", seen["Synthetic-Admin-482!"])
 	}
 }
 
@@ -57,8 +57,8 @@ func TestHarvestSCCMJSONPairsMatchingAccountOnly(t *testing.T) {
 				t.Fatalf("JSON join pairing = %#v", candidate)
 			}
 		case "Synthetic-JSON-Admin-482!":
-			if candidate.Identity != "" {
-				t.Fatalf("JSON local-admin password used unrelated join account: %#v", candidate)
+			if candidate.Identity != "Administrator" {
+				t.Fatalf("JSON local-admin password is not the local Administrator credential (never the join account): %#v", candidate)
 			}
 		}
 	}

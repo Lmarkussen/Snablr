@@ -4,12 +4,13 @@ import (
 	"testing"
 )
 
-// Task-sequence variables pair the OSD accounts with their passwords.
+// Task-sequence variables pair the OSD accounts with their passwords;
+// OSDLocalAdminPassword is the local Administrator password.
 func TestTaskSequenceVariablesArePaired(t *testing.T) {
 	content := `<?xml version="1.0" encoding="utf-8"?><sequence version="3.10"><globalVarList><variable name="OSDJoinAccount" property="OSDJoinAccount">CORP\svc_osdjoin</variable><variable name="OSDJoinPassword" property="OSDJoinPassword">Osd-Join-Synth-4821</variable><variable name="OSDLocalAdminPassword" property="OSDLocalAdminPassword">Osd-Local-Synth-73</variable></globalVarList><group name="Capture"><step type="SMS_TaskSequence_CaptureSystemImageAction" name="Capture"><defaultVarList><variable name="OSDCaptureAccount" property="CaptureAccount">CORP\svc_capture</variable><variable name="OSDCaptureAccountPassword" property="CaptureAccountPassword">Osd-Capture-Synth-19</variable></defaultVarList></step></group></sequence>`
 	findings, candidates := harvestAt(t, "Deploy/TaskSequences/WS-Build.xml", content)
 	got := confirmedPairs(candidates)
-	for _, want := range []harvestedPair{{`CORP\svc_osdjoin`, "Osd-Join-Synth-4821"}, {`CORP\svc_capture`, "Osd-Capture-Synth-19"}} {
+	for _, want := range []harvestedPair{{`CORP\svc_osdjoin`, "Osd-Join-Synth-4821"}, {"Administrator", "Osd-Local-Synth-73"}, {`CORP\svc_capture`, "Osd-Capture-Synth-19"}} {
 		if !got[want] {
 			t.Errorf("missing confirmed %s / %s; confirmed=%v", want.identity, want.value, got)
 		}

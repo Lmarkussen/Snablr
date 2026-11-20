@@ -295,6 +295,9 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 		}
 		if !structured {
 			harvestLines(textContent, add)
+			// YAML-shaped text in other files (notes, archive members) keeps
+			// its secret lists; only those lists are read from the YAML parse.
+			harvestYAMLSecretLists(normalizedContent, add)
 			// Delimited exports (CSV/TSV) keep their rows as records so that
 			// header-mapped credentials correlate per row and never across rows.
 			if ext == ".csv" || ext == ".tsv" {
@@ -640,6 +643,9 @@ func harvestYAML(content []byte, add func(Candidate)) bool {
 				if value.Kind == yaml.ScalarNode {
 					fields[normalizeKey(key.Value)] = strings.TrimSpace(value.Value)
 				}
+				if value.Kind == yaml.SequenceNode {
+					harvestYAMLSecretList(key.Value, value, add)
+				}
 			}
 			harvestFields(fields, add, "structured YAML object")
 		}
@@ -649,6 +655,68 @@ func harvestYAML(content []byte, add func(Candidate)) bool {
 	}
 	walk(&node)
 	return true
+}
+
+// yamlSecretListKeys name YAML lists whose items are secrets themselves.
+var yamlSecretListKeys = map[string]string{"secrets": "secret", "passwords": "password", "passwds": "password"}
+
+// harvestYAMLSecretList reports the items of a "secrets:" or "passwords:"
+// list (scalars, or mappings with a single value field) as review material.
+// Nothing ties an item to an account, so none is ever confirmed.
+func harvestYAMLSecretList(key string, list *yaml.Node, add func(Candidate)) {
+	credType, ok := yamlSecretListKeys[normalizeKey(key)]
+	if !ok {
+		return
+	}
+	for _, item := range list.Content {
+		value := ""
+		switch item.Kind {
+		case yaml.ScalarNode:
+			value = item.Value
+		case yaml.MappingNode:
+			for i := 0; i+1 < len(item.Content); i += 2 {
+				if normalizeKey(item.Content[i].Value) == "value" && item.Content[i+1].Kind == yaml.ScalarNode {
+					value = item.Content[i+1].Value
+				}
+			}
+		}
+		value = strings.TrimSpace(value)
+		if value == "" || IsPlaceholderValue(value) || looksReferenceOrTemplate(value) {
+			continue
+		}
+		add(Candidate{Verification: Review, CredentialType: credType, Value: value, ReviewReasons: []string{"secret list item has no account"}})
+	}
+}
+
+var yamlSecretListLine = regexp.MustCompile(`(?im)^\s*(secrets|passwords|passwds)\s*:\s*$`)
+
+// harvestYAMLSecretLists reads only "secrets:"/"passwords:" lists from text
+// that parses as YAML but is not a YAML file.
+func harvestYAMLSecretLists(content []byte, add func(Candidate)) {
+	if !yamlSecretListLine.Match(content) {
+		return
+	}
+	var node yaml.Node
+	if err := yaml.Unmarshal(content, &node); err != nil {
+		return
+	}
+	var walk func(*yaml.Node)
+	walk = func(current *yaml.Node) {
+		if current == nil {
+			return
+		}
+		if current.Kind == yaml.MappingNode {
+			for i := 0; i+1 < len(current.Content); i += 2 {
+				if current.Content[i+1].Kind == yaml.SequenceNode {
+					harvestYAMLSecretList(current.Content[i].Value, current.Content[i+1], add)
+				}
+			}
+		}
+		for _, child := range current.Content {
+			walk(child)
+		}
+	}
+	walk(&node)
 }
 
 func harvestXML(content []byte, add func(Candidate)) bool {
@@ -1022,6 +1090,7 @@ func harvestLines(text string, add func(Candidate)) {
 	// text-bearing source is covered by one grammar.
 	text = NormalizeCredentialExpressions(text)
 	harvestCommandPairs(text, add)
+	harvestWindowsCommands(text, add)
 	sections := map[string]map[string]string{"": {}}
 	section := ""
 	pairedTopLevelPasswords := make(map[string]struct{})
@@ -1065,6 +1134,7 @@ func harvestLines(text string, add func(Candidate)) {
 		if section == "" {
 			current := &struct{ key, value string }{key: key, value: value}
 			_, sccmPasswordField := sccmPasswordAccounts[key]
+			sccmPasswordField = sccmPasswordField || productPasswordField(key)
 			if previousTopLevel != nil && ClassifyFieldName(previousTopLevel.key) == FieldRoleIdentity && isPasswordKey(key) && !ProtectedSecretFieldName(key) && compatibleAssignmentScope(previousTopLevel.key, key) && !sccmPasswordField && !looksReferenceOrTemplate(value) {
 				identity := strings.TrimSpace(previousTopLevel.value)
 				if identity != "" && !IsPlaceholderIdentity(identity) {
@@ -1086,8 +1156,9 @@ func harvestLines(text string, add func(Candidate)) {
 			harvestNTHashFields(fields, add, basis)
 			harvestSCCMFields(fields, add, "structured SCCM configuration record")
 		}
+		harvestProductFields(fields, add, basis)
 		if section != "" {
-			harvestScopedFields(fields, add, basis)
+			harvestScopedFields(withoutProductFields(fields), add, basis)
 		}
 	}
 	// Top-level assignments are deliberately independent. This prevents a
@@ -1097,6 +1168,9 @@ func harvestLines(text string, add func(Candidate)) {
 	for _, key := range sortedKeys(sections[""]) {
 		value := sections[""][key]
 		if _, sccmField := sccmPasswordAccounts[key]; sccmField {
+			continue
+		}
+		if _, _, productField := productPasswordAccount(key, sections[""]); productField {
 			continue
 		}
 		if isSecretKey(key) {
@@ -1376,6 +1450,8 @@ func harvestFieldsMode(fields map[string]string, add func(Candidate), basis stri
 	if basis != "structured XML object" {
 		harvestSCCMFields(fields, add, basis)
 	}
+	harvestProductFields(fields, add, basis)
+	fields = withoutProductFields(fields)
 	identity := fieldIdentity(fields)
 	domain := fieldDomain(fields)
 	identityKey := fieldIdentityKey(fields)

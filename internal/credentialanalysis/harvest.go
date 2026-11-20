@@ -273,6 +273,14 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 			textContent = rendered
 		}
 	}
+	// Python documentation strings hold usage examples: they are harvested
+	// as review material, and the code around them as usual.
+	if IsPythonSource(input.Path) {
+		if masked, docs := MaskPythonDocumentation(textContent); len(docs) > 0 {
+			textContent = masked
+			harvestPythonDocumentation(input, docs, report, add)
+		}
+	}
 	harvestPowerShellHashtables(textContent, add)
 	if protectedStore == "WinSCP" {
 		harvestWinSCPSessions(textContent, add)

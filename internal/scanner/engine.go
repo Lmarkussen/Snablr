@@ -431,6 +431,18 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 	if stripped := textdecode.StripTerminalSequences(string(ruleContent)); len(stripped) != len(ruleContent) {
 		ruleContent = []byte(stripped)
 	}
+	// Python documentation strings (docstrings, module EXAMPLES) hold usage
+	// examples; content rules and connection-string inspection see the code
+	// only. The harvester keeps the documentation as review material.
+	inspectContent := content
+	if credentialanalysis.IsPythonSource(meta.FilePath) {
+		if masked, docs := credentialanalysis.MaskPythonDocumentation(string(ruleContent)); len(docs) > 0 {
+			ruleContent = []byte(masked)
+		}
+		if masked, docs := credentialanalysis.MaskPythonDocumentation(string(content)); len(docs) > 0 {
+			inspectContent = []byte(masked)
+		}
+	}
 	// Natural-language credential expressions are normalised into the shared
 	// assignment form so the existing content findings apply to them too, for
 	// every text-bearing source.
@@ -440,11 +452,11 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 		}
 	}
 	evaluation.Findings = append(evaluation.Findings, e.contentScanner.Scan(e.contentRules, meta, ruleContent)...)
-	evaluation.Findings = append(evaluation.Findings, findingsFromAWSMatches(meta, e.awsInspector.InspectContent(awsCandidate(meta), content))...)
-	evaluation.Findings = append(evaluation.Findings, findingsFromCloudMatches(meta, e.cloudInspector.InspectContent(cloudCandidate(meta), content))...)
+	evaluation.Findings = append(evaluation.Findings, findingsFromAWSMatches(meta, e.awsInspector.InspectContent(awsCandidate(meta), inspectContent))...)
+	evaluation.Findings = append(evaluation.Findings, findingsFromCloudMatches(meta, e.cloudInspector.InspectContent(cloudCandidate(meta), inspectContent))...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromWindowsMatches(meta, e.windowsInspector.InspectContent(windowsCandidate(meta), content))...)
 	evaluation.Findings = append(evaluation.Findings, findingsFromSCCMMatches(meta, e.sccmInspector.InspectContent(sccmCandidate(meta), content))...)
-	dbMatches := e.dbInspector.InspectContent(dbCandidate(meta), content)
+	dbMatches := e.dbInspector.InspectContent(dbCandidate(meta), inspectContent)
 	evaluation.Findings = append(evaluation.Findings, findingsFromDBMatches(meta, dbMatches)...)
 	e.recordDBConnectionCandidates(meta, dbMatches)
 	keyMatches := keyMatchesBeforeHarvest

@@ -70,7 +70,7 @@ func (s *SQLiteStore) ToggleBookmark(ctx context.Context, host, share, path stri
 		lookupPath = lookupPath[:index]
 	}
 	var key string
-	if err := s.db.QueryRowContext(ctx, `SELECT file_key FROM files WHERE scan_id=? AND host=? AND share=? AND (path=? OR path=?) LIMIT 1`, s.scanID, host, share, path, lookupPath).Scan(&key); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT file_key FROM files WHERE scan_id=? AND host=? COLLATE NOCASE AND share=? COLLATE NOCASE AND (path=? OR path=?) LIMIT 1`, s.scanID, host, share, path, lookupPath).Scan(&key); err != nil {
 		if err == sql.ErrNoRows {
 			return Bookmark{}, false, fmt.Errorf("file is not persisted yet")
 		}
@@ -150,7 +150,7 @@ func (s *SQLiteStore) BookmarkDetails(ctx context.Context, key string) (Bookmark
 		return detail, err
 	}
 	detail.Bookmark.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-	findingRows, err := s.db.QueryContext(ctx, `SELECT payload FROM findings WHERE scan_id=? AND host=? AND share=? AND (path=? OR path LIKE ? || '!%') ORDER BY id LIMIT 25`, s.scanID, detail.Bookmark.Host, detail.Bookmark.Share, detail.Bookmark.Path, detail.Bookmark.Path)
+	findingRows, err := s.db.QueryContext(ctx, `SELECT payload FROM findings WHERE scan_id=? AND host=? COLLATE NOCASE AND share=? COLLATE NOCASE AND (path=? OR path LIKE ? || '!%') ORDER BY id LIMIT 25`, s.scanID, detail.Bookmark.Host, detail.Bookmark.Share, detail.Bookmark.Path, detail.Bookmark.Path)
 	if err != nil {
 		return detail, err
 	}

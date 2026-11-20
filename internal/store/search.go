@@ -58,11 +58,11 @@ func (s *SQLiteStore) Search(ctx context.Context, query string, options SearchOp
     FROM files
    WHERE scan_id=? AND (snablr_contains(path,?) OR snablr_contains(host,?) OR snablr_contains(share,?))
   UNION ALL
-	  SELECT 'FINDING' AS result_type, CAST(id AS TEXT) AS result_id, COALESCE(rule_id, category, 'finding') AS title, host || ' / ' || share AS context, path AS detail, path AS source, COALESCE((SELECT file_key FROM files f WHERE f.scan_id=findings.scan_id AND f.host=findings.host AND f.share=findings.share AND (f.path=findings.path OR findings.path LIKE f.path || '!%') LIMIT 1), '') AS bookmark_key, '' AS credential_payload, '' AS credential_type, '' AS credential_identity, '' AS credential_value
+	  SELECT 'FINDING' AS result_type, CAST(id AS TEXT) AS result_id, COALESCE(rule_id, category, 'finding') AS title, host || ' / ' || share AS context, path AS detail, path AS source, COALESCE((SELECT file_key FROM files f WHERE f.scan_id=findings.scan_id AND f.host=findings.host COLLATE NOCASE AND f.share=findings.share COLLATE NOCASE AND (f.path=findings.path OR findings.path LIKE f.path || '!%') LIMIT 1), '') AS bookmark_key, '' AS credential_payload, '' AS credential_type, '' AS credential_identity, '' AS credential_value
     FROM findings
    WHERE scan_id=? AND (snablr_contains(rule_id,?) OR snablr_contains(category,?) OR snablr_contains(host,?) OR snablr_contains(share,?) OR snablr_contains(path,?))
   UNION ALL
-	  SELECT 'EVIDENCE' AS result_type, CAST(id AS TEXT) AS result_id, COALESCE(rule_id, 'evidence') AS title, path AS context, substr(payload, 1, 240) AS detail, path AS source, COALESCE((SELECT file_key FROM files f WHERE f.scan_id=findings.scan_id AND f.host=findings.host AND f.share=findings.share AND (f.path=findings.path OR findings.path LIKE f.path || '!%') LIMIT 1), '') AS bookmark_key, '' AS credential_payload, '' AS credential_type, '' AS credential_identity, '' AS credential_value
+	  SELECT 'EVIDENCE' AS result_type, CAST(id AS TEXT) AS result_id, COALESCE(rule_id, 'evidence') AS title, path AS context, substr(payload, 1, 240) AS detail, path AS source, COALESCE((SELECT file_key FROM files f WHERE f.scan_id=findings.scan_id AND f.host=findings.host COLLATE NOCASE AND f.share=findings.share COLLATE NOCASE AND (f.path=findings.path OR findings.path LIKE f.path || '!%') LIMIT 1), '') AS bookmark_key, '' AS credential_payload, '' AS credential_type, '' AS credential_identity, '' AS credential_value
     FROM findings
    WHERE scan_id=? AND snablr_contains(payload,?)
      AND NOT snablr_contains(rule_id,?)

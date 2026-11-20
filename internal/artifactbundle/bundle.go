@@ -874,8 +874,17 @@ func originFor(key BundleKey, first, second artifact.Binary) BundleOrigin {
 		base = ntds
 	}
 	origin := base.Origin()
+	// The key is lowercased for grouping; findings name the host and share
+	// as the scan found them, like every other finding.
+	host, share := strings.TrimSpace(origin.Host), strings.TrimSpace(origin.Share)
+	if host == "" {
+		host = key.Host
+	}
+	if share == "" {
+		share = key.Share
+	}
 	return BundleOrigin{
-		Host: key.Host, Share: key.Share, Scope: key.Scope, Context: key.Context,
+		Host: host, Share: share, Scope: key.Scope, Context: key.Context,
 		SourceType: clean(origin.ContainerType), ContainerPath: origin.ContainerPath,
 		ImageIndex: origin.ImageIndex, SAMPath: logicalPath(sam), SYSTEMPath: logicalPath(system), SECURITYPath: logicalPath(security), NTDSPath: logicalPath(ntds),
 	}

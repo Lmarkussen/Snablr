@@ -70,6 +70,7 @@ func (e *Engine) recordKeyMaterialCandidates(meta FileMetadata, content []byte, 
 		if match.ReviewReason != "" {
 			candidate.ReviewReasons = []string{match.ReviewReason}
 		}
+		candidate = reviewIfThirdPartyLibrary(candidate)
 		if err := e.candidateSink.RecordCredentialCandidate(candidate); err != nil && e.log != nil {
 			e.log.Errorf("private-key credential candidate recording failed for %s: %v", meta.FilePath, err)
 		}

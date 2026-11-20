@@ -99,6 +99,7 @@ func (e *Engine) recordDBConnectionCandidates(meta FileMetadata, matches []dbins
 				Location: strings.TrimSpace(match.Match),
 			}},
 		}
+		candidate = reviewIfThirdPartyLibrary(candidate)
 		if err := e.candidateSink.RecordCredentialCandidate(candidate); err != nil && e.log != nil {
 			e.log.Errorf("database credential candidate recording failed for %s: %v", meta.FilePath, err)
 		}

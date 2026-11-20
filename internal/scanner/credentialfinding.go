@@ -141,3 +141,16 @@ func findingsFromConfirmedCredentials(meta FileMetadata, candidates []credential
 		PotentialAccount:    strings.TrimSpace(first.Identity),
 	})}
 }
+
+// reviewIfThirdPartyLibrary keeps credential material found in installed
+// third-party library code (test keys, example connection strings) as
+// review material instead of a confirmed credential.
+func reviewIfThirdPartyLibrary(candidate credentialanalysis.Candidate) credentialanalysis.Candidate {
+	if candidate.Verification != credentialanalysis.Confirmed || !credentialanalysis.ThirdPartyLibraryPath(candidate.Path) {
+		return candidate
+	}
+	candidate.Verification = credentialanalysis.Review
+	candidate.ValidationBasis = ""
+	candidate.ReviewReasons = append(candidate.ReviewReasons, "found in third-party library code")
+	return candidate
+}

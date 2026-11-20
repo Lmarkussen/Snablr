@@ -76,6 +76,7 @@ func (e *Engine) recordSQLiteCredentialCandidates(meta FileMetadata, matches []s
 				Location: strings.TrimSpace(match.Match),
 			}},
 		}
+		candidate = reviewIfThirdPartyLibrary(candidate)
 		if err := e.candidateSink.RecordCredentialCandidate(candidate); err != nil && e.log != nil {
 			e.log.Errorf("SQLite credential candidate recording failed for %s: %v", meta.FilePath, err)
 		}

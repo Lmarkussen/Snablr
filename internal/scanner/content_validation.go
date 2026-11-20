@@ -61,6 +61,9 @@ func weakContentSuppression(ruleID string, category string, matchedText string, 
 			return true, "credential-note match is password policy documentation"
 		}
 		values := extractedSensitiveValues(matchedText)
+		if allPlaceholderValues(values) {
+			return true, "credential-note values are placeholders, unresolved references or code"
+		}
 		quality := assessExtractedValuesQuality(values)
 		if len(values) > 0 && quality.Weak && !quality.LengthOnly {
 			return true, "credential-note value looks placeholder-like or low quality"
@@ -293,7 +296,7 @@ func pairedSecretValues(context string) []string {
 
 func allPlaceholderValues(values []string) bool {
 	for _, value := range values {
-		if !credentialanalysis.IsPlaceholderValue(value) {
+		if !credentialanalysis.IsPlaceholderValue(value) && !credentialanalysis.IsCodeReference(value) {
 			return false
 		}
 	}

@@ -140,6 +140,10 @@ func IsPlaceholderIdentity(identity string) bool {
 	if _, ok := identityFieldNames[strings.ToLower(unquoted)]; ok {
 		return true
 	}
+	// A variable, parameter or type reference is code, never an account.
+	if IsCodeReference(unquoted) {
+		return true
+	}
 	return IsPlaceholderValue(identity)
 }
 

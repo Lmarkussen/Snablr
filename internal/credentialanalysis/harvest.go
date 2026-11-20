@@ -201,6 +201,7 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 	}
 	var out []Candidate
 	protectedStore := ProtectedCredentialStore(input.Path)
+	thirdPartyLibrary := ThirdPartyLibraryPath(input.Path)
 	add := func(candidate Candidate) {
 		if len(out) >= maxHarvestItems || strings.TrimSpace(candidate.Value) == "" {
 			return
@@ -216,6 +217,28 @@ func harvest(input HarvestInput, report *harvestReport) []Candidate {
 		// are excluded from every credential output, never reported for review.
 		if IsPlaceholderValue(candidate.Value) {
 			return
+		}
+		// DPAPI-protected values are bound to a user or machine key; they are
+		// encrypted material, never a plaintext credential.
+		if candidate.Verification == Confirmed && IsScalarCredentialType(candidate.CredentialType) && IsDPAPIBlob(candidate.Value) {
+			candidate.Verification = Review
+			candidate.Encrypted = true
+			candidate.ValidationBasis = ""
+			candidate.ReviewReasons = []string{"value is a DPAPI blob; plaintext is not recovered"}
+		}
+		// Third-party library code holds documentation examples and test
+		// fixtures, not the organisation's credentials.
+		if candidate.Verification == Confirmed && thirdPartyLibrary {
+			candidate.Verification = Review
+			candidate.ValidationBasis = ""
+			candidate.ReviewReasons = []string{"found in third-party library code"}
+		}
+		// A value or account that is a code reference ("module.params['x']",
+		// "user;") is never a confirmed credential; it stays review material.
+		if candidate.Verification == Confirmed && IsScalarCredentialType(candidate.CredentialType) && (IsCodeReference(candidate.Value) || IsCodeReference(candidate.Identity)) {
+			candidate.Verification = Review
+			candidate.ValidationBasis = ""
+			candidate.ReviewReasons = []string{"value or account is a code reference, not a literal credential"}
 		}
 		// Scalar secret values must have a scalar secret shape. Syntactically
 		// valid assignments whose right-hand side is a SQL variable, function

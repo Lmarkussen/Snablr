@@ -235,7 +235,7 @@ func authSummary(values map[string]string) authFields {
 
 func meaningfulConnectionCredentialValue(value string) string {
 	value = meaningfulValue(value)
-	if value == "" || credentialanalysis.IsMaskedValue(value) || looksLikeSampleValue(value) {
+	if value == "" || credentialanalysis.IsMaskedValue(value) || looksLikeSampleValue(value) || credentialanalysis.IsCodeReference(value) {
 		return ""
 	}
 	if reason, reject := credentialanalysis.NonSecretValueShape(value); reject {

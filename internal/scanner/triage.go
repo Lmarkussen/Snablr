@@ -78,6 +78,12 @@ func hasStrongEvidence(f Finding) bool {
 	if needsDecryptionFirst(f) {
 		return false
 	}
+	// Installed third-party library code holds documentation examples and
+	// test fixtures; only name-identified direct-exploit artifacts (a dump or
+	// a hive copied there) stay actionable.
+	if credentialanalysis.ThirdPartyLibraryPath(f.FilePath) && !isDirectExploitArtifact(f) {
+		return false
+	}
 	if strings.EqualFold(strings.TrimSpace(findingPrimarySignal(f)), "correlation") {
 		return true
 	}

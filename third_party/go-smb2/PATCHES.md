@@ -19,7 +19,10 @@ well overstated the credits available to concurrent requests. Requests with a
 fixed credit charge of one (negotiate, session setup, tree connect and
 disconnect, close, logoff) now take that credit from the balance like all
 other requests; they used to be sent without it while their responses still
-granted credits. The upstream
+granted credits. Error responses with error contexts (SMB 3.1.1) are
+accepted when the last context is not padded to 8 bytes, as Windows sends
+them: a reply such as STATUS_STOPPED_ON_SYMLINK for a directory junction was
+rejected as a broken response. The upstream
 BSD 3-Clause license and copyright notice are preserved in `LICENSE`.
 
 The changes were implemented independently from SMB protocol semantics. This

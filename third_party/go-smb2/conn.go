@@ -699,6 +699,13 @@ func acceptError(status uint32, res []byte) error {
 
 			data[i] = ctx.ErrorContextData()
 
+			// Contexts are padded to 8 bytes only when another one follows;
+			// Windows does not pad the last one, for example the symbolic
+			// link context of STATUS_STOPPED_ON_SYMLINK.
+			if i == len(data)-1 {
+				break
+			}
+
 			next := ctx.Next()
 
 			if len(eData) < next {

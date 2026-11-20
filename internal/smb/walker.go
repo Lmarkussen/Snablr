@@ -24,6 +24,9 @@ type WalkOptions struct {
 	// are read, allowing cooperative operator actions to identify the actual
 	// traversal scope rather than a selected finding.
 	CurrentDirectory func(string)
+	// SkippedDirectory reports a directory the server refused to list for a
+	// reason other than access; the walk goes on without it.
+	SkippedDirectory func(path string, err error)
 }
 
 func (c *Client) WalkShare(share string, fn func(RemoteFile) error) error {
@@ -80,6 +83,14 @@ func (c *Client) walkTree(share string, opts WalkOptions, maxDepth int, list fun
 			if isPermissionError(err) || os.IsNotExist(err) {
 				continue
 			}
+			// One directory the server refuses does not end the walk of
+			// the whole share; a failing connection or host still does.
+			if item.path != "" && isServerRefusal(err) {
+				if opts.SkippedDirectory != nil {
+					opts.SkippedDirectory(normalizeRemotePath(item.path), err)
+				}
+				continue
+			}
 			return fmt.Errorf("read dir %s on %s: %w", item.path, share, err)
 		}
 
@@ -107,6 +118,11 @@ func (c *Client) walkTree(share string, opts WalkOptions, maxDepth int, list fun
 					return err
 				}
 
+				// Junctions (SYSVOL's domain folder) are resolved by the
+				// server and walked like folders. A symbolic link the
+				// server will not resolve (Users\All Users) is refused and
+				// skipped below; Windows' legacy compatibility junctions
+				// deny listing, so they do not loop.
 				if opts.ShouldDescend == nil || opts.ShouldDescend(normalizedPath) {
 					stack = append(stack, walkItem{path: remotePath, depth: dirDepth})
 				}
@@ -155,6 +171,15 @@ func normalizeRemotePath(path string) string {
 	path = strings.ReplaceAll(path, `\`, `/`)
 	path = strings.TrimPrefix(path, "./")
 	return strings.TrimPrefix(path, "/")
+}
+
+// isServerRefusal reports whether the server answered a request with an
+// error status or a reply that cannot be read, as opposed to the request
+// failing to complete.
+func isServerRefusal(err error) bool {
+	var responseErr *smb2.ResponseError
+	var invalidErr *smb2.InvalidResponseError
+	return errors.As(err, &responseErr) || errors.As(err, &invalidErr)
 }
 
 func isPermissionError(err error) bool {

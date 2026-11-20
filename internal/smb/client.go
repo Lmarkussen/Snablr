@@ -46,6 +46,9 @@ type Auth struct {
 	NTHash   [16]byte
 	CCache   string
 	SPN      string
+	// Workstation is the client computer name sent in NTLM authentication.
+	// Empty sends no name.
+	Workstation string
 }
 
 func NewPasswordAuth(username, domain, password string) Auth {
@@ -125,6 +128,9 @@ type Client struct {
 
 	// baseCtx cancels in-flight operations when the scan is interrupted;
 	// opTimeout bounds each operation (idle limit for reads and listings).
+	pacerOnce sync.Once
+	pacer     *pacer
+
 	baseCtx             context.Context
 	opTimeout           time.Duration
 	consecutiveTimeouts int
@@ -256,7 +262,7 @@ func (c *Client) ConnectWithAuth(host string, auth Auth) error {
 }
 
 func newNTLMInitiator(auth Auth, username, domain string) *smb2.NTLMInitiator {
-	initiator := &smb2.NTLMInitiator{User: username, Domain: domain}
+	initiator := &smb2.NTLMInitiator{User: username, Domain: domain, Workstation: strings.TrimSpace(auth.Workstation)}
 	if auth.Mode == AuthModeNTHash {
 		initiator.Hash = append([]byte(nil), auth.NTHash[:]...)
 		return initiator
@@ -342,6 +348,9 @@ func (c *Client) mountShare(share string) (*smb2.Share, error) {
 	}
 
 	mountPath := fmt.Sprintf(`\\%s\%s`, serverName, share)
+	if err := c.pace(); err != nil {
+		return nil, fmt.Errorf("mount %s: %w", mountPath, err)
+	}
 	watchdog, err := c.operationWatchdog()
 	if err != nil {
 		return nil, fmt.Errorf("mount %s: %w", mountPath, err)

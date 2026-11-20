@@ -17,6 +17,9 @@ func (c *Client) ReadFile(share, path string) ([]byte, error) {
 }
 
 func (c *Client) readFile(fs *smb2.Share, share, path string, maxReadSize int64) ([]byte, error) {
+	if err := c.pace(); err != nil {
+		return nil, fmt.Errorf("read %s on %s: %w", path, share, err)
+	}
 	// One idle watchdog covers open and the read; it restarts whenever data
 	// arrives, so slow transfers continue and stalled ones time out.
 	watchdog, err := c.operationWatchdog()
@@ -82,6 +85,9 @@ func (c *Client) ReadFilePrefix(share, path string, limit int64) ([]byte, error)
 }
 
 func (c *Client) readFilePrefix(fs *smb2.Share, share, path string, limit int64) ([]byte, error) {
+	if err := c.pace(); err != nil {
+		return nil, fmt.Errorf("read %s on %s: %w", path, share, err)
+	}
 	watchdog, err := c.operationWatchdog()
 	if err != nil {
 		return nil, fmt.Errorf("read %s on %s: %w", path, share, err)

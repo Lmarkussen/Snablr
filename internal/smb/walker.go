@@ -49,7 +49,7 @@ func (c *Client) WalkShareWithOptions(share string, opts WalkOptions, fn func(Re
 		maxDepth = c.maxDepth
 	}
 	list := func(dir string) ([]os.FileInfo, error) { return c.readDir(fs, dir) }
-	return c.walkTree(share, opts, maxDepth, list, dirPrefetchInFlight, fn)
+	return c.walkTree(share, opts, maxDepth, list, c.walkPrefetch(), fn)
 }
 
 type walkItem struct {
@@ -215,6 +215,9 @@ const readDirBatchSize = 512
 // in batches under an idle watchdog, so a huge directory on a slow link keeps
 // going while a directory listing that makes no progress times out.
 func (c *Client) readDir(fs *smb2.Share, dir string) ([]os.FileInfo, error) {
+	if err := c.pace(); err != nil {
+		return nil, err
+	}
 	watchdog, err := c.operationWatchdog()
 	if err != nil {
 		return nil, err

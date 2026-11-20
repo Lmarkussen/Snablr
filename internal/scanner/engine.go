@@ -50,6 +50,9 @@ type Options struct {
 	SYSTEMMaxBytes    int64
 	SECURITYMaxBytes  int64
 	NTDSMaxBytes      int64
+	// WithholdSensitiveContent reports the files ContentWithheld names by
+	// name only, without opening them (stealth mode).
+	WithholdSensitiveContent bool
 }
 
 type Engine struct {
@@ -173,6 +176,9 @@ func (e *Engine) EvaluateContext(ctx context.Context, meta FileMetadata, content
 			Skipped:    true,
 			SkipReason: "directories are not scanned as files",
 		}
+	}
+	if e.withholdsContent(meta) {
+		return e.metadataOnlyEvaluation(meta, "content withheld in stealth mode")
 	}
 
 	if e.shouldSkipByPath(meta) {
@@ -333,7 +339,7 @@ func validationObserverForSink(sink FindingSink) ValidationObserver {
 
 func (e *Engine) NeedsContent(meta FileMetadata) bool {
 	meta = meta.Normalized()
-	if meta.IsDir {
+	if meta.IsDir || e.withholdsContent(meta) {
 		return false
 	}
 	if e.shouldSkipByPath(meta) {

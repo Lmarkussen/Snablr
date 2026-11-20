@@ -61,6 +61,22 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	if strings.TrimSpace(opts.Profile) != "" {
 		_ = config.ApplyScanProfile(cfg, opts.Profile)
 	}
+	// Stealth is a preset: options given explicitly below override it.
+	if opts.Stealth {
+		config.ApplyStealth(cfg)
+	}
+	if opts.StealthReadSensitive {
+		cfg.Scan.StealthReadSensitive = true
+	}
+	if strings.TrimSpace(opts.Workstation) != "" {
+		cfg.Scan.Workstation = strings.TrimSpace(opts.Workstation)
+	}
+	if strings.TrimSpace(opts.FileDelay) != "" {
+		cfg.Scan.FileDelay = opts.FileDelay
+	}
+	if strings.TrimSpace(opts.HostDelay) != "" {
+		cfg.Scan.HostDelay = opts.HostDelay
+	}
 	if len(opts.Targets) > 0 {
 		cfg.Scan.Targets = append([]string{}, opts.Targets...)
 	}
@@ -120,7 +136,7 @@ func applyScanOverrides(cfg *config.Config, opts ScanOptions) {
 	}
 	if opts.LowMemory {
 		cfg.Scan.LowMemory = true
-		if opts.WorkerCount == nil {
+		if opts.WorkerCount == nil && !cfg.Scan.Stealth {
 			cfg.Scan.WorkerCount = 2
 		}
 	}
@@ -302,6 +318,12 @@ func applyDiscoverOverrides(cfg *config.Config, opts DiscoverOptions) {
 func validateScanConfig(cfg config.Config) error {
 	if cfg.Scan.Resume && cfg.Scan.ForceRescan {
 		return fmt.Errorf("--resume and --force-rescan cannot be used together; choose resume or a fresh force-rescan")
+	}
+	if _, _, err := config.ParseDelayRange(cfg.Scan.FileDelay); err != nil {
+		return fmt.Errorf("--file-delay: %w", err)
+	}
+	if _, _, err := config.ParseDelayRange(cfg.Scan.HostDelay); err != nil {
+		return fmt.Errorf("--host-delay: %w", err)
 	}
 	authMode := normalizeLDAPAuthMode(cfg.Scan.AuthMode)
 	if authMode != discovery.AuthModePassword && authMode != discovery.AuthModeKerberos {

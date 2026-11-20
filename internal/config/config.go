@@ -68,6 +68,20 @@ type ScanConfig struct {
 	SkipReachabilityCheck      bool     `yaml:"skip_reachability_check"`
 	ReachabilityTimeoutSeconds int      `yaml:"reachability_timeout_seconds"`
 	SMBTimeoutSeconds          int      `yaml:"smb_timeout_seconds"`
+	// Workstation is the client computer name sent in NTLM authentication.
+	Workstation string `yaml:"workstation"`
+	// Stealth lowers the scan's footprint on the targets; see ApplyStealth.
+	Stealth bool `yaml:"stealth"`
+	// StealthReadSensitive reads files stealth mode otherwise reports by
+	// name only (hives, ntds.dit, dumps, tickets, mailboxes).
+	StealthReadSensitive bool `yaml:"stealth_read_sensitive"`
+	// StealthMaxDeniedShares stops a host after this many consecutive
+	// shares refused access in stealth mode (0 never stops).
+	StealthMaxDeniedShares int `yaml:"stealth_max_denied_shares"`
+	// FileDelay and HostDelay space SMB operations and hosts by a random
+	// delay in a range such as "500ms-2s" (or one duration).
+	FileDelay string `yaml:"file_delay"`
+	HostDelay string `yaml:"host_delay"`
 }
 
 type ArchiveConfig struct {
@@ -499,4 +513,71 @@ func (s ScanConfig) MaxScanDuration() (time.Duration, error) {
 		return 0, fmt.Errorf("max_scan_time must be greater than zero")
 	}
 	return duration, nil
+}
+
+// Stealth defaults: one worker, a random pause before every share
+// connection, directory listing and file open, and between hosts.
+const (
+	StealthWorkerCount        = 1
+	StealthFileDelay          = "500ms-2s"
+	StealthHostDelay          = "10s-60s"
+	StealthMaxFileSize        = 2 * 1024 * 1024
+	StealthMaxDeniedShares    = 5
+	stealthArchiveAutoMaxSize = 2 * 1024 * 1024
+)
+
+// ApplyStealth sets the stealth preset. Options given explicitly on the
+// command line are applied afterwards and override it.
+func ApplyStealth(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	cfg.Scan.Stealth = true
+	cfg.Scan.WorkerCount = StealthWorkerCount
+	if strings.TrimSpace(cfg.Scan.FileDelay) == "" {
+		cfg.Scan.FileDelay = StealthFileDelay
+	}
+	if strings.TrimSpace(cfg.Scan.HostDelay) == "" {
+		cfg.Scan.HostDelay = StealthHostDelay
+	}
+	if cfg.Scan.MaxFileSize <= 0 || cfg.Scan.MaxFileSize > StealthMaxFileSize {
+		cfg.Scan.MaxFileSize = StealthMaxFileSize
+	}
+	if cfg.Scan.StealthMaxDeniedShares == 0 {
+		cfg.Scan.StealthMaxDeniedShares = StealthMaxDeniedShares
+	}
+	// No separate TCP 445 sweep: each host is contacted when its turn comes.
+	cfg.Scan.SkipReachabilityCheck = true
+	// Large containers mean large transfers; WIM images are not opened.
+	cfg.WIM.Enabled = false
+	if cfg.Archives.AutoZIPMaxSize > stealthArchiveAutoMaxSize {
+		cfg.Archives.AutoZIPMaxSize = stealthArchiveAutoMaxSize
+	}
+	if cfg.Archives.AutoTARMaxSize > stealthArchiveAutoMaxSize {
+		cfg.Archives.AutoTARMaxSize = stealthArchiveAutoMaxSize
+	}
+}
+
+// ParseDelayRange parses a delay such as "500ms-2s" or "1s" into its bounds.
+// An empty value means no delay.
+func ParseDelayRange(value string) (time.Duration, time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, 0, nil
+	}
+	low, high, ranged := strings.Cut(value, "-")
+	min, err := time.ParseDuration(strings.TrimSpace(low))
+	if err != nil {
+		return 0, 0, fmt.Errorf("parse delay %q: %w", value, err)
+	}
+	max := min
+	if ranged {
+		if max, err = time.ParseDuration(strings.TrimSpace(high)); err != nil {
+			return 0, 0, fmt.Errorf("parse delay %q: %w", value, err)
+		}
+	}
+	if min < 0 || max < min {
+		return 0, 0, fmt.Errorf("delay %q must be a non-negative range with the smaller value first", value)
+	}
+	return min, max, nil
 }

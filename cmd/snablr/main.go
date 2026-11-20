@@ -315,6 +315,11 @@ func runScan(args []string) error {
 	scannedTargetsOut := fs.String("scanned-targets-out", "", "Path to sensitive scanned-target inventory export (default: scanned_targets.txt)")
 	reportBackupArtifacts := fs.Bool("report-backup-artifacts", false, "Collect .bak, .wim, and .mtf file locations into a separate HTML/JSON backup artifact inventory section")
 	logLevel := fs.String("log-level", "", "Log level: debug, info, warn, error")
+	stealth := fs.Bool("stealth", false, "Lower the scan footprint: skip ADMIN$/C$/drive shares, one worker, random delays, no 445 sweep, sensitive files by name only (explicit flags override)")
+	stealthReadSensitive := fs.Bool("stealth-read-sensitive", false, "In stealth mode, still open hives, ntds.dit, dumps, tickets and mailbox files")
+	workstation := fs.String("workstation", "", "Client computer name sent in NTLM authentication (default: none)")
+	fileDelay := fs.String("file-delay", "", "Random delay before each share connection, directory listing and file open, for example 500ms-2s")
+	hostDelay := fs.String("host-delay", "", "Random delay between hosts, for example 10s-60s")
 	var wimEnabled optionalBoolFlag
 	var wimAutoMaxSize optionalInt64Flag
 	var wimAllowLarge optionalBoolFlag
@@ -447,6 +452,11 @@ func runScan(args []string) error {
 		WIMMaxNTDSBytes:            wimMaxNTDSBytes.ptr(),
 		WIMMaxImages:               wimMaxImages.ptr(),
 		LogLevel:                   *logLevel,
+		Stealth:                    *stealth,
+		StealthReadSensitive:       *stealthReadSensitive,
+		Workstation:                *workstation,
+		FileDelay:                  *fileDelay,
+		HostDelay:                  *hostDelay,
 	})
 }
 
@@ -876,6 +886,7 @@ func scanHelpGroups(advanced bool) []scanHelpGroup {
 		{Title: "Authentication", Flags: []string{"username", "password", "user", "pass", "auth", "smb-auth", "domain", "dc", "no-ldap", "list-shares"}},
 		{Title: "Persistence and execution", Flags: []string{"resume", "force-rescan", "sqlite-state-file", "dbname", "flushdb", "worker-count", "low-memory", "max-scan-time"}},
 		{Title: "Output", Flags: []string{"no-outfile", "scanned-targets-out", "no-tui", "no-color"}},
+		{Title: "Stealth", Flags: []string{"stealth", "workstation", "file-delay", "host-delay", "stealth-read-sensitive"}},
 	}
 	if !advanced {
 		return groups

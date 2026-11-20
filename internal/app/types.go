@@ -41,6 +41,11 @@ type ScanOptions struct {
 	ForceRescan                bool
 	ListShares                 bool
 	SkipReachabilityCheck      bool
+	Stealth                    bool
+	StealthReadSensitive       bool
+	Workstation                string
+	FileDelay                  string
+	HostDelay                  string
 	ReachabilityTimeoutSeconds int
 	SMBTimeoutSeconds          int
 	NoOutfile                  bool

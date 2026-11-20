@@ -105,6 +105,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	logPersistenceNotice(cfg, logger)
 	cfg.Scan.WorkerCount = scanner.ResolveWorkerCount(cfg.Scan.WorkerCount)
 	logger.Infof("using %d file scan worker(s)", cfg.Scan.WorkerCount)
+	logStealthSummary(cfg, logger)
 
 	scanCtx := ctx
 	var timeoutCancel context.CancelFunc
@@ -301,7 +302,10 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 		Workers:          cfg.Scan.WorkerCount,
 		MaxFileSizeBytes: cfg.Scan.MaxFileSize,
 		MaxReadBytes:     scanReadLimit(cfg),
-		SnippetBytes:     120,
+		// Stealth reports credential stores and other files public
+		// detection rules watch by name only.
+		WithholdSensitiveContent: cfg.Scan.Stealth && !cfg.Scan.StealthReadSensitive,
+		SnippetBytes:             120,
 		Archives: archiveinspect.Options{
 			Enabled:                  cfg.Archives.Enabled,
 			AutoZIPMaxSize:           cfg.Archives.AutoZIPMaxSize,
@@ -501,7 +505,14 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 	var errs []error
 	timedOut := false
 	scanTimer := recorder.StartPhase("host_scanning")
+	pauseBeforeNextHost := false
 	for _, target := range plannedHosts {
+		// The host delay runs before the cancellation checks below, so an
+		// interruption during the pause ends the scan like one between hosts.
+		if pauseBeforeNextHost {
+			pauseBeforeNextHost = false
+			_ = pauseBetweenHosts(scanCtx, cfg.Scan, sleepWithContext)
+		}
 		if failure := authorityFailure(); failure != nil {
 			return failure
 		}
@@ -527,6 +538,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (err error) {
 			}
 			continue
 		}
+		pauseBeforeNextHost = true
 		output.SetCurrentHost(sink, target.Host)
 		if progress != nil {
 			progress.SetCurrentHost(target.Host)
@@ -725,6 +737,7 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 	// timeout without progress, so an unresponsive host cannot stall the scan.
 	client.SetOperationContext(ctx, cfg.Scan.SMBTimeout())
 	defer client.Close()
+	applyFilePacing(client, cfg.Scan)
 
 	auth, err := smbAuthForHost(host, cfg.Scan)
 	if err != nil {
@@ -734,7 +747,7 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		return fmt.Errorf("%s: connect failed: %w", host, err)
 	}
 
-	shares, err := client.ListShares()
+	shares, filteredShares, err := listShareCandidates(client, cfg.Scan)
 	if err != nil {
 		if len(cfg.Scan.Share) == 0 {
 			return fmt.Errorf("%s: list shares failed: %w", host, err)
@@ -765,6 +778,11 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		shareSet[key] = struct{}{}
 		shareInfoByName[key] = share
 	}
+	// Shares the filters rejected before the access check are known to
+	// exist, exactly as when they were checked and then filtered out.
+	for _, share := range filteredShares {
+		shareSet[strings.ToLower(strings.TrimSpace(share))] = struct{}{}
+	}
 	for shareName := range dfsHints {
 		if _, ok := shareSet[shareName]; ok {
 			continue
@@ -781,7 +799,7 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 	}
 
 	shareInputs := make([]planner.ShareInput, 0, len(shares))
-	configuredSkippedShares := make([]string, 0)
+	configuredSkippedShares := append(make([]string, 0, len(filteredShares)), filteredShares...)
 	for _, shareInfo := range shares {
 		share := shareInfo.Name
 		if !scanShareAllowed(share, cfg.Scan) {
@@ -812,9 +830,11 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 	// A folder that another scanned share exports is walked once, as that
 	// share. Share paths are only known with administrative rights.
 	var nestedShares map[string][]nestedShare
+	// Stealth does not query share paths: it is an administrative srvsvc
+	// request, and the drive shares that nest other shares are skipped.
 	if lister, ok := client.(interface {
 		SharePaths() (map[string]string, error)
-	}); ok {
+	}); ok && !cfg.Scan.Stealth {
 		paths, err := lister.SharePaths()
 		if err != nil {
 			logger.Warnf("share paths unavailable on %s: %v", host, err)
@@ -1169,6 +1189,15 @@ func bundleKeyString(key artifactbundle.BundleKey) string {
 }
 
 func smbAuthForHost(host string, cfg config.ScanConfig) (smb.Auth, error) {
+	auth, err := smbAuthForMode(host, cfg)
+	if err != nil {
+		return auth, err
+	}
+	auth.Workstation = cfg.Workstation
+	return auth, nil
+}
+
+func smbAuthForMode(host string, cfg config.ScanConfig) (smb.Auth, error) {
 	smbAuthMode := strings.ToLower(strings.TrimSpace(cfg.SMBAuth))
 	switch smb.AuthMode(smbAuthMode) {
 	case smb.AuthModeNTHash:
@@ -1207,6 +1236,10 @@ type scanSemantics struct {
 	WIM              config.WIMConfig
 	SQLite           config.SQLiteConfig
 	RulesFingerprint string
+	// WithheldContent marks stealth runs that report sensitive files by
+	// name only, so a later full run reads them. Omitted otherwise, so the
+	// fingerprint of every other run is unchanged.
+	WithheldContent bool `json:",omitempty"`
 }
 
 // scannerSemanticsVersion is part of the incremental reuse decision: a change
@@ -1267,6 +1300,7 @@ func scanSemanticsFingerprintWithVersion(cfg config.Config, manager *rules.Manag
 		WIM:              cfg.WIM,
 		SQLite:           cfg.SQLite,
 		RulesFingerprint: ruleFingerprint,
+		WithheldContent:  cfg.Scan.Stealth && !cfg.Scan.StealthReadSensitive,
 	})
 }
 
@@ -1444,6 +1478,60 @@ func scanReadLimit(cfg config.Config) int64 {
 		}
 	}
 	return limit
+}
+
+// filteredShareLister lists shares and tests access only for the shares a
+// filter accepts, so excluded shares are never connected to.
+type filteredShareLister interface {
+	ListSharesFiltered(smb.ShareListOptions) ([]smb.ShareInfo, []string, error)
+}
+
+// listShareCandidates returns the accessible shares that pass the share
+// filters, and the names of the shares it did not connect to. Clients
+// without filtered listing test every share.
+func listShareCandidates(client scanClient, cfg config.ScanConfig) ([]smb.ShareInfo, []string, error) {
+	lister, ok := client.(filteredShareLister)
+	if !ok {
+		shares, err := client.ListShares()
+		return shares, nil, err
+	}
+	return lister.ListSharesFiltered(shareListOptions(cfg))
+}
+
+func shareListOptions(cfg config.ScanConfig) smb.ShareListOptions {
+	opts := smb.ShareListOptions{Allow: func(share string) bool {
+		if !scanShareAllowed(share, cfg) || (cfg.OnlyADShares && !smb.IsADShare(share)) {
+			return false
+		}
+		// Stealth never touches ADMIN$ or drive shares unless named.
+		return !cfg.Stealth || !isAdminDiskShare(share) || shareExplicitlyRequested(share, cfg)
+	}}
+	if cfg.Stealth {
+		// Named shares are connected to directly: the host's share list is
+		// not requested.
+		opts.Names = append([]string(nil), cfg.Share...)
+		opts.MaxConsecutiveDenied = cfg.StealthMaxDeniedShares
+	}
+	return opts
+}
+
+// isAdminDiskShare reports the administrative shares ADMIN$ and the drive
+// shares C$, D$, ...
+func isAdminDiskShare(share string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(share))
+	if upper == "ADMIN$" {
+		return true
+	}
+	return len(upper) == 2 && upper[1] == '$' && upper[0] >= 'A' && upper[0] <= 'Z'
+}
+
+func shareExplicitlyRequested(share string, cfg config.ScanConfig) bool {
+	for _, requested := range cfg.Share {
+		if strings.EqualFold(strings.TrimSpace(requested), strings.TrimSpace(share)) {
+			return true
+		}
+	}
+	return false
 }
 
 func scanShareAllowed(share string, cfg config.ScanConfig) bool {

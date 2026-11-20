@@ -25,7 +25,30 @@ var (
 	angleWrapperPattern   = regexp.MustCompile(`^<[A-Za-z_][A-Za-z0-9_ .-]*>$`)
 	symbolicPattern       = regexp.MustCompile(`^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$`)
 	alphabeticOnlyPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z_\- ]*$`)
+	// scriptVariablePattern is a PowerShell/shell variable reference with
+	// optional property access, scope and trailing call parentheses:
+	// "$clearText", "$Value.UserName", "$env:APP_PASSWORD", "$Password.Password))".
+	scriptVariablePattern = regexp.MustCompile(`^\$([A-Za-z_][A-Za-z0-9_]*)((?:[.:][A-Za-z_][A-Za-z0-9_]*)*)(\)*)$`)
 )
+
+// redactionMarkers are values that tools write in place of a removed secret.
+// Windows setup replaces unattend passwords with "*SENSITIVE*DATA*DELETED*".
+var redactionMarkers = map[string]struct{}{
+	"*sensitive*data*deleted*": {},
+}
+
+// fieldNameEchoes are credential field names written in capitals as the value
+// of the field itself ("USERNAME" : "PASSWORD" in usage text). Only the
+// all-capitals form is a placeholder: a lowercase "password" can be a real,
+// weak password.
+var fieldNameEchoes = map[string]struct{}{
+	"PASSWORD": {}, "PASSWD": {}, "PWD": {}, "SECRET": {},
+	"USERNAME": {}, "USER": {}, "USERID": {}, "LOGIN": {},
+}
+
+// scriptVariableWords mark a bare "$name" as a variable rather than a secret
+// that happens to start with "$".
+var scriptVariableWords = []string{"pass", "pwd", "secret", "token", "cred", "key", "user", "login", "account", "text", "value", "plain", "clear", "string"}
 
 // templateTokenWords are tokens that carry explicit template vocabulary even
 // when combined with other tokens. They are matched as complete tokens (never
@@ -108,14 +131,42 @@ func IsPlaceholderValue(value string) bool {
 // "USER_TEMPLATE"). When an identity is a placeholder it must never be used to
 // confirm a password candidate.
 func IsPlaceholderIdentity(identity string) bool {
+	unquoted := strings.TrimSpace(identity)
+	for trimmed := trimOneQuoting(unquoted); trimmed != unquoted; trimmed = trimOneQuoting(unquoted) {
+		unquoted = trimmed
+	}
+	// An account named after the field itself ("username : password" in
+	// usage text) is never a real account, in any letter case.
+	if _, ok := identityFieldNames[strings.ToLower(unquoted)]; ok {
+		return true
+	}
 	return IsPlaceholderValue(identity)
+}
+
+var identityFieldNames = map[string]struct{}{
+	"username": {}, "user": {}, "userid": {}, "user_name": {}, "login": {}, "account": {}, "accountname": {},
 }
 
 // scalarPlaceholderReason classifies a single (non-composite) value.
 func scalarPlaceholderReason(value string) (string, bool) {
 	trimmed := strings.TrimSpace(value)
+	for unquoted := trimOneQuoting(trimmed); unquoted != trimmed; unquoted = trimOneQuoting(trimmed) {
+		trimmed = unquoted
+	}
 	if trimmed == "" {
 		return "", false
+	}
+	if _, ok := redactionMarkers[strings.ToLower(trimmed)]; ok {
+		return "redaction_marker", true
+	}
+	if _, ok := fieldNameEchoes[trimmed]; ok {
+		return "field_name_echo", true
+	}
+	if isScriptVariableReference(trimmed) {
+		return "variable_reference", true
+	}
+	if lower := strings.ToLower(trimmed); lower == "autogenerate" || lower == "autogenerate,isolateapps" {
+		return "non_secret_literal", true
 	}
 	if _, ok := nonSecretLiterals[strings.ToLower(trimmed)]; ok {
 		return "non_secret_literal", true
@@ -206,6 +257,32 @@ func allSegmentsAlphabetic(value string) bool {
 		}
 	}
 	return true
+}
+
+// isScriptVariableReference reports whether a value is a script variable
+// reference rather than a secret: a "$name" with property access, a scope,
+// trailing call parentheses, a language literal, or a name made of variable
+// vocabulary. A value with digits or symbols after the name ("$ecret2026!")
+// does not match.
+func isScriptVariableReference(value string) bool {
+	match := scriptVariablePattern.FindStringSubmatch(value)
+	if match == nil {
+		return false
+	}
+	name, access, calls := strings.ToLower(match[1]), match[2], match[3]
+	if access != "" || calls != "" {
+		return true
+	}
+	switch name {
+	case "null", "true", "false":
+		return true
+	}
+	for _, word := range scriptVariableWords {
+		if strings.Contains(name, word) {
+			return true
+		}
+	}
+	return false
 }
 
 func containsTemplateWord(value string) bool {

@@ -73,8 +73,24 @@ func weakContentSuppression(ruleID string, category string, matchedText string, 
 		// there is no credential to report, matching how the credential
 		// harvester treats the same values. Any real secret keeps the finding,
 		// and notes without a visible secret line keep the default handling.
-		if secrets := pairedSecretValues(context); len(secrets) > 0 && allPlaceholderValues(secrets) {
+		secrets := pairedSecretValues(context)
+		if len(secrets) > 0 && allPlaceholderValues(secrets) {
 			return true, "paired secret values are placeholders or unresolved references"
+		}
+		// A line that names an account in DOMAIN\user or user@domain form,
+		// with no secret anywhere around it, is an identity (a log or
+		// transcript header such as "Username: HOST\admin"), not a
+		// credential pair.
+		if len(secrets) == 0 {
+			if pair, ok := parseGenericPairLine(matchedText); ok && isQualifiedAccountName(pair.Value) {
+				return true, "account name without a paired secret"
+			}
+		}
+	case "content.password_note_value_indicators":
+		// "...the service account password available." is prose: the word
+		// after "password" ends a sentence or is ordinary vocabulary.
+		if match := passwordNoteValuePattern.FindStringSubmatch(matchedText); match != nil && isProseWord(match[1]) {
+			return true, "password mention is prose, not a value"
 		}
 	case "content.password_assignment_indicators":
 		// An explicit "<password> = <value>" assignment states a credential
@@ -85,6 +101,16 @@ func weakContentSuppression(ruleID string, category string, matchedText string, 
 		// finding itself keeps its low confidence from the same value-quality
 		// assessment.
 		matchedValues := extractedSensitiveValues(matchedText)
+		if len(matchedValues) == 0 {
+			// Keys such as "ndesServiceAccountPassword" are not split out by
+			// the value extractor; read the assigned value directly.
+			if value, ok := assignedValue(matchedText); ok {
+				matchedValues = []string{value}
+			}
+		}
+		if allPlaceholderValues(matchedValues) {
+			return true, "assigned values are placeholders or unresolved references"
+		}
 		matchedQuality := assessExtractedValuesQuality(matchedValues)
 		if len(matchedValues) > 0 && matchedQuality.Weak && !matchedQuality.LengthOnly {
 			return true, "sensitive values look placeholder-like or low quality"
@@ -272,4 +298,52 @@ func allPlaceholderValues(values []string) bool {
 		}
 	}
 	return len(values) > 0
+}
+
+var (
+	passwordNoteValuePattern = regexp.MustCompile(`(?i)\b(?:password|passord)\b(?:[ \t]+is[ \t]+|[ \t]*[:=][ \t]*|[ \t]+)(\S{4,64})[ \t]*$`)
+	qualifiedAccountPattern  = regexp.MustCompile(`^(?:[A-Za-z0-9][A-Za-z0-9._-]*\\[A-Za-z0-9][A-Za-z0-9._$-]*|[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)$`)
+)
+
+// proseWords commonly follow "password" in documentation and log text.
+var proseWords = map[string]struct{}{
+	"available": {}, "required": {}, "needed": {}, "expired": {}, "changed": {}, "reset": {},
+	"protected": {}, "encrypted": {}, "stored": {}, "provided": {}, "missing": {}, "incorrect": {},
+	"policy": {}, "prompt": {}, "field": {}, "below": {}, "above": {}, "here": {}, "there": {},
+}
+
+// isProseWord reports whether the word after "password" is prose: a lowercase
+// word that ends a sentence or is common documentation vocabulary.
+func isProseWord(value string) bool {
+	word := strings.TrimRight(value, ".,;:!?")
+	if word == "" {
+		return false
+	}
+	for _, r := range word {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+	}
+	if word != value && strings.HasSuffix(value, ".") {
+		return true
+	}
+	_, ok := proseWords[word]
+	return ok
+}
+
+// isQualifiedAccountName reports whether a value is a DOMAIN\user or
+// user@domain account name.
+func isQualifiedAccountName(value string) bool {
+	return qualifiedAccountPattern.MatchString(strings.TrimSpace(value))
+}
+
+// assignedValue returns the value of a single "key = value" or "key: value"
+// assignment, without trailing statement terminators.
+func assignedValue(text string) (string, bool) {
+	index := strings.IndexAny(text, "=:")
+	if index < 0 {
+		return "", false
+	}
+	value := strings.TrimSpace(strings.TrimRight(strings.TrimSpace(text[index+1:]), ";,"))
+	return value, value != ""
 }

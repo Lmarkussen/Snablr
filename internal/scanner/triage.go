@@ -1,6 +1,10 @@
 package scanner
 
-import "strings"
+import (
+	"strings"
+
+	"snablr/internal/credentialanalysis"
+)
 
 const (
 	triageActionable = "actionable"
@@ -130,6 +134,10 @@ func isValidatedArtifactIdentityOnly(f Finding) bool {
 		return true
 	case ruleID == "awsinspect.path.config":
 		return true
+	case ruleID == "windowsinspect.unattend.structured":
+		// An unattend file is actionable for the credentials it carries;
+		// templates and files Windows setup has scrubbed carry none.
+		return !unattendCarriesCredential(f)
 	default:
 		return false
 	}
@@ -169,4 +177,10 @@ func confidenceRank(value string) int {
 	default:
 		return 0
 	}
+}
+
+// unattendCarriesCredential reports whether an unattend document holds a
+// credential value that is not a placeholder, scrubbed or template value.
+func unattendCarriesCredential(f Finding) bool {
+	return len(credentialanalysis.Harvest(credentialanalysis.HarvestInput{Content: []byte(f.MatchedText), Path: f.FilePath})) > 0
 }

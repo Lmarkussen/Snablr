@@ -11,7 +11,9 @@ rules:
     name: Cloud Configuration Names
     description: Detect filenames associated with cloud credentials, kubeconfig files, and infrastructure-as-code review.
     type: filename
-    pattern: '(?i)(aws|azure|gcp|cloud|terraform|tfvars|kubeconfig|kubernetes|helm|docker|ansible|vault)'
+    # The short acronyms must stand alone in the name ("aws-config", "gcp_key.json"),
+    # so they are not matched inside unrelated words such as "ngcpopkeysrv".
+    pattern: '(?i)((?:^|[^a-z0-9])(?:aws|gcp)(?:[^a-z0-9]|$)|azure|cloud|terraform|tfvars|kubeconfig|kubernetes|helm|docker|ansible|vault)'
     case_sensitive: false
     severity: high
     tags: [cloud, infrastructure, filenames]

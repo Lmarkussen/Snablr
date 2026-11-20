@@ -41,6 +41,28 @@ rules:
     max_file_size: 0
     action: skip
 
+  # Safe default: Windows component folders hold files that ship with the operating
+  # system (component store, servicing packages, inbox apps, driver store, .NET
+  # framework configs and templates). On an admin share they produce thousands of
+  # template and sample matches on every host. Files here are still checked for
+  # confirmed credentials, and secret stores and memory dumps are still reported
+  # by name. System32\config, Panther, Temp and the rest of System32 stay scanned.
+  - id: skip.windows_component_paths
+    name: Windows Component Paths
+    description: Skip operating-system component folders and Explorer caches whose files ship with Windows.
+    type: filename
+    pattern: '.+'
+    case_sensitive: false
+    severity: low
+    tags: [skip, windows, operating-system]
+    category: exclusions
+    enabled: true
+    include_paths: [winsxs, windows/servicing, windows/systemapps, windows/diagnostics, windows/inf, windows/pla, windows/assembly, windows/microsoft.net, windows/syswow64, windows/system32/driverstore, windows/system32/catroot, windows/system32/catroot2, microsoft/windows/explorer, microsoft/windows/caches]
+    exclude_paths: []
+    file_extensions: []
+    max_file_size: 0
+    action: skip
+
   # Safe default: media files rarely contribute to text-focused remediation triage.
   - id: skip.media_extensions
     name: Media Extensions

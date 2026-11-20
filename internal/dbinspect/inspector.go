@@ -43,7 +43,7 @@ func (Inspector) InspectMetadata(candidate Candidate) []Match {
 		matches = append(matches, match)
 		seen[match.ID] = struct{}{}
 	}
-	if def, ok := extensionArtifacts[ext]; ok {
+	if def, ok := extensionArtifacts[ext]; ok && !isDirectorySchemaFile(name, ext) {
 		match := artifactMatch(def, ext, "extension")
 		if _, exists := seen[match.ID]; !exists {
 			matches = append(matches, match)
@@ -102,4 +102,11 @@ func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
 	}
 
 	return matches
+}
+
+// isDirectorySchemaFile reports whether an .ldf file is an LDAP Data
+// Interchange schema file that ships with Windows (MS-User.LDF,
+// MS-AdamSchemaW2K8.LDF) rather than a SQL Server transaction log.
+func isDirectorySchemaFile(name, ext string) bool {
+	return ext == ".ldf" && strings.HasPrefix(strings.ToLower(name), "ms-")
 }

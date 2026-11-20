@@ -30,7 +30,7 @@ func TestHighValueArtifactCoverage(t *testing.T) {
 		{"Mail/Archive/old-mail.pst", "!BDN", 500 * mib, "extension.mail_store_archives", false},
 		{"ISO/boot-media.iso", "CD001", 400 * mib, "extension.optical_disk_images", false},
 		{"Users/Bob/Desktop/nopass.rdp", "full address:s:jump.synthetic\nusername:s:svc_synthetic\n", 0, "filename.remote_access_client_configs", false},
-		{"Users/Bob/Desktop/jump.rdp", "full address:s:jump.synthetic\npassword 51:b:01000000D08C9DDF0115D1118C7A00C04FC297EB01000000\n", 0, "content.remote_access_saved_password", true},
+		{"Users/Bob/Desktop/jump.rdp", "full address:s:jump.synthetic\npassword 51:b:01000000D08C9DDF0115D1118C7A00C04FC297EB01000000\n", 0, "content.remote_access_saved_password", false},
 		{"Users/Bob/AppData/Roaming/FileZilla/sitemanager.xml", `<FileZilla3><Servers><Server><Host>ftp.synthetic</Host><User>svc_synthetic</User><Pass encoding="base64">U3ludGhldGljLUZ0cC0xIQ==</Pass></Server></Servers></FileZilla3>`, 0, "content.remote_access_saved_password", true},
 		{"IT/VPN/wg0.conf", "[Interface]\nPrivateKey = yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=\nAddress = 10.200.0.2/32\n", 0, "content.wireguard_private_key", true},
 	}

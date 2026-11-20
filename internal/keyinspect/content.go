@@ -59,8 +59,17 @@ func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
 		ValidationBasis: validationBasis,
 		ReviewReason:    reviewReason,
 	}
+	if encrypted {
+		// Triage reads the tag: a passphrase-protected key needs cracking
+		// before use, so it is review material, not actionable.
+		match.Tags = append(match.Tags, EncryptedKeyTag)
+	}
 	return []Match{match}
 }
+
+// EncryptedKeyTag marks a private-key finding whose key is passphrase
+// protected.
+const EncryptedKeyTag = "key:encrypted"
 
 func matchedHeader(content []byte) string {
 	for _, header := range privateKeyHeaders {

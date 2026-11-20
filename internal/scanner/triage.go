@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"snablr/internal/credentialanalysis"
+	"snablr/internal/keyinspect"
 )
 
 const (
@@ -74,6 +75,9 @@ func isWeakReviewFinding(f Finding) bool {
 }
 
 func hasStrongEvidence(f Finding) bool {
+	if needsDecryptionFirst(f) {
+		return false
+	}
 	if strings.EqualFold(strings.TrimSpace(findingPrimarySignal(f)), "correlation") {
 		return true
 	}
@@ -115,6 +119,38 @@ func isDirectExploitArtifact(f Finding) bool {
 	default:
 		return false
 	}
+}
+
+// needsDecryptionFirst reports findings whose evidence is protected secret
+// material: it must be decrypted or cracked before it can be used, and
+// Snablr does neither, so it is review material rather than actionable.
+func needsDecryptionFirst(f Finding) bool {
+	// The key inspector tags a passphrase-protected key; correlation carries
+	// the tag to the file's finding whichever rule ends up primary (the
+	// id_rsa filename rule or a header content rule).
+	if findingHasTag(f, keyinspect.EncryptedKeyTag) {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(f.RuleID)) {
+	case "content.remote_access_saved_password":
+		// RDP connection files and RDCMan <password> elements store the
+		// saved password as a DPAPI blob bound to the user who saved it
+		// (hex in .rdp, base64 "AQAAANCMnd8BFdERjHoAwE/Cl+s" in RDCMan).
+		match := strings.TrimSpace(f.Match)
+		return strings.HasPrefix(strings.ToLower(match), "password 51:b:") ||
+			strings.HasPrefix(match, "<password>AQAAANCMnd8BFdERjHoAwE/Cl+s")
+	default:
+		return false
+	}
+}
+
+func findingHasTag(f Finding, tag string) bool {
+	for _, value := range f.Tags {
+		if strings.EqualFold(strings.TrimSpace(value), tag) {
+			return true
+		}
+	}
+	return false
 }
 
 func isValidatedArtifactIdentityOnly(f Finding) bool {

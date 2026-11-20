@@ -307,6 +307,47 @@ rules:
     max_file_size: 0
     action: report
 
+  # Review: ConfigMgr boot media and PXE variable files hold the task-sequence variables,
+  # including the network access account and collection variables, encrypted with the
+  # media or PXE password. They are reported by name and never decrypted.
+  - id: filename.sccm_pxe_boot_variables
+    name: SCCM PXE Boot Variables
+    description: Report ConfigMgr PXE boot variable files (*.boot.var).
+    type: filename
+    pattern: '(?i)\.boot\.var$'
+    case_sensitive: false
+    severity: high
+    confidence: high
+    explanation: A PXE boot variable file holds the task-sequence variables of a ConfigMgr PXE deployment, encrypted with the PXE password, which is often weak or empty.
+    remediation: Restrict access to the RemoteInstall share, set a strong PXE password, and rotate the network access account and any credentials in collection variables.
+    tags: [credentials, sccm, osd, boot-media, filenames]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: []
+    file_extensions: []
+    max_file_size: 0
+    action: report
+
+  - id: filename.sccm_media_variables
+    name: SCCM Boot Media Variables
+    description: Report ConfigMgr boot media variable files (SMS\data\Variables.dat).
+    type: filename
+    pattern: '(?i)^variables\.dat$'
+    case_sensitive: false
+    severity: high
+    confidence: high
+    explanation: Variables.dat on ConfigMgr boot media holds the task-sequence variables, encrypted with the media password, which is often weak or empty.
+    remediation: Remove boot media copies from shared locations, protect media with a strong password, and rotate the network access account and any credentials in collection variables.
+    tags: [credentials, sccm, osd, boot-media, filenames]
+    category: credentials
+    enabled: true
+    include_paths: [sms/data]
+    exclude_paths: []
+    file_extensions: []
+    max_file_size: 0
+    action: report
+
   # High value: LSASS dumps, hibernation files and full memory dumps contain credential
   # material in memory.
   - id: filename.memory_dump_artifacts

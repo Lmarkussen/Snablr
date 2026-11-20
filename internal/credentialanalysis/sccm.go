@@ -3,9 +3,11 @@ package credentialanalysis
 import "strings"
 
 var sccmPasswordAccounts = map[string]string{
-	"osd_join_password":        "osd_join_account",
-	"osd_local_admin_password": "osd_local_admin_account",
-	"domain_join_password":     "domain_join_account",
+	"osd_join_password":                   "osd_join_account",
+	"osd_local_admin_password":            "osd_local_admin_account",
+	"domain_join_password":                "domain_join_account",
+	"osd_capture_account_password":        "osd_capture_account",
+	"sms_connect_network_folder_password": "sms_connect_network_folder_account",
 }
 
 // harvestSCCMFields handles only explicitly named ConfigMgr credential fields
@@ -64,7 +66,10 @@ func harvestSCCMXMLScope(node *xmlHarvestNode, add func(Candidate)) {
 
 func sccmXMLScopeName(name string) bool {
 	switch normalizeKey(name) {
-	case "step", "task", "task_sequence", "task_sequence_step", "task_sequence_action", "action":
+	case "step", "task", "task_sequence", "task_sequence_step", "task_sequence_action", "action",
+		// Task-sequence XML keeps variables in <globalVarList> and per step
+		// in <defaultVarList>, as <variable name="...">value</variable>.
+		"global_var_list", "default_var_list":
 		return true
 	default:
 		return false

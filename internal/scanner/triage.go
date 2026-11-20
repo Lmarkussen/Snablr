@@ -133,7 +133,7 @@ func needsDecryptionFirst(f Finding) bool {
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(f.RuleID)) {
-	case ReviewCredentialRuleID:
+	case ReviewCredentialRuleID, "content.sccm_naa_policy_secret":
 		return true
 	case "content.remote_access_saved_password":
 		// RDP connection files and RDCMan <password> elements store the

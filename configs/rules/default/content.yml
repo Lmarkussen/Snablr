@@ -226,6 +226,28 @@ rules:
     max_file_size: 2097152
     action: report
 
+  # Review: the ConfigMgr network access account in an exported machine policy. The
+  # PolicySecret values are encrypted for the client that received the policy and are
+  # reported, never decrypted.
+  - id: content.sccm_naa_policy_secret
+    name: SCCM Network Access Account Policy
+    description: Detect network access account credentials in exported ConfigMgr policy.
+    type: content
+    pattern: '(?is)NetworkAccess(?:Username|Password)\b.{0,200}?<PolicySecret\b'
+    case_sensitive: false
+    severity: high
+    confidence: high
+    explanation: ConfigMgr machine policy carries the network access account as PolicySecret values. They are encrypted for the receiving client and can be recovered on that client or with its keys.
+    remediation: Remove exported policy from shared locations, replace the network access account with Enhanced HTTP where possible, and rotate the account.
+    tags: [credentials, sccm, naa, policy]
+    category: credentials
+    enabled: true
+    include_paths: []
+    exclude_paths: [cache, temp, tmp]
+    file_extensions: [.xml]
+    max_file_size: 2097152
+    action: report
+
   # High value: a WireGuard interface private key authenticates the peer to the VPN.
   - id: content.wireguard_private_key
     name: WireGuard Private Key

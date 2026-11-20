@@ -124,6 +124,7 @@ func isDirectExploitArtifact(f Finding) bool {
 // needsDecryptionFirst reports findings whose evidence is protected secret
 // material: it must be decrypted or cracked before it can be used, and
 // Snablr does neither, so it is review material rather than actionable.
+// The same holds for credentials the harvester could not confirm.
 func needsDecryptionFirst(f Finding) bool {
 	// The key inspector tags a passphrase-protected key; correlation carries
 	// the tag to the file's finding whichever rule ends up primary (the
@@ -132,6 +133,8 @@ func needsDecryptionFirst(f Finding) bool {
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(f.RuleID)) {
+	case ReviewCredentialRuleID:
+		return true
 	case "content.remote_access_saved_password":
 		// RDP connection files and RDCMan <password> elements store the
 		// saved password as a DPAPI blob bound to the user who saved it

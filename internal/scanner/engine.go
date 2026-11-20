@@ -179,7 +179,7 @@ func (e *Engine) EvaluateContext(ctx context.Context, meta FileMetadata, content
 		// A skip rule suppresses rule matching, but credentials confirmed by the
 		// harvester are still reported: recovered credentials must never exist
 		// only in persisted evidence without a finding.
-		_, credentialFindings := e.harvestCredentialCandidatesWithOptions(meta, content, false)
+		_, credentialFindings, _ := e.harvestCredentialCandidatesWithOptions(meta, content, false)
 		// Skip rules exist to cut noise, never to hide directly exploitable
 		// artifacts: a Kerberos cache in /tmp or an LSASS dump in a Temp folder
 		// is still reported by name.
@@ -401,7 +401,7 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 		content = content[:e.opts.MaxReadBytes]
 	}
 	keyMatchesBeforeHarvest := e.keyInspector.InspectContent(keyCandidate(meta), content)
-	harvestFailures, credentialFindings := e.harvestCredentialCandidatesWithOptions(meta, content, len(keyMatchesBeforeHarvest) > 0)
+	harvestFailures, credentialFindings, harvested := e.harvestCredentialCandidatesWithOptions(meta, content, len(keyMatchesBeforeHarvest) > 0)
 	evaluation.InspectionFailures = append(evaluation.InspectionFailures, harvestFailures...)
 	evaluation.Findings = append(evaluation.Findings, credentialFindings...)
 
@@ -456,12 +456,20 @@ func (e *Engine) evaluateStandard(meta FileMetadata, content []byte, forceConten
 	evaluation.Findings = correlateFindings(meta, evaluation.Findings)
 	evaluation.Findings = adjustAWSArtifactVisibility(evaluation.Findings)
 	evaluation.Findings = adjustBrowserArtifactVisibility(evaluation.Findings)
+	if len(evaluation.Findings) == 0 {
+		// Credential material the harvester could not confirm is raised as a
+		// review finding only when nothing else surfaces the file, so it never
+		// merges into, or changes the triage of, another finding.
+		if finding, ok := reviewCredentialFinding(meta, harvested); ok {
+			evaluation.Findings = correlateFindings(meta, []Finding{finding})
+		}
+	}
 	e.recordValidationFindings(evaluation.Findings)
 	return evaluation
 }
 
 func (e *Engine) harvestCredentialCandidates(meta FileMetadata, content []byte) []InspectionFailure {
-	failures, _ := e.harvestCredentialCandidatesWithOptions(meta, content, false)
+	failures, _, _ := e.harvestCredentialCandidatesWithOptions(meta, content, false)
 	return failures
 }
 
@@ -469,16 +477,16 @@ func (e *Engine) harvestCredentialCandidates(meta FileMetadata, content []byte) 
 // content-inspection limitations it reported, so the engine can distinguish a
 // file that could not be read from one that was read but not fully parsed.
 func (e *Engine) harvestCredentialCandidatesWithNotes(meta FileMetadata, content []byte) []InspectionFailure {
-	failures, _ := e.harvestCredentialCandidatesWithOptions(meta, content, false)
+	failures, _, _ := e.harvestCredentialCandidatesWithOptions(meta, content, false)
 	return failures
 }
 
 // harvestCredentialCandidatesWithOptions records harvested candidates and
 // returns the harvester's inspection failures together with a finding for any
-// confirmed credential material.
-func (e *Engine) harvestCredentialCandidatesWithOptions(meta FileMetadata, content []byte, skipPrivateKeys bool) ([]InspectionFailure, []Finding) {
+// confirmed credential material, and the harvested candidates.
+func (e *Engine) harvestCredentialCandidatesWithOptions(meta FileMetadata, content []byte, skipPrivateKeys bool) ([]InspectionFailure, []Finding, []credentialanalysis.Candidate) {
 	if e == nil || len(content) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	candidates, notes := credentialanalysis.HarvestWithReport(credentialanalysis.HarvestInput{
 		Content: content, Source: meta.Source, Host: meta.Host, Share: meta.Share,
@@ -494,7 +502,7 @@ func (e *Engine) harvestCredentialCandidatesWithOptions(meta FileMetadata, conte
 	}
 	findings := findingsFromConfirmedCredentials(meta, candidates)
 	if len(notes) == 0 {
-		return nil, findings
+		return nil, findings, candidates
 	}
 	failures := make([]InspectionFailure, 0, len(notes))
 	for _, note := range notes {
@@ -502,7 +510,7 @@ func (e *Engine) harvestCredentialCandidatesWithOptions(meta FileMetadata, conte
 			Path: meta.FilePath, Parser: note.Parser, Category: note.Category, Detail: note.Detail,
 		})
 	}
-	return failures, findings
+	return failures, findings, candidates
 }
 
 // bundleKindLimit returns the size limit for a loose SAM, SYSTEM, SECURITY or

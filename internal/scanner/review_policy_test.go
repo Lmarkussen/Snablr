@@ -128,3 +128,45 @@ func TestWindowsHivesStayActionable(t *testing.T) {
 		}
 	}
 }
+
+// Credential material the harvester could not confirm becomes a review
+// finding when nothing else reports the file; it is never actionable and
+// never added to a file that already has a finding.
+func TestUnconfirmedCredentialsRaiseReviewFinding(t *testing.T) {
+	engine := newNoiseEngine(t)
+	for _, tc := range []struct{ path, content string }{
+		{"Reports/Finance/export-309.csv", "password=orphan-secret\n"},
+		{"Web/forms/login-399.html", "password=orphan-secret\n"},
+		{"Notes/database/query-409.md", "<credential><user>opaque-user</user><encryptedPassword>BASE64-CIPHERTEXT</encryptedPassword></credential>\n"},
+		{"Notes/database/uri-049.txt", "<credential><user>opaque-user</user><encryptedPassword>BASE64-CIPHERTEXT</encryptedPassword></credential>\n"},
+	} {
+		findings := evaluateAt(t, engine, tc.path, tc.content)
+		var review *Finding
+		for i := range findings {
+			if findings[i].RuleID == ReviewCredentialRuleID {
+				review = &findings[i]
+			}
+			if findings[i].Actionable {
+				t.Errorf("%s: unconfirmed credential is actionable: %s", tc.path, findings[i].RuleID)
+			}
+		}
+		if review == nil {
+			t.Errorf("%s: no review finding for unconfirmed credential; findings=%v", tc.path, findingRuleSet(findings))
+			continue
+		}
+		if review.TriageClass != triageWeakReview {
+			t.Errorf("%s: review finding triage=%q, want %q", tc.path, review.TriageClass, triageWeakReview)
+		}
+	}
+
+	for _, tc := range []struct{ name, path, content string }{
+		{"confirmed pair", "Apps/Billing/app.ini", "[db]\nusername=svc_billing\npassword=Billing-Db-2026!\n"},
+		{"trivial value", "Reports/Finance/limits.csv", "password=0\n"},
+		{"WMI class definition", "Windows/System32/wbem/umpass.mof", "//ModuleName = UmPass\t (Init called in Function DriverEntry)\n[Dynamic,\n Description(\"UMPass Driver Trace\"),\n locale(\"MS\\\\0x409\")]\nclass UmPass : EventTrace\n{\n};\n"},
+		{"skip-rule path", "Windows/WinSxS/amd64_microsoft-windows-sample_31bf/sample.csv", "password=orphan-secret\n"},
+	} {
+		if got := outcomeAt(t, engine, tc.path, tc.content); got.rules[ReviewCredentialRuleID] {
+			t.Errorf("%s: review finding raised: %v", tc.name, got.rules)
+		}
+	}
+}

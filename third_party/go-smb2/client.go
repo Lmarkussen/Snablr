@@ -114,7 +114,7 @@ func (c *Session) Mount(sharename string) (*Share, error) {
 	return &Share{treeConn: tc, ctx: context.Background()}, nil
 }
 
-func (c *Session) ListSharenames() ([]string, error) {
+func (c *Session) netShareEnumAll(level uint32) (msrpc.NetShareEnumAllResponseDecoder, error) {
 	servername := c.addr
 
 	fs, err := c.Mount(fmt.Sprintf(`\\%s\IPC$`, servername))
@@ -168,7 +168,7 @@ func (c *Session) ListSharenames() ([]string, error) {
 		Input: &msrpc.NetShareEnumAllRequest{
 			CallId:     callId,
 			ServerName: servername,
-			Level:      1, // level 1 seems to be portable
+			Level:      level,
 		},
 	}
 
@@ -207,7 +207,7 @@ func (c *Session) ListSharenames() ([]string, error) {
 				r2 = msrpc.NetShareEnumAllResponseDecoder(output)
 			}
 
-			return r2.ShareNameList(), nil
+			return r2, nil
 		}
 
 		return nil, &os.PathError{Op: "listSharenames", Path: f.name, Err: err}
@@ -218,7 +218,41 @@ func (c *Session) ListSharenames() ([]string, error) {
 		return nil, &os.PathError{Op: "listSharenames", Path: f.name, Err: &InvalidResponseError{"broken net share enum response format"}}
 	}
 
-	return r2.ShareNameList(), nil
+	return r2, nil
+}
+
+// ListSharenames returns the share names of the server (level 1, which any
+// authenticated user may request).
+func (c *Session) ListSharenames() ([]string, error) {
+	r, err := c.netShareEnumAll(1)
+	if err != nil {
+		return nil, err
+	}
+	return r.ShareNameList(), nil
+}
+
+// SharePath is the name of a share and the local path it exports.
+type SharePath struct {
+	Name string
+	Path string
+}
+
+// ListSharePaths returns the share names and their local paths (level 2).
+// Servers allow it to administrators only; others get no shares.
+func (c *Session) ListSharePaths() ([]SharePath, error) {
+	r, err := c.netShareEnumAll(2)
+	if err != nil {
+		return nil, err
+	}
+	shares, ok := r.ShareInfo2List()
+	if !ok {
+		return nil, &InvalidResponseError{"broken net share enum response format"}
+	}
+	out := make([]SharePath, 0, len(shares))
+	for _, share := range shares {
+		out = append(out, SharePath{Name: share.Name, Path: share.Path})
+	}
+	return out, nil
 }
 
 // Share represents a SMB tree connection with VFS interface.

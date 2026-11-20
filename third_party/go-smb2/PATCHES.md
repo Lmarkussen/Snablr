@@ -22,7 +22,10 @@ other requests; they used to be sent without it while their responses still
 granted credits. Error responses with error contexts (SMB 3.1.1) are
 accepted when the last context is not padded to 8 bytes, as Windows sends
 them: a reply such as STATUS_STOPPED_ON_SYMLINK for a directory junction was
-rejected as a broken response. The upstream
+rejected as a broken response. Share enumeration can also request level 2
+(`Session.ListSharePaths`), which returns each share's local path to
+administrators; the request now selects the container that matches the
+requested level. The upstream
 BSD 3-Clause license and copyright notice are preserved in `LICENSE`.
 
 The changes were implemented independently from SMB protocol semantics. This

@@ -162,3 +162,35 @@ func inferShareType(name string) string {
 		return "disk"
 	}
 }
+
+// SharePaths returns the local path each share exports, keyed by lower-case
+// share name. Servers answer this for administrators only; for other
+// accounts it returns no paths and no error.
+func (c *Client) SharePaths() (map[string]string, error) {
+	session, _, err := c.connectedSession()
+	if err != nil {
+		return nil, err
+	}
+	watchdog, err := c.operationWatchdog()
+	if err != nil {
+		return nil, fmt.Errorf("list share paths: %w", err)
+	}
+	shares, err := session.WithContext(watchdog.ctx).ListSharePaths()
+	watchdog.stop()
+	if err != nil {
+		if isPermissionError(err) {
+			_ = c.observe(nil)
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list share paths: %w", c.observe(err))
+	}
+	_ = c.observe(nil)
+	paths := make(map[string]string, len(shares))
+	for _, share := range shares {
+		name := strings.ToLower(strings.TrimSpace(share.Name))
+		if name != "" && strings.TrimSpace(share.Path) != "" {
+			paths[name] = strings.TrimSpace(share.Path)
+		}
+	}
+	return paths, nil
+}

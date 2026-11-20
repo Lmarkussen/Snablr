@@ -809,6 +809,23 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 		return fmt.Errorf("%s: none of the explicitly requested shares are accessible", host)
 	}
 	shareScheduler := newShareScheduler(plannedShares)
+	// A folder that another scanned share exports is walked once, as that
+	// share. Share paths are only known with administrative rights.
+	var nestedShares map[string][]nestedShare
+	if lister, ok := client.(interface {
+		SharePaths() (map[string]string, error)
+	}); ok {
+		paths, err := lister.SharePaths()
+		if err != nil {
+			logger.Warnf("share paths unavailable on %s: %v", host, err)
+		}
+		nestedShares = nestedShareFolders(plannedShares, paths)
+		for _, plan := range plannedShares {
+			for _, nested := range nestedShares[strings.ToLower(plan.Share)] {
+				logger.Infof("%s/%s: folder %s is scanned as share %s", host, plan.Share, nested.Folder, nested.Share)
+			}
+		}
+	}
 	for _, share := range configuredSkippedShares {
 		shareScheduler.recordSkippedShare(share)
 	}
@@ -1008,9 +1025,13 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 			return nil
 		}
 
+		excludePaths := append([]string{}, cfg.Scan.ExcludePath...)
+		for _, nested := range nestedShares[strings.ToLower(shareName)] {
+			excludePaths = append(excludePaths, nested.Folder)
+		}
 		err := client.WalkShareWithOptions(shareName, smb.WalkOptions{
 			IncludePaths: append([]string{}, cfg.Scan.Path...),
-			ExcludePaths: append([]string{}, cfg.Scan.ExcludePath...),
+			ExcludePaths: excludePaths,
 			MaxDepth:     cfg.Scan.MaxDepth,
 			ShouldDescend: func(path string) bool {
 				if shareScheduler.shouldDescend(path) {
@@ -1019,6 +1040,9 @@ func scanHost(ctx context.Context, host, source string, dfsTargets []discovery.D
 				return false
 			},
 			CurrentDirectory: shareScheduler.setCurrentDirectory,
+			SkippedDirectory: func(path string, err error) {
+				logger.Warnf("skipped directory %s on %s/%s: %v", path, host, shareName, err)
+			},
 		}, func(remote smb.RemoteFile) error {
 			if shareScheduler.consumeDefer(sharePlan) {
 				return errShareDeferred

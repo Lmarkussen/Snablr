@@ -3,6 +3,7 @@ package msrpc
 import (
 	"encoding/binary"
 	"encoding/hex"
+	"strings"
 
 	"github.com/hirochachacha/go-smb2/internal/utf16le"
 )
@@ -192,7 +193,7 @@ func (r *NetShareEnumAllRequest) Encode(b []byte) {
 
 	// pointer to ctr (srvsvc_NetShareCtr)
 
-	le.PutUint32(b[off+4:off+8], 1)            // ctr
+	le.PutUint32(b[off+4:off+8], r.Level)      // ctr (the container matches the level)
 	le.PutUint32(b[off+8:off+12], 0x20004)     // referent ID
 	le.PutUint32(b[off+12:off+16], 0)          // ctr1.count
 	le.PutUint32(b[off+16:off+20], 0)          // ctr1.pointer
@@ -339,12 +340,79 @@ func (c NetShareEnumAllResponseDecoder) IsIncomplete() bool {
 				}
 			}
 		}
+	case 2:
+		_, ok := c.ShareInfo2List()
+		return !ok
 	default:
 		// TODO not supported yet
 		return true
 	}
 
 	return false
+}
+
+// ShareInfo2 is the name and local path of a share (SHARE_INFO_2).
+type ShareInfo2 struct {
+	Name string
+	Path string
+}
+
+// ndrString reads a conformant varying UTF-16 string at off and returns it
+// with the offset after it.
+func (c NetShareEnumAllResponseDecoder) ndrString(off int) (string, int, bool) {
+	if len(c) < off+12 {
+		return "", 0, false
+	}
+	start := off + 12 + int(le.Uint32(c[off+4:off+8]))*2
+	end := start + int(le.Uint32(c[off+8:off+12]))*2
+	if start < off+12 || end < start || len(c) < end {
+		return "", 0, false
+	}
+	return strings.TrimRight(utf16le.DecodeToString(c[start:end]), "\x00"), roundup(end, 4), true
+}
+
+// ShareInfo2List decodes a level 2 response. It reports false while the
+// response is incomplete or malformed. Level 2 needs administrative rights;
+// a denied request decodes to no shares.
+func (c NetShareEnumAllResponseDecoder) ShareInfo2List() ([]ShareInfo2, bool) {
+	if len(c) < 40 || le.Uint32(c[24:28]) != 2 {
+		return nil, false
+	}
+	count := int(le.Uint32(c[36:40]))
+	if count == 0 {
+		return nil, true
+	}
+	const entry = 32
+	if count < 0 || count > len(c)/entry {
+		return nil, false
+	}
+	offset := 48 + count*entry
+	if len(c) < offset {
+		return nil, false
+	}
+	shares := make([]ShareInfo2, count)
+	for i := 0; i < count; i++ {
+		fixed := 48 + i*entry
+		// netname, remark, path and passwd strings follow in that order
+		// for each entry whose pointer is set.
+		for _, field := range []int{0, 8, 24, 28} {
+			if le.Uint32(c[fixed+field:fixed+field+4]) == 0 {
+				continue
+			}
+			value, next, ok := c.ndrString(offset)
+			if !ok {
+				return nil, false
+			}
+			switch field {
+			case 0:
+				shares[i].Name = value
+			case 24:
+				shares[i].Path = value
+			}
+			offset = next
+		}
+	}
+	return shares, true
 }
 
 func (c NetShareEnumAllResponseDecoder) Buffer() []byte {

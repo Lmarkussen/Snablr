@@ -53,7 +53,7 @@ func (Inspector) NeedsContent(candidate Candidate) bool {
 	if ext == "" {
 		ext = strings.ToLower(filepath.Ext(strings.TrimSpace(candidate.FilePath)))
 	}
-	return ext == "" || ext == ".pem" || ext == ".key" || ext == ".priv" || ext == ".openssh"
+	return ext == "" || ext == ".pem" || ext == ".key" || ext == ".priv" || ext == ".openssh" || ext == ".ppk"
 }
 
 func parsePrivateKey(content []byte, header string) (format, algorithm, status, reason string, encrypted bool) {

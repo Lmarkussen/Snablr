@@ -12,11 +12,18 @@ func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
 		return nil
 	}
 
+	var format, algorithm, status, reviewReason string
+	var encrypted bool
 	header := matchedHeader(content)
-	if header == "" {
-		return nil
+	if header != "" {
+		format, algorithm, status, reviewReason, encrypted = parsePrivateKey(content, header)
+	} else {
+		ppkHeader, ppkAlgorithm, ppkStatus, ppkReason, ppkEncrypted, ok := inspectPPK(content)
+		if !ok {
+			return nil
+		}
+		header, format, algorithm, status, reviewReason, encrypted = ppkHeader, "PuTTY", ppkAlgorithm, ppkStatus, ppkReason, ppkEncrypted
 	}
-	format, algorithm, status, reviewReason, encrypted := parsePrivateKey(content, header)
 
 	text := textdecode.Normalize(content)
 	if text == "" {
@@ -30,7 +37,7 @@ func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
 	match := Match{
 		ID:                  "keyinspect.content.private_key_header",
 		Name:                "Validated Private Key Header",
-		Description:         "Validated private key material was identified from a real OpenSSH or PEM private key header.",
+		Description:         "Validated private key material was identified from a real OpenSSH, PEM or PuTTY private key header.",
 		RuleType:            "content",
 		SignalType:          "validated",
 		Severity:            "critical",
@@ -43,7 +50,7 @@ func (Inspector) InspectContent(candidate Candidate, content []byte) []Match {
 		Context:             context,
 		ContextRedacted:     context,
 		LineNumber:          lineNumber,
-		Explanation:         "This finding is raised when file content contains a real OpenSSH or PEM private key header, whatever the file is named; the key is parsed to report its format, algorithm and whether it is encrypted.",
+		Explanation:         "This finding is raised when file content contains a real OpenSSH, PEM or PuTTY private key, whatever the file is named; the key is parsed to report its format, algorithm and whether it is encrypted.",
 		Remediation:         "Restrict access immediately, remove unnecessary private keys from shared storage, and rotate or replace exposed key material.",
 		Tags: []string{
 			"crypto",
